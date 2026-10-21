@@ -88,6 +88,8 @@ def get_lashing_certificate(record_id: int):
 
         return row
 
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 

@@ -660,21 +660,10 @@ class ComercialServiciosAnalyticsUI(ttk.Frame):
             ) or {}
 
             data = resp.get("data", []) or []
-            total = resp.get("total_no_ofrecidos", len(data))
-
             parent = self.winfo_toplevel()
-
-            try:
-                PopupServiciosNoOfrecidos(
-                    parent,
-                    data=data,
-                    total=total,
-                    filters=resp.get("filters", {}),
-                    usuario=self.usuario,
-                    rol=self.rol
-                )
-            except TypeError:
-                PopupServiciosNoOfrecidos(parent, data)
+            PopupServiciosNoOfrecidos(
+                parent, data=data, filters=resp.get("filters", {})
+            )
 
         except Exception as e:
             messagebox.showerror("Error", f"No se pudo abrir 'Servicios NO Ofrecidos'.\n{e}")

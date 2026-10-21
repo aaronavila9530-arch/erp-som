@@ -7,7 +7,7 @@ from session_context import get_user, get_rol, get_company_code, get_company_nam
 import os
 import tempfile
 from email.message import Message
-from urllib.parse import unquote
+from urllib.parse import unquote, quote
 from urllib3.util.retry import Retry
 
 BASE_URL = "https://api-som-fastapi-production-e66d.up.railway.app"
@@ -6171,16 +6171,19 @@ def hr_download_payslip_pdf(year, month, usuario=None, timeout=30):
 # HHRR — EVENTS UI (CON HEADERS)
 # ============================================================
 
-def listar_eventos_hr(usuario, rol):
+def listar_eventos_hr(usuario=None, rol=None, *, event_type=None, status=None, empleado_id=None):
     headers = {
-        "X-User": str(usuario).strip().lower(),
-        "X-Role": str(rol).strip().lower()
+        "X-User": str(usuario or get_user() or "").strip().lower(),
+        "X-Role": str(rol or get_rol() or "").strip().lower()
     }
 
     resp = api_request(
         "GET",
         "/hr/events/",
         headers=headers,
+        params={key: value for key, value in {
+            "event_type": event_type, "status": status, "empleado_id": empleado_id
+        }.items() if value is not None},
         timeout=15
     )
     resp.raise_for_status()
@@ -9709,6 +9712,19 @@ def update_draft_survey_api(general_id, payload: dict):
     """
 
     return update_full_draft_survey_api(str(general_id), payload)
+
+
+def update_draft_survey_status_api(identifier, status):
+    actions = {"Approved": "approve", "Rejected": "reject"}
+    if status not in actions:
+        raise ValueError("Estado de Draft no valido")
+    if identifier is None or not str(identifier).strip():
+        raise ValueError("Identificador de Draft requerido")
+    response = api_request(
+        "PUT", f"/draft-survey/{quote(str(identifier).strip(), safe='')}/{actions[status]}", timeout=60
+    )
+    raise_for_status_with_detail(response)
+    return response.json()
 
 # =========================================================
 # preview excel draft survey

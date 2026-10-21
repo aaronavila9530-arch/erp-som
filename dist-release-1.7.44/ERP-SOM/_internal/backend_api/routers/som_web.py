@@ -1,0 +1,10342 @@
+from __future__ import annotations
+
+from io import BytesIO
+from datetime import datetime, timedelta
+from pathlib import Path
+
+from fastapi import APIRouter, Header, HTTPException, Query
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
+from PIL import Image
+from psycopg2.extras import RealDictCursor
+
+import database
+from routers.user_admin import MODULES
+from services.credit_control import build_credit_decision
+from services.tenanting import company_code
+
+
+router = APIRouter(tags=["SOM Web"])
+
+_ROOT = Path(__file__).resolve().parents[1]
+_ASSETS = _ROOT / "assets"
+_REPO_ASSETS = _ROOT.parent / "assets"
+_ASSET_VERSION = "20261008-masterdata-import-v1"
+
+MODULES_WEB = [
+    {"code": "dashboard", "title": "Inicio", "subtitle": "Pendientes, aprobaciones, revisiones y alertas según permisos."},
+    {"code": "master_data", "title": "Master Data", "subtitle": "Clientes, proveedores, empleados, surveyors, servicios, datos fiscales y datos bancarios."},
+    {"code": "servicios", "title": "Servicios", "subtitle": "Registro, edición, surveyors, demoras, cierre y trazabilidad operativa."},
+    {"code": "finanzas", "title": "Finanzas", "subtitle": "Facturación, Collections, ITP, bancos, Accounting, fiscal y tarjetas."},
+    {"code": "hhrre", "title": "HHRR", "subtitle": "Horas, solicitudes, vacaciones, payroll, colillas, red médica y calculadora."},
+    {"code": "comercial", "title": "Comercial", "subtitle": "Cotizaciones, precios, analítica y exportables."},
+    {"code": "informes", "title": "Informes", "subtitle": "Tally Control por proyecto y bodega."},
+    {"code": "portia", "title": "PORTIA", "subtitle": "Asistente operativo, contable y documental."},
+    {"code": "qa_som", "title": "Q&A SOM", "subtitle": "Base de conocimiento por módulo."},
+    {"code": "admin_users", "title": "Admin", "subtitle": "Usuarios, permisos, roles y auditoría."},
+]
+
+MASTER_DATA_ACTIONS = [
+    {"key": "clientes", "label": "+ Cliente", "kind": "create", "entity": "cliente"},
+    {"key": "surveyores", "label": "+ Surveyor", "kind": "create", "entity": "surveyor"},
+    {"key": "empleados", "label": "+ Empleado", "kind": "create", "entity": "empleado"},
+    {"key": "proveedores", "label": "+ Proveedor", "kind": "create", "entity": "proveedor"},
+    {"key": "servicios_md", "label": "+ Servicio", "kind": "create", "entity": "servicio"},
+    {"key": "puertos", "label": "+ Puerto", "kind": "create", "entity": "puerto"},
+    {"key": "export_form", "label": "Exportar form", "kind": "tool", "entity": "forms"},
+    {"key": "import_form", "label": "Cargar form", "kind": "tool", "entity": "forms"},
+    {"key": "company_fiscal", "label": "Datos fiscales", "kind": "tool", "entity": "fiscal"},
+    {"key": "bank_accounts", "label": "Datos bancarios", "kind": "secure", "entity": "banks"},
+]
+
+MASTER_DATA_VIEWS = [
+    {"key": "clientes", "label": "Clientes", "endpoint": "/clientes?page=1&page_size=100", "primary": ["codigo", "nombrejuridico", "nombrecomercial", "pais", "correo", "telefono"]},
+    {"key": "proveedores", "label": "Proveedores", "endpoint": "/proveedores/?page=1&page_size=100", "primary": ["codigo", "nombre", "pais", "correo", "telefono", "activo"]},
+    {"key": "empleados", "label": "Empleados", "endpoint": "/empleados/?page=1&page_size=100&include_inactive=true", "primary": ["codigo", "activo", "nombre", "apellidos", "horas_contratadas", "horas_tope_ordinario", "horas_tope_maximo"]},
+    {"key": "surveyores", "label": "Surveyors", "endpoint": "/surveyores/?page=1&page_size=100&include_inactive=true", "primary": ["codigo", "activo", "nombre", "apellidos", "correo", "telefono"]},
+    {"key": "servicios_md", "label": "Servicios", "endpoint": "/servicios_md/?page=1&page_size=100", "primary": ["codigo", "codigo_prod", "nombre", "costo"]},
+    {"key": "puertos", "label": "Puertos", "endpoint": "/cpp/ports?page=1&page_size=100", "primary": ["id", "continente", "pais", "puerto"]},
+    {"key": "company_fiscal", "label": "Datos fiscales", "endpoint": "/companies/current", "primary": ["company_code", "company_name", "tax_id", "economic_activity", "billing_email", "address"]},
+    {"key": "bank_accounts", "label": "Datos bancarios", "endpoint": "", "primary": ["bank_name", "currency", "iban", "swift_code", "beneficiary_name"]},
+]
+
+
+def _period_start(year: int) -> str:
+    return f"{int(year)}-08-01"
+
+
+def _period_end(year: int) -> str:
+    return f"{int(year) + 1}-01-01"
+
+
+def _year_start(year: int) -> str:
+    return f"{int(year)}-01-01"
+
+
+def _year_to_date_end(year: int) -> str:
+    today = datetime.now().date()
+    if int(year) < today.year:
+        return f"{int(year) + 1}-01-01"
+    if int(year) > today.year:
+        return f"{int(year)}-01-01"
+    return (today + timedelta(days=1)).isoformat()
+
+
+def _scalar(cur, sql: str, params: tuple) -> float:
+    cur.execute(sql, params)
+    row = cur.fetchone()
+    if isinstance(row, dict):
+        value = next(iter(row.values()), 0)
+    else:
+        value = row[0] if row else 0
+    return float(value or 0)
+
+
+def _safe_scalar(cur, sql: str, params: tuple) -> float:
+    try:
+        return _scalar(cur, sql, params)
+    except Exception:
+        return 0.0
+
+
+def _safe_action_scalar(cur, sql: str, params: tuple = ()) -> float:
+    try:
+        cur.execute("SAVEPOINT som_action_center")
+        value = _scalar(cur, sql, params)
+        cur.execute("RELEASE SAVEPOINT som_action_center")
+        return value
+    except Exception:
+        try:
+            cur.execute("ROLLBACK TO SAVEPOINT som_action_center")
+            cur.execute("RELEASE SAVEPOINT som_action_center")
+        except Exception:
+            pass
+        return 0.0
+
+
+def _query_rows(cur, sql: str, params: tuple = ()) -> list[dict]:
+    try:
+        cur.execute("SAVEPOINT som_query_rows")
+        cur.execute(sql, params)
+        rows = [dict(row) for row in (cur.fetchall() or [])]
+        cur.execute("RELEASE SAVEPOINT som_query_rows")
+        return rows
+    except Exception:
+        try:
+            cur.execute("ROLLBACK TO SAVEPOINT som_query_rows")
+            cur.execute("RELEASE SAVEPOINT som_query_rows")
+        except Exception:
+            pass
+        return []
+
+
+def _action_item(
+    key: str,
+    module: str,
+    title: str,
+    count: float,
+    severity: str,
+    detail: str,
+    cta: str = "Abrir",
+    permission: str | None = None,
+) -> dict:
+    return {
+        "key": key,
+        "module": module,
+        "permission": permission,
+        "title": title,
+        "count": int(count or 0),
+        "severity": severity,
+        "detail": detail,
+        "cta": cta,
+    }
+
+
+@router.get("/som/catalog")
+def som_web_catalog():
+    module_labels = {item["code"]: item["label"] for item in MODULES}
+    return {
+        "modules": [{**item, "label": module_labels.get(item["code"], item["title"])} for item in MODULES_WEB],
+        "master_data_actions": MASTER_DATA_ACTIONS,
+        "master_data_views": MASTER_DATA_VIEWS,
+        "generated_at": datetime.utcnow().isoformat(timespec="seconds") + "Z",
+    }
+
+
+@router.get("/som/summary")
+def som_web_summary(
+    anio: int | None = Query(None),
+    x_company_code: str | None = Header(None, alias="X-Company-Code"),
+    x_role: str | None = Header(None, alias="X-Role"),
+    x_modules: str | None = Header(None, alias="X-Modules"),
+):
+    selected_year = int(anio or datetime.now().year)
+    company = company_code(header_value=x_company_code)
+    start = _year_start(selected_year)
+    end = _year_to_date_end(selected_year)
+    fiscal_start = _year_start(selected_year)
+    fiscal_end = _year_to_date_end(selected_year)
+    role = str(x_role or "").strip().lower()
+    modules = {item.strip().lower() for item in str(x_modules or "").split(",") if item.strip()}
+    is_executive = role in {"admin", "master"}
+    is_finance_role = is_executive or "finanzas" in modules or any(token in role for token in ("account", "contab", "financ"))
+    conn = database.get_conn()
+    try:
+        cur = conn.cursor(cursor_factory=RealDictCursor)
+        electronic_invoice_filter = """
+              AND LENGTH(REGEXP_REPLACE(COALESCE(numero_documento,''), '[^0-9]', '', 'g')) >= 20
+        """
+        services = _scalar(
+            cur,
+            "SELECT COUNT(*) FROM servicios WHERE company_code=%s AND fecha_inicio >= %s AND fecha_inicio < %s",
+            (company, fiscal_start, fiscal_end),
+        )
+        invoiced = _safe_scalar(
+            cur,
+            f"""
+            SELECT COALESCE(SUM(total),0)
+            FROM invoicing
+            WHERE company_code=%s
+              AND fecha_emision >= %s
+              AND fecha_emision < %s
+              AND COALESCE(estado,'') NOT IN ('ANULADA','VOID','CANCELADA')
+              {electronic_invoice_filter}
+            """,
+            (company, fiscal_start, fiscal_end),
+        ) if is_finance_role else 0.0
+        ar = _safe_scalar(
+            cur,
+            "SELECT COALESCE(SUM(saldo_pendiente),0) FROM collections WHERE company_code=%s AND saldo_pendiente > 0",
+            (company,),
+        ) if is_finance_role else 0.0
+        reports = _scalar(
+            cur,
+            "SELECT COUNT(*) FROM servicios WHERE company_code=%s AND fecha_inicio >= %s AND fecha_inicio < %s AND COALESCE(num_informe,'')<>''",
+            (company, fiscal_start, fiscal_end),
+        )
+        monthly = _query_rows(
+            cur,
+            """
+            WITH months AS (
+                SELECT generate_series(
+                    date_trunc('month', LEAST(CURRENT_DATE, (%s::date - INTERVAL '1 day'))) - INTERVAL '5 months',
+                    date_trunc('month', LEAST(CURRENT_DATE, (%s::date - INTERVAL '1 day'))),
+                    INTERVAL '1 month'
+                )::date AS month_start
+            ),
+            svc AS (
+                SELECT date_trunc('month', fecha_inicio)::date AS month_start,
+                       COUNT(*) AS services
+                FROM servicios
+                WHERE company_code=%s
+                  AND fecha_inicio >= (SELECT MIN(month_start) FROM months)
+                  AND fecha_inicio < ((SELECT MAX(month_start) FROM months) + INTERVAL '1 month')
+                GROUP BY date_trunc('month', fecha_inicio)::date
+            ),
+            cxc AS (
+                SELECT date_trunc('month', fecha_emision)::date AS month_start,
+                       COALESCE(SUM(saldo_pendiente),0) AS ar_open
+                FROM collections
+                WHERE company_code=%s
+                  AND fecha_emision >= (SELECT MIN(month_start) FROM months)
+                  AND fecha_emision < ((SELECT MAX(month_start) FROM months) + INTERVAL '1 month')
+                GROUP BY date_trunc('month', fecha_emision)::date
+            )
+            SELECT TO_CHAR(m.month_start, 'YYYY-MM') AS month,
+                   COALESCE(svc.services,0) AS services,
+                   COALESCE(cxc.ar_open,0) AS ar_open
+            FROM months m
+            LEFT JOIN svc ON svc.month_start = m.month_start
+            LEFT JOIN cxc ON cxc.month_start = m.month_start
+            ORDER BY m.month_start
+            """,
+            (end, end, company, company),
+        )
+        service_mix = _query_rows(
+            cur,
+            """
+            SELECT COALESCE(NULLIF(TRIM(operacion),''), NULLIF(TRIM(tipo),''), 'Sin clasificar') AS label,
+                   COUNT(*) AS value
+            FROM servicios
+            WHERE company_code=%s
+              AND fecha_inicio >= %s
+              AND fecha_inicio < %s
+            GROUP BY COALESCE(NULLIF(TRIM(operacion),''), NULLIF(TRIM(tipo),''), 'Sin clasificar')
+            ORDER BY value DESC, label
+            LIMIT 6
+            """,
+            (company, fiscal_start, fiscal_end),
+        )
+        top_clients = _query_rows(
+            cur,
+            f"""
+            SELECT COALESCE(NULLIF(TRIM(nombre_cliente),''), codigo_cliente, 'Sin cliente') AS client,
+                   COUNT(*) AS invoices,
+                   COALESCE(SUM(total),0) AS amount
+            FROM invoicing
+            WHERE company_code=%s
+              AND fecha_emision >= %s
+              AND fecha_emision < %s
+              AND COALESCE(estado,'') NOT IN ('ANULADA','VOID','CANCELADA')
+              {electronic_invoice_filter}
+            GROUP BY COALESCE(NULLIF(TRIM(nombre_cliente),''), codigo_cliente, 'Sin cliente')
+            ORDER BY amount DESC, invoices DESC
+            LIMIT 3
+            """,
+            (company, fiscal_start, fiscal_end),
+        ) if is_executive else []
+        aging = _query_rows(
+            cur,
+            """
+            SELECT bucket, COUNT(*) AS invoices, COALESCE(SUM(saldo_pendiente),0) AS amount
+            FROM (
+                SELECT saldo_pendiente,
+                       CASE
+                           WHEN fecha_vencimiento IS NULL OR fecha_vencimiento >= CURRENT_DATE THEN 'Al día'
+                           WHEN CURRENT_DATE - fecha_vencimiento <= 30 THEN '1-30'
+                           WHEN CURRENT_DATE - fecha_vencimiento <= 60 THEN '31-60'
+                           WHEN CURRENT_DATE - fecha_vencimiento <= 90 THEN '61-90'
+                           ELSE '+90'
+                       END AS bucket
+                FROM collections
+                WHERE company_code=%s
+                  AND COALESCE(saldo_pendiente,0)>0
+            ) x
+            GROUP BY bucket
+            ORDER BY CASE bucket WHEN 'Al día' THEN 0 WHEN '1-30' THEN 1 WHEN '31-60' THEN 2 WHEN '61-90' THEN 3 ELSE 4 END
+            """,
+            (company,),
+        ) if is_finance_role else []
+        return {
+            "company_code": company,
+            "year": selected_year,
+            "from": start,
+            "fiscal_from": fiscal_start,
+            "fiscal_to": fiscal_end,
+            "visibility": {
+                "executive": is_executive,
+                "finance": is_finance_role,
+                "operations": True,
+            },
+            "kpis": {
+                "services": services,
+                "invoiced": invoiced,
+                "ar": ar,
+                "reports": reports,
+            },
+            "monthly": monthly,
+            "executive": {
+                "service_mix": service_mix,
+                "top_clients": top_clients,
+                "aging": aging,
+                "most_offered_service": service_mix[0] if service_mix else None,
+            },
+        }
+    finally:
+        database.release_conn(conn)
+
+
+@router.get("/som/action-center")
+def som_web_action_center(
+    anio: int | None = Query(None),
+    x_company_code: str | None = Header(None, alias="X-Company-Code"),
+    x_role: str | None = Header(None, alias="X-Role"),
+    x_modules: str | None = Header(None, alias="X-Modules"),
+    x_permissions: str | None = Header(None, alias="X-Permissions"),
+):
+    selected_year = int(anio or datetime.now().year)
+    company = company_code(header_value=x_company_code)
+    start = _year_start(selected_year)
+    end = _year_to_date_end(selected_year)
+    conn = database.get_conn()
+    try:
+        cur = conn.cursor(cursor_factory=RealDictCursor)
+        actions: list[dict] = []
+        role = str(x_role or "").strip().lower()
+        modules = {item.strip().lower() for item in str(x_modules or "").split(",") if item.strip()}
+        permissions = {item.strip().lower() for item in str(x_permissions or "").split(",") if item.strip()}
+        elevated = role in {"admin", "master"}
+
+        def can_show(module: str, permission: str | None = None) -> bool:
+            module_norm = str(module or "").strip().lower()
+            perm_norm = str(permission or "").strip().lower()
+            if elevated:
+                return True
+            if perm_norm and (perm_norm in permissions or f"{module_norm}:{perm_norm}" in permissions):
+                return True
+            return module_norm in modules and not perm_norm
+
+        overdue_payments = _safe_action_scalar(
+            cur,
+            """
+            SELECT COUNT(*)
+            FROM payment_obligations
+            WHERE company_code=%s
+              AND record_type='OBLIGATION'
+              AND COALESCE(active, TRUE)=TRUE
+              AND COALESCE(balance,0)>0
+              AND due_date IS NOT NULL
+              AND due_date < CURRENT_DATE
+            """,
+            (company,),
+        )
+        if can_show("finanzas"):
+            actions.append(_action_item("itp_overdue", "finanzas", "Pagos vencidos por realizar", overdue_payments, "critical", "Invoice To Pay con saldo vencido.", "Revisar pagos"))
+
+        pending_invoices = _safe_action_scalar(
+            cur,
+            """
+            SELECT COUNT(*)
+            FROM collections
+            WHERE company_code=%s
+              AND COALESCE(saldo_pendiente,0)>0
+            """,
+            (company,),
+        )
+        if can_show("finanzas"):
+            actions.append(_action_item("collections_open", "finanzas", "Facturas pendientes de cobro", pending_invoices, "warning", "CxC con saldo abierto.", "Abrir CxC"))
+
+        accounting_unposted = _safe_action_scalar(
+            cur,
+            """
+            SELECT COUNT(*)
+            FROM accounting_entries
+            WHERE company_code=%s
+              AND COALESCE(workflow_status,'DRAFT') <> 'POSTED'
+            """,
+            (company,),
+        )
+        if can_show("finanzas"):
+            actions.append(_action_item("accounting_unposted", "finanzas", "Asientos pendientes de posteo", accounting_unposted, "warning", "Accounting requiere revisión, aprobación o posteo.", "Abrir Accounting"))
+
+        hr_pending = _safe_action_scalar(
+            cur,
+            """
+            SELECT COUNT(*)
+            FROM hr_events
+            WHERE COALESCE(status,'PENDING')='PENDING'
+            """,
+            (),
+        )
+        if can_show("hhrre", "requests_approve") or can_show("hhrr", "requests_approve") or can_show("hhrre", "approve") or can_show("hhrr", "approve"):
+            actions.append(_action_item("hr_requests", "hhrre", "Solicitudes de HHRR por aprobar", hr_pending, "warning", "Vacaciones, permisos u otros eventos pendientes.", "Abrir HHRR", "requests_approve"))
+
+        hours_pending = _safe_action_scalar(
+            cur,
+            """
+            SELECT COUNT(*)
+            FROM hr_ot_log
+            WHERE UPPER(TRIM(COALESCE(estado,'PENDIENTE')))='PENDIENTE'
+            """,
+            (),
+        )
+        if can_show("hhrre", "hours_approve") or can_show("hhrr", "hours_approve") or can_show("hhrre", "ot_log_status") or can_show("hhrr", "ot_log_status"):
+            actions.append(_action_item("hr_hours_pending", "hhrre", "Horas pendientes de aprobar", hours_pending, "warning", "Registros de horas en espera de aprobación.", "Revisar horas", "hours_approve"))
+
+        reports_to_generate = _safe_action_scalar(
+            cur,
+            """
+            SELECT COUNT(*)
+            FROM servicios
+            WHERE company_code=%s
+              AND LOWER(TRIM(COALESCE(estado,'')))='finalizado'
+              AND fecha_inicio >= %s
+              AND fecha_inicio < %s
+              AND (
+                    num_informe IS NULL
+                 OR TRIM(num_informe)=''
+                 OR LOWER(TRIM(num_informe))='none'
+              )
+            """,
+            (company, start, end),
+        )
+        if can_show("informes"):
+            actions.append(_action_item("reports_missing_number", "informes", "Informes pendientes por generar", reports_to_generate, "warning", "Servicios finalizados sin número de informe.", "Abrir informes"))
+
+        reports_to_review = _safe_action_scalar(
+            cur,
+            """
+            SELECT COUNT(*)
+            FROM servicios
+            WHERE company_code=%s
+              AND LOWER(TRIM(COALESCE(estado,'')))='finalizado'
+              AND fecha_inicio >= %s
+              AND fecha_inicio < %s
+              AND COALESCE(NULLIF(TRIM(status_informe),''),'Pending')='Pending'
+              AND COALESCE(NULLIF(TRIM(num_informe),''),'') <> ''
+              AND LOWER(TRIM(COALESCE(num_informe,''))) <> 'none'
+            """,
+            (company, start, end),
+        )
+        if can_show("informes"):
+            actions.append(_action_item("reports_review", "informes", "Informes pendientes de revisar", reports_to_review, "info", "Servicios con informe referenciado y revisión pendiente.", "Revisar informes"))
+
+        services_active = _safe_action_scalar(
+            cur,
+            """
+            SELECT COUNT(*)
+            FROM servicios
+            WHERE company_code=%s
+              AND fecha_inicio >= %s
+              AND fecha_inicio < %s
+              AND LOWER(TRIM(COALESCE(estado,''))) NOT IN ('finalizado','cancelado','cerrado')
+            """,
+            (company, start, end),
+        )
+        if can_show("servicios"):
+            actions.append(_action_item("services_active", "servicios", "Servicios activos por cerrar o actualizar", services_active, "info", "Operaciones abiertas con seguimiento pendiente.", "Abrir servicios"))
+
+        billable_services = _safe_action_scalar(
+            cur,
+            """
+            SELECT COUNT(*)
+            FROM servicios
+            WHERE company_code=%s
+              AND LOWER(TRIM(COALESCE(estado,'')))='finalizado'
+              AND fecha_inicio >= %s
+              AND fecha_inicio < %s
+              AND COALESCE(valor_factura,0)=0
+            """,
+            (company, start, end),
+        )
+        if can_show("finanzas"):
+            actions.append(_action_item("billing_pending", "finanzas", "Servicios finalizados pendientes de facturar", billable_services, "warning", "Billing debe revisar servicios sin valor de factura.", "Abrir facturación"))
+
+        visible = [item for item in actions if item["count"] > 0]
+        visible.sort(key=lambda item: ({"critical": 0, "warning": 1, "info": 2}.get(item["severity"], 3), -item["count"], item["title"]))
+        return {
+            "company_code": company,
+            "year": selected_year,
+            "generated_at": datetime.utcnow().isoformat(timespec="seconds") + "Z",
+            "actions": visible,
+            "counts": {
+                "critical": sum(1 for item in visible if item["severity"] == "critical"),
+                "warning": sum(1 for item in visible if item["severity"] == "warning"),
+                "info": sum(1 for item in visible if item["severity"] == "info"),
+                "total": sum(item["count"] for item in visible),
+            },
+        }
+    finally:
+        database.release_conn(conn)
+
+
+@router.get("/som/module-summary")
+def som_web_module_summary(
+    module: str = Query("dashboard"),
+    anio: int | None = Query(None),
+    x_company_code: str | None = Header(None, alias="X-Company-Code"),
+):
+    selected_year = int(anio or datetime.now().year)
+    company = company_code(header_value=x_company_code)
+    conn = database.get_conn()
+    try:
+        cur = conn.cursor(cursor_factory=RealDictCursor)
+        if module == "master_data":
+            return {
+                "company_code": company,
+                "module": module,
+                "kpis": [
+                    {
+                        "label": "Clientes",
+                        "value": _safe_scalar(cur, "SELECT COUNT(*) FROM cliente WHERE company_code=%s", (company,)),
+                        "hint": "Activos y registrados",
+                        "format": "int",
+                    },
+                    {
+                        "label": "Proveedores",
+                        "value": _safe_scalar(cur, "SELECT COUNT(*) FROM proveedor WHERE company_code=%s AND COALESCE(activo, TRUE)=TRUE", (company,)),
+                        "hint": "Activos",
+                        "format": "int",
+                    },
+                    {
+                        "label": "Empleados",
+                        "value": _safe_scalar(cur, "SELECT COUNT(*) FROM empleados WHERE company_code=%s AND COALESCE(activo, TRUE)=TRUE", (company,)),
+                        "hint": "Activos",
+                        "format": "int",
+                    },
+                    {
+                        "label": "Surveyors",
+                        "value": _safe_scalar(cur, "SELECT COUNT(*) FROM surveyor WHERE company_code=%s AND COALESCE(activo, TRUE)=TRUE", (company,)),
+                        "hint": "Activos",
+                        "format": "int",
+                    },
+                ],
+            }
+        if module == "servicios":
+            start = _period_start(selected_year)
+            end = _period_end(selected_year)
+            return {
+                "company_code": company,
+                "module": module,
+                "kpis": [
+                    {
+                        "label": "Servicios",
+                        "value": _safe_scalar(cur, "SELECT COUNT(*) FROM servicios WHERE company_code=%s AND fecha_inicio >= %s AND fecha_inicio < %s", (company, start, end)),
+                        "hint": "Desde agosto",
+                        "format": "int",
+                    },
+                    {
+                        "label": "En operación",
+                        "value": _safe_scalar(cur, "SELECT COUNT(*) FROM servicios WHERE company_code=%s AND fecha_inicio >= %s AND fecha_inicio < %s AND estado=%s", (company, start, end, "En Operación")),
+                        "hint": "Abiertos",
+                        "format": "int",
+                    },
+                    {
+                        "label": "Facturado",
+                        "value": _safe_scalar(cur, "SELECT COALESCE(SUM(valor_factura),0) FROM servicios WHERE company_code=%s AND fecha_inicio >= %s AND fecha_inicio < %s", (company, start, end)),
+                        "hint": "Servicios",
+                        "format": "money",
+                    },
+                    {
+                        "label": "Países",
+                        "value": _safe_scalar(cur, "SELECT COUNT(DISTINCT pais) FROM servicios WHERE company_code=%s AND fecha_inicio >= %s AND fecha_inicio < %s AND COALESCE(pais,'')<>''", (company, start, end)),
+                        "hint": "Cobertura",
+                        "format": "int",
+                    },
+                ],
+            }
+        if module == "finanzas":
+            open_ar = _safe_scalar(cur, "SELECT COALESCE(SUM(saldo_pendiente),0) FROM collections WHERE company_code=%s AND saldo_pendiente > 0", (company,))
+            clients_hold = _safe_scalar(cur, "SELECT COUNT(*) FROM cliente_credito WHERE company_code=%s AND (COALESCE(hold_manual,FALSE)=TRUE OR estado_credito='HOLD')", (company,))
+            configured = _safe_scalar(cur, "SELECT COUNT(*) FROM cliente_credito WHERE company_code=%s", (company,))
+            return {
+                "company_code": company,
+                "module": module,
+                "kpis": [
+                    {"label": "CxC abierta", "value": open_ar, "hint": "Collections", "format": "money"},
+                    {"label": "Clientes con credito", "value": configured, "hint": "Configurados", "format": "int"},
+                    {"label": "Hold manual", "value": clients_hold, "hint": "Bloqueados", "format": "int"},
+                    {"label": "Order-to-Cash", "value": 1, "hint": "Credit activo", "format": "int"},
+                ],
+            }
+        return som_web_summary(selected_year, x_company_code)
+    finally:
+        database.release_conn(conn)
+
+
+@router.get("/som/finance/order-to-cash/credit-hold")
+def som_web_credit_hold(
+    q: str | None = Query(None),
+    x_company_code: str | None = Header(None, alias="X-Company-Code"),
+):
+    company = company_code(header_value=x_company_code)
+    conn = database.get_conn()
+    try:
+        cur = conn.cursor(cursor_factory=RealDictCursor)
+        params = {"company": company}
+        where = "WHERE c.company_code = %(company)s"
+        if q and q.strip():
+            params["q"] = f"%{q.strip()}%"
+            where += """
+              AND (
+                    c.codigo ILIKE %(q)s
+                 OR c.nombrecomercial ILIKE %(q)s
+                 OR c.nombrejuridico ILIKE %(q)s
+              )
+            """
+        cur.execute(
+            f"""
+            SELECT c.codigo, c.nombrecomercial, c.nombrejuridico
+            FROM cliente c
+            {where}
+            ORDER BY COALESCE(c.nombrecomercial, c.nombrejuridico, c.codigo)
+            LIMIT 200
+            """,
+            params,
+        )
+        rows = []
+        for client in cur.fetchall():
+            decision = build_credit_decision(company, client["codigo"], projected_amount=0, projected_currency="USD")
+            rows.append({
+                "codigo": client["codigo"],
+                "cliente": client["nombrecomercial"] or client["nombrejuridico"] or client["codigo"],
+                "limite": decision.get("credit_limit"),
+                "moneda": decision.get("currency"),
+                "cxC_abierta": decision.get("open_ar"),
+                "disponible": decision.get("available"),
+                "estado": decision.get("estado_credito"),
+                "hold_manual": decision.get("hold_manual"),
+                "decision": decision.get("status"),
+                "mensaje": decision.get("message"),
+            })
+        return {"company_code": company, "data": rows, "total": len(rows)}
+    finally:
+        database.release_conn(conn)
+
+
+@router.get("/google508500bb8b3daa58.html", response_class=HTMLResponse, include_in_schema=False)
+def som_google_site_verification():
+    return HTMLResponse("google-site-verification: google508500bb8b3daa58.html")
+
+
+@router.get("/som/privacy", response_class=HTMLResponse)
+def som_web_privacy():
+    return FileResponse(_ASSETS / "gmail-privacy.html", media_type="text/html", headers={"Cache-Control": "no-cache"})
+
+
+@router.get("/som", response_class=HTMLResponse)
+def som_web_home() -> HTMLResponse:
+    year = datetime.now().year
+    html = """<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>SOM Web</title>
+  <meta name="theme-color" content="#073659" />
+  <link rel="manifest" href="/som/manifest.webmanifest?v={asset_version}" />
+  <link rel="icon" type="image/png" sizes="32x32" href="/som/icon/msl-32.png?v={asset_version}" />
+  <link rel="icon" type="image/png" sizes="192x192" href="/som/icon/msl-192.png?v={asset_version}" />
+  <link rel="apple-touch-icon" sizes="180x180" href="/som/icon/msl-180.png?v={asset_version}" />
+  <style>
+    :root {
+      color-scheme: light;
+      --ink:#122033; --muted:#607086; --line:#d6e0eb; --soft:#f4f7fb;
+      --panel:#fff; --nav:#071f37; --blue:#005da8; --green:#087a52;
+      --amber:#a66700; --red:#b42318; --shadow:0 12px 30px rgba(15,31,53,.10);
+    }
+    * { box-sizing:border-box; }
+    html,body { max-width:100%; overflow-x:hidden; }
+    body { margin:0; font-family:Inter,Segoe UI,Roboto,Arial,sans-serif; color:var(--ink); background:#eef3f8; }
+    button,input,select { font:inherit; }
+    button { border:0; background:var(--blue); color:#fff; border-radius:7px; height:38px; padding:0 13px; cursor:pointer; }
+    button.secondary { background:#fff; color:var(--ink); border:1px solid var(--line); }
+    button.dark { background:#111827; }
+    button.green { background:#00703c; }
+    button.brown { background:#6f4e00; }
+    button.gray { background:#4b5563; }
+    input,select { width:100%; min-width:0; height:38px; border:1px solid var(--line); border-radius:7px; padding:0 11px; background:#fff; color:var(--ink); }
+    select { text-overflow:ellipsis; }
+    .login { min-height:100vh; display:grid; grid-template-columns:minmax(380px,38vw) minmax(0,1fr); background:#fff; }
+    .login-card { width:100%; max-width:520px; min-height:100vh; margin:0 auto; padding:48px 56px; display:flex; flex-direction:column; justify-content:center; gap:16px; overflow:hidden; }
+    .login-card h1 { margin:0; font-size:30px; color:#003a75; }
+    .login-card p { margin:0 0 8px; color:var(--muted); line-height:1.45; }
+    .form { display:grid; gap:12px; width:min(100%,420px); min-width:0; }
+    .remember { display:flex; gap:8px; align-items:center; color:#334155; font-size:13px; }
+    .remember input { width:16px; height:16px; }
+    .hero-logo { min-height:100vh; background:#073659; display:flex; align-items:center; justify-content:center; padding:32px; overflow:hidden; }
+    .hero-logo img { width:min(82%,780px); height:min(82vh,780px); object-fit:contain; object-position:center; background:white; border-radius:12px; padding:0; box-shadow:0 24px 70px rgba(0,0,0,.18); }
+    .qr { max-width:220px; border:1px solid var(--line); border-radius:8px; padding:8px; background:white; }
+    .app { min-height:100vh; display:grid; grid-template-columns:280px minmax(0,1fr); max-width:100vw; overflow:hidden; }
+    aside { background:var(--nav); color:white; padding:18px 16px; display:flex; flex-direction:column; gap:14px; }
+    .brand { display:flex; gap:12px; align-items:center; padding:6px; }
+    .brand img { width:50px; height:50px; object-fit:contain; background:white; border-radius:8px; padding:5px; }
+    .brand strong { display:block; font-size:18px; }
+    .brand span { color:#b9c7d6; font-size:12px; }
+    .nav { display:grid; gap:7px; overflow:auto; }
+    .nav button { text-align:left; background:transparent; color:#dce8f4; border:1px solid rgba(255,255,255,.09); }
+    .nav button.active,.nav button:hover { background:rgba(255,255,255,.1); }
+    .side-foot { margin-top:auto; display:grid; gap:8px; }
+    main { padding:20px 20px 30px; min-width:0; max-width:100%; overflow:hidden; }
+    header { display:flex; justify-content:space-between; gap:16px; align-items:flex-start; margin-bottom:14px; }
+    h1 { margin:0; font-size:25px; letter-spacing:0; }
+    h2 { margin:0; font-size:17px; }
+    .muted { color:var(--muted); }
+    .toolbar { display:flex; gap:8px; align-items:center; flex-wrap:wrap; justify-content:flex-end; }
+    .grid { display:grid; gap:12px; }
+    .grid.two { grid-template-columns:repeat(2,minmax(0,1fr)); }
+    .kpis { grid-template-columns:repeat(4,minmax(0,1fr)); }
+    .kpi-grid { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:12px; margin:12px 0; }
+    .card { background:var(--panel); border:1px solid var(--line); border-radius:8px; box-shadow:var(--shadow); }
+    .kpi { padding:14px; min-height:96px; }
+    .kpi span { display:block; color:var(--muted); font-size:12px; text-transform:uppercase; }
+    .kpi strong { display:block; font-size:24px; margin-top:10px; }
+    .panel { padding:14px; }
+    .panel-head { display:flex; justify-content:space-between; gap:12px; align-items:center; margin-bottom:12px; }
+    .home-panel-tools { display:flex; align-items:center; justify-content:flex-end; gap:8px; min-width:0; }
+    .home-panel-tools .muted { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    .home-collapse-btn { width:30px; height:30px; min-width:30px; padding:0; border-radius:7px; background:#fff; color:#005da8; border:1px solid #bfd6ee; font-weight:900; line-height:1; }
+    .home-section-collapsed { display:none !important; }
+    .home-subhead { display:flex; justify-content:space-between; align-items:center; gap:8px; margin:13px 0 8px; }
+    .home-subhead h3 { margin:0; font-size:14px; }
+    .home-subhead .home-collapse-btn { width:26px; height:26px; min-width:26px; }
+    .home-clickable { cursor:pointer; }
+    .home-clickable:hover { background:#edf7ff; }
+    .combo-col.home-clickable:hover .combo-bars, .pie-metric.home-clickable:hover, .home-pill-list div.home-clickable:hover { filter:brightness(.98); }
+    .home-insight-metrics { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:10px; margin:10px 0 12px; }
+    .home-insight-metrics div { border:1px solid #d7e1ec; border-radius:8px; background:#f8fbfe; padding:10px; min-width:0; }
+    .home-insight-metrics span { display:block; color:#607086; font-size:11px; font-weight:800; text-transform:uppercase; }
+    .home-insight-metrics strong { display:block; margin-top:6px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    .home-insight-note { margin:0 0 12px; color:#334155; line-height:1.45; }
+    .home-insight-actions { display:flex; flex-wrap:wrap; gap:8px; }
+    .home-grid { grid-template-columns:repeat(4,minmax(0,1fr)); margin-top:12px; }
+    .home-card { padding:16px; min-height:118px; cursor:pointer; border-top:3px solid var(--blue); }
+    .home-card:nth-child(2) { border-top-color:var(--green); }
+    .home-card:nth-child(3) { border-top-color:var(--amber); }
+    .home-card:nth-child(4) { border-top-color:#029fcf; }
+    .home-command { display:grid; gap:14px; }
+    .home-hero { display:grid; grid-template-columns:minmax(320px,1fr) minmax(260px,420px); gap:14px; align-items:stretch; }
+    .home-hero-main { padding:18px; border-left:4px solid var(--blue); background:#fff; }
+    .home-hero-main h2 { font-size:28px; margin:0 0 7px; }
+    .home-hero-main p { margin:0; color:#607086; line-height:1.45; }
+    .home-role-panel { padding:14px; display:grid; gap:8px; background:#f8fbfe; }
+    .home-role-panel strong { font-size:20px; }
+    .home-badge-row { display:flex; flex-wrap:wrap; gap:7px; margin-top:10px; }
+    .home-badge-row span { min-height:26px; display:inline-flex; align-items:center; border:1px solid #cfe0f2; border-radius:999px; padding:3px 10px; background:#edf7ff; color:#005da8; font-size:12px; font-weight:800; }
+    .home-work-grid { display:grid; grid-template-columns:repeat(4,minmax(190px,1fr)); gap:12px; }
+    .home-work-card { min-height:154px; padding:15px; cursor:pointer; border-top:4px solid var(--blue); display:flex; flex-direction:column; justify-content:space-between; gap:12px; transition:transform .12s ease, box-shadow .12s ease; }
+    .home-work-card:hover { transform:translateY(-2px); box-shadow:0 16px 36px rgba(15,31,53,.14); }
+    .home-work-card h3 { margin:0; font-size:18px; }
+    .home-work-card p { margin:6px 0 0; color:#607086; line-height:1.35; }
+    .home-work-card button { align-self:flex-start; height:32px; background:#fff; color:#005da8; border:1px solid #b8d5f1; }
+    .home-work-card.finance { border-top-color:#00703c; }
+    .home-work-card.reports { border-top-color:#029fcf; }
+    .home-work-card.people { border-top-color:#8a5cf6; }
+    .home-work-card.admin { border-top-color:#b42318; }
+    .home-insight-grid { display:grid; grid-template-columns:1.4fr .9fr; gap:12px; }
+    .home-automation-list { display:grid; gap:8px; }
+    .home-automation-list div { display:flex; justify-content:space-between; gap:12px; border-bottom:1px solid #edf2f7; padding:7px 0; }
+    .home-automation-list strong { color:#122033; }
+    .home-action-layout { display:grid; grid-template-columns:minmax(0,1.45fr) minmax(300px,.75fr); gap:12px; align-items:start; }
+    .home-action-hero { padding:18px; border-left:4px solid var(--blue); background:#fff; }
+    .home-action-hero h2 { margin:0 0 6px; font-size:28px; line-height:1.12; }
+    .home-action-hero p { margin:0; color:#607086; line-height:1.45; }
+    .home-action-summary { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:9px; margin-top:14px; }
+    .home-action-summary div { border:1px solid #d7e1ec; border-radius:8px; background:#f8fbfe; padding:10px; }
+    .home-action-summary span { display:block; color:#64748b; font-size:11px; font-weight:800; letter-spacing:.04em; text-transform:uppercase; }
+    .home-action-summary strong { display:block; margin-top:5px; font-size:22px; }
+    .home-action-list { display:grid; gap:9px; }
+    .home-action-item { display:grid; grid-template-columns:42px minmax(0,1fr) max-content; gap:12px; align-items:center; border:1px solid #d7e1ec; border-left:4px solid #64748b; border-radius:8px; background:#fff; padding:12px; }
+    .home-action-item.critical { border-left-color:#b42318; background:#fff7f6; }
+    .home-action-item.warning { border-left-color:#b7791f; background:#fffaf0; }
+    .home-action-item.info { border-left-color:#005da8; background:#fbfdff; }
+    .home-action-count { display:inline-grid; place-items:center; min-width:34px; height:34px; border-radius:8px; background:#edf2f7; color:#122033; font-weight:900; }
+    .home-action-item.critical .home-action-count { background:#fee4e2; color:#b42318; }
+    .home-action-item.warning .home-action-count { background:#fef3c7; color:#7a4a00; }
+    .home-action-item.info .home-action-count { background:#e6f2ff; color:#005da8; }
+    .home-action-copy strong { display:block; margin-bottom:3px; font-size:15px; }
+    .home-action-copy span { color:#607086; white-space:normal; }
+    .home-action-empty { padding:18px; text-align:center; }
+    .home-side-stack { display:grid; gap:12px; }
+    .home-mini-list { display:grid; gap:8px; }
+    .home-mini-list div { display:flex; justify-content:space-between; gap:12px; border-bottom:1px solid #edf2f7; padding:7px 0; }
+    .home-mini-list strong { color:#122033; }
+    .home-exec-grid { display:grid; grid-template-columns:minmax(460px,1.45fr) minmax(340px,.85fr); gap:12px; align-items:stretch; }
+    .chart-card { min-width:0; }
+    .chart-combo { min-height:230px; display:flex; align-items:flex-end; gap:10px; padding:12px 6px 6px; border-bottom:1px solid #d8e3ee; }
+    .combo-col { flex:1; min-width:44px; display:grid; grid-template-rows:1fr auto; gap:7px; align-items:end; height:210px; }
+    .combo-bars { height:170px; display:flex; gap:5px; align-items:end; justify-content:center; border-bottom:1px solid #e2e8f0; }
+    .combo-bar { width:16px; border-radius:5px 5px 0 0; background:#005da8; min-height:4px; }
+    .combo-bar.ar { background:#029fcf; }
+    .combo-label { font-size:11px; color:#607086; text-align:center; white-space:nowrap; }
+    .chart-legend { display:flex; flex-wrap:wrap; gap:10px; color:#607086; font-size:12px; margin-top:8px; }
+    .legend-dot { width:10px; height:10px; display:inline-block; border-radius:3px; margin-right:5px; background:#005da8; }
+    .legend-dot.ar { background:#029fcf; }
+    .legend-dot.services { background:#0f172a; }
+    .mini-bars { display:grid; gap:8px; min-width:0; }
+    .mini-bar-row { display:grid; grid-template-columns:minmax(110px,1fr) minmax(90px,1.2fr) max-content; gap:9px; align-items:center; font-size:13px; min-width:0; }
+    .mini-bar-row strong { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    .mini-track { height:10px; background:#e8eef5; border-radius:999px; overflow:hidden; }
+    .mini-fill { height:100%; background:#00703c; border-radius:999px; }
+    .pie-wrap { display:grid; grid-template-columns:96px minmax(0,1fr); gap:12px; align-items:center; min-width:0; }
+    .pie-metric { text-align:center; display:grid; gap:7px; justify-items:center; }
+    .pie-metric strong { font-size:22px; line-height:1; }
+    .pie-metric span { color:#607086; font-size:11px; font-weight:800; text-transform:uppercase; }
+    .css-pie { width:92px; aspect-ratio:1; border-radius:50%; background:conic-gradient(#005da8 0 45%, #029fcf 45% 72%, #087a52 72% 88%, #b7791f 88% 100%); box-shadow:inset 0 0 0 21px #fff; border:1px solid #d7e1ec; }
+    .pie-wrap .mini-bar-row { grid-template-columns:minmax(0,1fr) minmax(64px,.7fr) 22px; gap:7px; }
+    .home-empty-insight { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:10px; padding:10px 0 4px; }
+    .home-empty-insight div { border:1px solid #e2eaf3; border-radius:8px; background:#fbfdff; padding:12px; min-width:0; }
+    .home-empty-insight span { display:block; color:#607086; font-size:11px; text-transform:uppercase; font-weight:800; }
+    .home-empty-insight strong { display:block; margin-top:6px; font-size:18px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    .home-pill-list { display:grid; gap:8px; }
+    .home-pill-list div { display:flex; justify-content:space-between; gap:12px; padding:9px 10px; border:1px solid #e2eaf3; border-radius:8px; background:#fbfdff; }
+    .home-pill-list strong { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    .home-pill-list span { text-align:right; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    .md-actions { display:flex; flex-wrap:wrap; gap:10px; margin:12px 0 14px; }
+    .filters { display:flex; flex-wrap:wrap; gap:10px; align-items:center; padding:12px; margin-bottom:12px; }
+    .form-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:12px; }
+    .form-grid label { display:grid; gap:5px; color:#334155; font-size:13px; }
+    .form-grid .wide { grid-column:1/-1; }
+    .form-grid textarea { width:100%; min-height:78px; border:1px solid var(--line); border-radius:7px; padding:9px 11px; font:inherit; resize:vertical; }
+    .service-command-center { display:grid; grid-template-columns:minmax(0,1.1fr) minmax(290px,.9fr); gap:12px; margin:12px 0; }
+    .service-command-card { border:1px solid #d7e1ec; border-radius:9px; background:#fbfdff; padding:12px; min-width:0; }
+    .service-command-card h3 { margin:0 0 9px; color:#334155; font-size:12px; text-transform:uppercase; letter-spacing:.04em; }
+    .service-actions { display:flex; flex-wrap:wrap; gap:8px; margin:0; align-items:center; }
+    .service-actions button { height:34px; }
+    .service-actions.primary-actions button:first-child { min-width:154px; }
+    .service-actions.export-actions { justify-content:flex-start; }
+    .excel-th { cursor:pointer; user-select:none; position:relative; padding-right:22px; }
+    .excel-th::after { content:"▾"; position:absolute; right:7px; top:50%; transform:translateY(-50%); color:#607086; font-size:10px; opacity:.75; }
+    .excel-th.filtered::after { color:var(--blue); opacity:1; }
+    .excel-filter-menu { position:fixed; z-index:80; width:min(330px,92vw); max-height:440px; overflow:hidden; display:grid; gap:8px; border:1px solid #b9c9da; border-radius:10px; background:#fff; box-shadow:0 22px 60px rgba(15,31,53,.22); padding:10px; }
+    .excel-filter-menu h4 { margin:0; font-size:13px; color:#122033; }
+    .excel-filter-actions { display:grid; grid-template-columns:1fr 1fr; gap:7px; }
+    .excel-filter-actions button { height:30px; padding:0 8px; font-size:12px; }
+    .excel-filter-search { height:32px; }
+    .excel-filter-values { max-height:210px; overflow:auto; border:1px solid #e3ebf3; border-radius:8px; padding:6px; display:grid; gap:4px; }
+    .excel-filter-values label { display:flex; gap:7px; align-items:center; min-width:0; font-size:12px; }
+    .excel-filter-values input { width:14px; height:14px; flex:0 0 auto; }
+    .excel-filter-values span { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    .excel-filter-footer { display:flex; gap:7px; justify-content:flex-end; border-top:1px solid #edf2f7; padding-top:8px; }
+    .excel-filter-footer button { height:32px; padding:0 10px; }
+    .notify-wrap { position:relative; display:flex; gap:8px; align-items:center; }
+    .notify-btn { position:relative; min-width:42px; padding:0 10px; }
+    .notify-count { position:absolute; top:-7px; right:-6px; min-width:18px; height:18px; border-radius:999px; background:#b42318; color:#fff; font-size:11px; display:none; align-items:center; justify-content:center; padding:0 5px; }
+    .notify-count.visible { display:flex; }
+    .notify-panel { position:absolute; right:0; top:44px; width:min(430px,calc(100vw - 30px)); max-height:520px; overflow:auto; background:#fff; border:1px solid var(--line); border-radius:8px; box-shadow:var(--shadow); z-index:40; padding:12px; }
+    .notify-panel.hidden { display:none; }
+    .notify-head { display:flex; justify-content:space-between; gap:8px; align-items:center; margin-bottom:8px; }
+    .notify-list { display:grid; gap:8px; }
+    .notify-item { border:1px solid #e2eaf3; border-left:4px solid var(--blue); border-radius:7px; padding:9px; background:#fbfdff; }
+    .notify-item strong { display:block; font-size:14px; }
+    .notify-item p { margin:4px 0 0; color:#475569; line-height:1.35; }
+    .notify-item small { display:block; margin-top:5px; color:#64748b; }
+    .itp-action-grid { display:grid; grid-template-columns:minmax(0,1.5fr) minmax(0,1fr) minmax(0,.8fr); gap:10px; margin:10px 0 12px; align-items:start; }
+    .itp-action-group { border:1px solid #d7e1ec; border-radius:8px; background:#fbfdff; padding:10px; min-width:0; }
+    .itp-action-group h3 { margin:0 0 8px; color:#607086; font-size:11px; text-transform:uppercase; letter-spacing:.04em; }
+    .itp-action-row { display:flex; flex-wrap:wrap; gap:8px; }
+    .itp-calendar-head { display:flex; flex-wrap:wrap; justify-content:space-between; gap:10px; align-items:center; margin-bottom:10px; }
+    .itp-calendar-nav { display:flex; gap:8px; align-items:center; }
+    .itp-calendar-nav button { min-width:38px; }
+    .itp-calendar-alerts { display:grid; grid-template-columns:repeat(auto-fit,minmax(220px,1fr)); gap:8px; margin:10px 0; }
+    .itp-calendar-alert { border:1px solid #d7e1ec; border-left:4px solid var(--blue); border-radius:8px; background:#fff; padding:9px 11px; color:#122033; }
+    .itp-calendar-alert.critical { border-left-color:#b42318; background:#fff7f6; }
+    .itp-calendar-alert.warning { border-left-color:#b7791f; background:#fffaf0; }
+    .itp-calendar-alert.info { border-left-color:#005da8; background:#f4f9ff; }
+    .itp-calendar-alert strong { display:block; font-size:18px; line-height:1.15; }
+    .itp-calendar-alert span { display:block; margin-top:3px; color:#52637a; font-size:12px; line-height:1.35; }
+    .itp-calendar-week { display:grid; grid-template-columns:repeat(7,minmax(130px,1fr)); gap:8px; min-width:950px; margin-bottom:6px; color:#607086; font-size:12px; font-weight:800; text-transform:uppercase; }
+    .itp-calendar { display:grid; grid-template-columns:repeat(7,minmax(130px,1fr)); gap:8px; min-width:950px; overflow:visible; }
+    .itp-calendar-day { border:1px solid #d7e1ec; border-radius:8px; background:#f7fafc; min-height:118px; padding:8px; display:grid; align-content:start; gap:6px; text-align:left; color:#122033; }
+    .itp-calendar-day.has-items { cursor:pointer; background:#fffaf0; border-color:#e8c27a; }
+    .itp-calendar-day.has-items:hover { border-color:#d99a18; box-shadow:0 10px 24px rgba(15,23,42,.08); }
+    .itp-calendar-day:focus { outline:2px solid var(--blue); outline-offset:2px; }
+    .itp-calendar-day.muted-day { opacity:.62; }
+    .itp-calendar-day.today { border-color:var(--blue); box-shadow:inset 0 0 0 1px var(--blue); }
+    .itp-calendar-day strong { display:flex; justify-content:space-between; gap:6px; font-size:13px; }
+    .itp-calendar-pill { display:block; border:0; border-radius:6px; background:#edf2f7; padding:5px 6px; font-size:12px; color:#122033; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; text-align:left; cursor:pointer; }
+    .itp-calendar-pill:hover { background:#dbeafe; color:#073659; }
+    .itp-calendar-more { border:0; background:transparent; color:#506582; padding:0; font:inherit; text-align:left; cursor:pointer; }
+    .itp-calendar-more:hover { color:var(--blue); text-decoration:underline; }
+    .itp-calendar-total { font-size:12px; color:#8a5a00; font-weight:800; }
+    .collections-calendar-day.has-items { background:#f4f9ff; border-color:#9fc5ef; }
+    .collections-calendar-day.has-items:hover { border-color:#005da8; }
+    .collections-calendar-total { color:#005da8; }
+    .collections-calendar-pill { background:#eaf4ff; }
+    .collections-calendar-pill.overdue { background:#fff7f6; color:#8a1f14; }
+    .collections-calendar-pill.today-due { background:#fffaf0; color:#8a5a00; }
+    .collections-calendar-summary { display:grid; grid-template-columns:repeat(auto-fit,minmax(180px,1fr)); gap:8px; margin:10px 0; }
+    .collections-calendar-summary .card { padding:10px 12px; }
+    .modal.itp-schedule-modal { width:min(1180px,98vw); max-height:94vh; display:flex; flex-direction:column; overflow:hidden; }
+    .itp-schedule-modal .itp-schedule-content { min-height:0; overflow:auto; }
+    .itp-schedule-modal .table-wrap { max-height:68vh; }
+    .itp-detail-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(170px,1fr)); gap:8px; margin-top:8px; }
+    .itp-detail-grid div { border:1px solid #e2eaf3; border-radius:7px; background:#fff; padding:8px; }
+    .itp-detail-grid span { display:block; color:#607086; font-size:11px; font-weight:800; text-transform:uppercase; }
+    .itp-detail-grid strong { display:block; margin-top:3px; overflow-wrap:anywhere; }
+    .hr-shell { display:grid; gap:12px; min-width:0; }
+    .hr-hero { display:grid; grid-template-columns:minmax(0,1.35fr) minmax(300px,.65fr); gap:12px; align-items:stretch; }
+    .hr-card { border:1px solid #d7e1ec; border-radius:8px; background:#fff; padding:14px; min-width:0; box-shadow:var(--shadow); }
+    .hr-hero h2 { margin:0; font-size:27px; line-height:1.12; }
+    .hr-hero p { margin:8px 0 0; color:#607086; line-height:1.45; }
+    .news-board { border:1px solid #d7e1ec; border-radius:8px; background:#fff; box-shadow:var(--shadow); padding:14px; min-width:0; border-left:4px solid var(--blue); }
+    .home-news-mount,.news-mount { margin-bottom:14px; }
+    .news-board.compact { box-shadow:none; }
+    .news-board-head { display:flex; flex-wrap:wrap; justify-content:space-between; align-items:flex-start; gap:12px; margin-bottom:10px; }
+    .news-board-head h2 { margin:0; font-size:22px; color:#122033; }
+    .news-board-head p { margin:4px 0 0; color:#607086; line-height:1.35; }
+    .news-board-tools { display:flex; flex-wrap:wrap; gap:8px; justify-content:flex-end; }
+    .news-board-tools button { height:34px; }
+    .news-list { display:grid; gap:8px; }
+    .news-item { border:1px solid #e2eaf3; border-radius:8px; background:#fbfdff; padding:10px 12px; display:grid; grid-template-columns:minmax(0,1fr) max-content; gap:10px; align-items:start; }
+    .news-item-main { min-width:0; }
+    .news-item-main strong { display:block; color:#005da8; font-size:12px; text-transform:uppercase; margin-bottom:4px; }
+    .news-item-main p { margin:0; color:#263548; line-height:1.42; overflow-wrap:anywhere; }
+    .news-item-actions { display:flex; flex-wrap:wrap; gap:6px; justify-content:flex-end; }
+    .news-item-actions button { height:30px; padding:0 9px; font-size:12px; }
+    .news-empty { border:1px dashed #c9d8e7; border-radius:8px; background:#f8fbfe; padding:12px; color:#607086; }
+    .hr-actions { display:grid; grid-template-columns:repeat(auto-fit,minmax(180px,1fr)); gap:10px; }
+    .hr-action-card { text-align:left; min-height:104px; height:auto; background:#fff; color:#122033; border:1px solid #d7e1ec; border-top:4px solid var(--blue); border-radius:8px; padding:12px; display:grid; align-content:start; gap:6px; }
+    .hr-action-card strong { font-size:16px; }
+    .hr-action-card span { color:#607086; line-height:1.35; white-space:normal; }
+    .hr-action-card:hover,.hr-action-card.active { background:#edf7ff; border-color:#b8d5f1; }
+    .hr-toolbar { display:flex; flex-wrap:wrap; gap:8px; align-items:end; margin:10px 0; }
+    .hr-toolbar label { display:grid; gap:4px; min-width:150px; color:#475569; font-size:12px; font-weight:700; text-transform:uppercase; }
+    .hr-toolbar button { height:34px; }
+    .hr-work { min-width:0; }
+    .hr-kpis { display:grid; grid-template-columns:repeat(auto-fit,minmax(170px,1fr)); gap:10px; margin:10px 0; }
+    .hr-kpi { border:1px solid #d7e1ec; border-radius:8px; background:#f8fbfe; padding:10px; }
+    .hr-kpi span { display:block; color:#64748b; font-size:11px; font-weight:800; text-transform:uppercase; }
+    .hr-kpi strong { display:block; margin-top:5px; font-size:21px; }
+    .hr-form { display:grid; grid-template-columns:repeat(auto-fit,minmax(180px,1fr)); gap:10px; margin:10px 0; }
+    .hr-form label { display:grid; gap:5px; color:#334155; font-size:13px; }
+    .hr-form textarea { min-height:84px; border:1px solid var(--line); border-radius:7px; padding:9px 11px; font:inherit; resize:vertical; }
+    .hr-form .wide { grid-column:1/-1; }
+    .hr-payroll-layout { display:grid; grid-template-columns:minmax(0,1.35fr) minmax(300px,.65fr); gap:12px; align-items:start; }
+    .hr-preview-card { border:1px solid #d7e1ec; border-radius:8px; background:#f8fbfe; padding:12px; min-width:0; }
+    .hr-preview-card h3 { margin:0 0 8px; font-size:17px; }
+    .hr-preview-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:8px; margin-top:8px; }
+    .hr-preview-metric { border:1px solid #e2eaf3; border-radius:7px; background:#fff; padding:9px; min-width:0; }
+    .hr-preview-metric span { display:block; color:#64748b; font-size:11px; font-weight:800; text-transform:uppercase; }
+    .hr-preview-metric strong { display:block; margin-top:4px; font-size:18px; overflow-wrap:anywhere; }
+    .hr-payroll-note { margin-top:8px; color:#607086; font-size:13px; line-height:1.35; }
+    .hr-request-summary { display:grid; grid-template-columns:repeat(auto-fit,minmax(160px,1fr)); gap:10px; margin:10px 0; }
+    .hr-request-summary .hr-kpi { background:#fff; }
+    .hr-request-topbar { display:flex; flex-wrap:wrap; gap:8px; align-items:center; justify-content:space-between; margin:10px 0; }
+    .hr-request-topbar .hr-request-tools { display:flex; flex-wrap:wrap; gap:8px; align-items:center; }
+    .hr-request-workspace { display:grid; grid-template-columns:minmax(0,1.25fr) minmax(340px,.75fr); gap:12px; align-items:start; }
+    .hr-request-list { display:grid; gap:8px; min-width:0; }
+    .hr-request-card { border:1px solid #d7e1ec; border-left:5px solid #7b8794; border-radius:8px; background:#fff; color:#122033; padding:12px; min-height:86px; display:grid; grid-template-columns:minmax(0,1fr) auto; gap:8px 12px; text-align:left; cursor:pointer; }
+    .hr-request-card:hover,.hr-request-card.selected { border-color:#9ec9ee; border-left-color:var(--blue); background:#f6fbff; }
+    .hr-request-card.pending { border-left-color:#c77800; }
+    .hr-request-card.approved { border-left-color:#087a52; }
+    .hr-request-card.rejected { border-left-color:#b42318; }
+    .hr-request-card h3 { margin:0; color:#122033; font-size:16px; line-height:1.25; overflow-wrap:anywhere; }
+    .hr-request-card p { margin:3px 0 0; color:#607086; line-height:1.35; }
+    .hr-request-card small { color:#64748b; font-weight:700; }
+    .hr-request-meta { display:flex; flex-wrap:wrap; gap:6px; align-items:center; grid-column:1/-1; }
+    .hr-request-detail { border:1px solid #d7e1ec; border-radius:8px; background:#fff; color:#122033; padding:14px; min-width:0; position:sticky; top:10px; box-shadow:0 10px 26px rgba(15,31,53,.07); }
+    .hr-request-detail h3 { margin:0 0 8px; color:#122033; font-size:17px; }
+    .hr-request-detail dl { display:grid; grid-template-columns:120px minmax(0,1fr); gap:7px 10px; margin:10px 0; }
+    .hr-request-detail dt { color:#64748b; font-size:12px; font-weight:800; text-transform:uppercase; }
+    .hr-request-detail dd { margin:0; color:#122033; overflow-wrap:anywhere; }
+    .hr-request-actions { display:flex; flex-wrap:wrap; gap:8px; margin-top:10px; }
+    .hr-request-table { margin-top:12px; }
+    .hr-request-empty-note { border:1px dashed #cbd8e6; border-radius:8px; background:#f8fbfe; padding:14px; color:#607086; }
+    .hr-status-pill { display:inline-flex; align-items:center; min-height:24px; border-radius:999px; padding:2px 9px; border:1px solid #d7e1ec; background:#f8fafc; color:#334155; font-size:12px; font-weight:800; }
+    .hr-status-pill.pending { border-color:#f5d08a; background:#fff7e8; color:#9a5b00; }
+    .hr-status-pill.approved { border-color:#bde5cd; background:#effaf4; color:#087a52; }
+    .hr-status-pill.rejected { border-color:#f3c4c0; background:#fff3f1; color:#b42318; }
+    .hr-hours-topbar { display:flex; flex-wrap:wrap; gap:8px; align-items:center; justify-content:space-between; margin:10px 0; }
+    .hr-hours-tools { display:flex; flex-wrap:wrap; gap:8px; align-items:center; }
+    .hr-hours-selection { border:1px solid #d7e1ec; border-radius:8px; background:#f8fbfe; padding:10px; margin:10px 0; display:flex; flex-wrap:wrap; gap:8px; align-items:center; justify-content:space-between; color:#52637a; }
+    .hr-hours-selection label { display:flex; align-items:center; gap:7px; font-weight:800; color:#334155; }
+    .hr-hours-filters { display:grid; grid-template-columns:repeat(4,minmax(160px,1fr)) auto; gap:8px; align-items:end; margin:10px 0; }
+    .hr-hours-filters label { display:grid; gap:4px; color:#475569; font-size:12px; font-weight:800; text-transform:uppercase; }
+    .hr-hours-filters button { height:38px; }
+    .hr-hours-table { margin-top:12px; }
+    .tabs { display:flex; flex-wrap:wrap; gap:8px; margin:12px 0; }
+    .tabs button { background:#fff; color:var(--ink); border:1px solid var(--line); }
+    .tabs button.active { background:var(--blue); color:#fff; border-color:var(--blue); }
+    .split-panels { display:grid; grid-template-columns:minmax(0,1fr); gap:12px; }
+    .subtabs { display:inline-flex; gap:4px; padding:4px; border:1px solid var(--line); border-radius:8px; background:#f7fafc; margin:2px 0 12px; }
+    .subtabs button { height:34px; background:transparent; color:var(--ink); border-radius:6px; padding:0 16px; }
+    .subtabs button.active { background:var(--blue); color:#fff; }
+    .billing-pane { min-width:0; padding-top:4px; }
+    .section-head { display:flex; justify-content:space-between; gap:12px; align-items:flex-end; margin-bottom:12px; padding-bottom:8px; border-bottom:1px solid #edf2f7; }
+    .section-head h3 { margin:0; font-size:16px; }
+    .finance-filter-row { display:grid; grid-template-columns:minmax(220px,300px) repeat(4,minmax(120px,170px)) max-content max-content; gap:10px; align-items:end; margin:10px 0 12px; }
+    .finance-filter-row.compact { grid-template-columns:minmax(260px,420px) max-content max-content; }
+    .finance-filter-row button { justify-self:start; min-width:92px; padding:0 16px; }
+    .finance-toolbar { display:flex; flex-wrap:wrap; gap:8px; margin:8px 0 12px; }
+    .finance-toolbar button { height:34px; }
+    .pln-shell { display:grid; gap:10px; min-width:0; }
+    .pln-command { display:grid; grid-template-columns:minmax(280px,1fr) minmax(520px,auto); gap:12px; align-items:end; }
+    .pln-title { min-width:0; }
+    .pln-title h2 { margin:0; font-size:24px; line-height:1.12; }
+    .pln-title p { margin:6px 0 0; color:#607086; line-height:1.35; max-width:920px; }
+    .pln-controls { display:grid; grid-template-columns:minmax(190px,240px) minmax(92px,120px) repeat(4,max-content); gap:8px; align-items:end; justify-content:end; }
+    .pln-controls label { display:grid; gap:4px; color:#475569; font-size:11px; font-weight:800; text-transform:uppercase; }
+    .pln-controls input,.pln-controls select { height:38px; }
+    .pln-period-nav { display:grid; grid-template-columns:38px minmax(110px,1fr) 38px; gap:5px; align-items:center; }
+    .pln-period-nav button { min-width:38px; width:38px; padding:0; font-size:18px; }
+    .pln-scenario { border:1px solid #d7e1ec; border-radius:8px; background:#f8fbfe; overflow:hidden; }
+    .pln-scenario summary { cursor:pointer; padding:10px 12px; font-weight:800; color:#122033; }
+    .pln-scenario-body { display:grid; grid-template-columns:minmax(0,1fr) max-content minmax(260px,.6fr); gap:10px; align-items:end; padding:0 12px 12px; }
+    .pln-scenario-grid { display:grid; grid-template-columns:repeat(3,minmax(120px,1fr)); gap:10px; align-items:end; }
+    .pln-scenario-grid label { display:grid; gap:4px; font-size:12px; color:#475569; font-weight:700; }
+    .pln-scenario-result { min-height:38px; border:1px solid #d7e1ec; border-radius:8px; background:white; padding:9px 11px; color:#122033; line-height:1.35; }
+    .pln-board { display:grid; gap:12px; }
+    .pln-exec { display:grid; grid-template-columns:minmax(360px,1.05fr) minmax(360px,.85fr); gap:12px; align-items:stretch; }
+    .pln-decision { border:1px solid #d7e1ec; border-left:6px solid #087a52; border-radius:8px; background:linear-gradient(180deg,#fff,#f8fbfe); padding:18px; min-width:0; box-shadow:0 1px 0 rgba(15,23,42,.04); }
+    .pln-decision.bad { border-left-color:#c2410c; }
+    .pln-decision.warn { border-left-color:#b7791f; }
+    .pln-decision span { display:block; color:#64748b; font-size:11px; font-weight:800; text-transform:uppercase; }
+    .pln-decision strong { display:block; margin-top:7px; font-size:30px; line-height:1.1; overflow-wrap:anywhere; }
+    .pln-decision p { margin:9px 0 0; color:#607086; line-height:1.35; }
+    .pln-mini-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:10px; }
+    .pln-mini { border:1px solid #d7e1ec; border-radius:8px; background:#fff; padding:13px; min-height:108px; text-align:left; cursor:pointer; color:#0f172a; overflow:hidden; }
+    .pln-mini:hover,.pln-profit-card:hover { border-color:#8bb8e8; box-shadow:0 1px 8px rgba(15,23,42,.08); }
+    .pln-mini span { display:block; color:#64748b; font-size:11px; font-weight:800; text-transform:uppercase; }
+    .pln-mini strong { display:block; margin-top:7px; font-size:19px; line-height:1.18; overflow-wrap:anywhere; }
+    .pln-currency-line { display:block; white-space:normal; }
+    .pln-usd-line { display:block; color:#005da8; font-size:20px; font-weight:900; }
+    .pln-real-line { display:block; margin-top:4px; color:#607086; font-size:12px; font-weight:800; }
+    .pln-mini small { display:block; margin-top:7px; color:#607086; line-height:1.3; }
+    .pln-profit-strip { display:grid; grid-template-columns:repeat(4,minmax(160px,1fr)); gap:10px; align-items:stretch; }
+    .pln-profit-card { border:1px solid #d7e1ec; border-radius:8px; background:#fff; padding:14px 13px 16px; min-width:0; min-height:126px; display:grid; align-content:start; gap:4px; text-align:left; cursor:pointer; color:#0f172a; overflow:visible; }
+    .pln-profit-card span { display:block; color:#64748b; font-size:11px; font-weight:800; text-transform:uppercase; }
+    .pln-profit-card strong { display:block; margin-top:4px; font-size:19px; line-height:1.2; overflow-wrap:anywhere; }
+    .pln-profit-card small { display:block; margin-top:6px; color:#607086; line-height:1.3; }
+    .pln-kpi-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(210px,1fr)); gap:12px; }
+    .pln-kpi { min-height:104px; border:1px solid #d7e1ec; border-radius:8px; background:#fff; padding:15px; min-width:0; }
+    .pln-kpi span { display:block; color:#64748b; font-size:11px; font-weight:800; text-transform:uppercase; }
+    .pln-kpi strong { display:block; margin-top:10px; font-size:25px; overflow-wrap:anywhere; line-height:1.15; }
+    .pln-kpi small { display:block; margin-top:8px; color:#607086; line-height:1.35; }
+    .pln-kpi.good { border-left:5px solid #087a52; }
+    .pln-kpi.warn { border-left:5px solid #b7791f; }
+    .pln-kpi.bad { border-left:5px solid #c2410c; }
+    .pln-liquidity-grid { display:grid; grid-template-columns:minmax(0,1.2fr) minmax(330px,.8fr); gap:12px; align-items:start; }
+    .pln-bank-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(230px,1fr)); gap:10px; }
+    .pln-bank-card { border:1px solid #d7e1ec; border-radius:8px; background:#fff; padding:13px; min-height:112px; display:grid; gap:7px; }
+    .pln-bank-card span { display:block; color:#64748b; font-size:11px; font-weight:800; text-transform:uppercase; }
+    .pln-bank-card strong { display:block; margin-top:8px; font-size:22px; color:#0f172a; overflow-wrap:anywhere; }
+    .pln-bank-card small { display:block; color:#607086; line-height:1.3; }
+    .pln-bank-editor { display:grid; grid-template-columns:minmax(0,1fr) max-content; gap:6px; align-items:end; margin-top:4px; }
+    .pln-bank-editor label { display:grid; gap:3px; color:#475569; font-size:11px; font-weight:800; text-transform:uppercase; }
+    .pln-bank-editor input { height:32px; min-width:0; }
+    .pln-bank-card button { justify-self:start; height:32px; padding:0 12px; }
+    .pln-bank-msg { min-height:18px; color:#607086; font-size:12px; line-height:1.25; }
+    .pln-bank-msg.error { color:#b91c1c; }
+    .pln-bank-msg.ok { color:#047857; }
+    .pln-coverage-list { display:grid; gap:8px; }
+    .pln-coverage-row { display:grid; grid-template-columns:minmax(0,1.15fr) repeat(4,minmax(68px,.6fr)) minmax(88px,.7fr); gap:6px; align-items:center; width:100%; max-width:100%; box-sizing:border-box; border:1px solid #d7e1ec; border-radius:8px; background:#fff; padding:10px; cursor:pointer; }
+    .pln-coverage-row:hover { border-color:#8bb8e8; box-shadow:0 1px 8px rgba(15,23,42,.08); }
+    .pln-coverage-row strong { color:#0f172a; overflow-wrap:anywhere; }
+    .pln-coverage-row span { color:#607086; font-size:12px; }
+    .pln-pill { display:inline-flex; align-items:center; justify-content:center; min-height:28px; max-width:100%; border-radius:999px; padding:4px 9px; font-weight:800; font-size:12px; white-space:normal; text-align:center; overflow-wrap:anywhere; }
+    .pln-pill.good { color:#087a52; background:#e8f7ee; border:1px solid #bde8ce; }
+    .pln-pill.bad { color:#9a3412; background:#fff4e5; border:1px solid #fed7aa; }
+    .pln-panel { border:1px solid #d7e1ec; border-radius:8px; background:#f8fbfe; padding:13px; min-width:0; overflow:hidden; }
+    .pln-panel h3 { margin:0 0 10px; font-size:16px; }
+    .pln-sections { display:grid; grid-template-columns:repeat(2,minmax(520px,1fr)); gap:12px; align-items:start; }
+    .pln-section.wide { grid-column:1/-1; }
+    .pln-group-title { grid-column:1/-1; margin:4px 0 -4px; color:#334155; font-size:13px; font-weight:900; text-transform:uppercase; letter-spacing:.03em; }
+    .pln-section { border:1px solid #d7e1ec; border-radius:8px; background:#fff; padding:0; min-width:0; overflow:hidden; }
+    .pln-section summary { cursor:pointer; font-weight:800; color:#122033; padding:12px 14px; background:#f8fbfe; border-bottom:1px solid #edf2f7; }
+    .pln-section summary { display:flex; align-items:center; justify-content:space-between; gap:10px; }
+    .pln-section-actions { display:inline-flex; gap:6px; flex-wrap:wrap; }
+    .pln-section-actions button { height:28px; padding:0 10px; font-size:12px; }
+    .pln-section-body { padding:12px; }
+    .pln-section-note { margin:0 0 10px; color:#607086; line-height:1.4; }
+    .pln-section .table-wrap { margin-top:8px; max-height:360px; overflow:auto; scrollbar-gutter:stable both-edges; }
+    .pln-section table { width:max-content; min-width:100%; }
+    .pln-section th,.pln-section td { max-width:360px; white-space:normal; overflow-wrap:anywhere; vertical-align:top; }
+    .pln-section th:nth-child(2),.pln-section td:nth-child(2) { min-width:140px; }
+    .pln-section th:nth-child(3),.pln-section td:nth-child(3) { min-width:220px; }
+    .accounting-shell { display:grid; gap:10px; min-width:0; max-width:100%; overflow:visible; }
+    .accounting-hero { display:grid; grid-template-columns:repeat(3,minmax(150px,1fr)); gap:10px; align-items:stretch; }
+    .accounting-title { padding:14px; border:1px solid #d7e1ec; border-radius:8px; background:#fff; }
+    .accounting-title h2 { margin:0; font-size:26px; line-height:1.1; }
+    .accounting-title p { margin:6px 0 0; color:#607089; }
+    .accounting-kpi { padding:12px; border:1px solid #d7e1ec; border-radius:8px; background:#f8fbfe; }
+    .accounting-kpi span { display:block; color:#64748b; font-size:11px; font-weight:800; letter-spacing:.04em; text-transform:uppercase; }
+    .accounting-kpi strong { display:block; margin-top:6px; color:#0f172a; font-size:21px; }
+    .accounting-company { display:inline-flex; align-items:center; min-height:25px; margin-top:7px; border:1px solid #b8d5f1; border-radius:999px; padding:3px 10px; background:#edf7ff; color:#005da8; font-size:12px; font-weight:800; }
+    .accounting-topline { display:grid; grid-template-columns:minmax(0,1fr) minmax(300px,520px); gap:10px; align-items:stretch; min-width:0; }
+    .accounting-tc { display:grid; grid-template-columns:minmax(80px,1fr) minmax(115px,1fr) max-content; gap:8px; align-items:end; padding:10px; border:1px solid #d7e1ec; border-radius:8px; background:#fff; }
+    .accounting-tc h3,.accounting-filter-box h3 { grid-column:1/-1; margin:0 0 2px; font-size:13px; color:#334155; font-weight:800; }
+    .accounting-tc label,.accounting-filter-box label { display:grid; gap:4px; color:#475569; font-size:12px; font-weight:700; }
+    .accounting-tc input { height:32px; }
+    .accounting-grid { display:grid; grid-template-columns:minmax(0,1fr); gap:10px; align-items:start; min-width:0; max-width:100%; }
+    .accounting-side { display:grid; gap:10px; align-content:start; }
+    .accounting-box { border:1px solid #d7e1ec; border-radius:8px; background:#fff; padding:10px; }
+    .accounting-box h3 { margin:0 0 8px; font-size:12px; color:#334155; font-weight:800; letter-spacing:.04em; text-transform:uppercase; }
+    .accounting-actions { display:grid; gap:7px; }
+    .accounting-actions button { width:100%; min-height:34px; justify-content:flex-start; text-align:left; background:#fff; color:var(--ink); border:1px solid #cfd9e5; }
+    .accounting-actions button.primary { background:var(--blue); color:white; border-color:var(--blue); }
+    .accounting-actions button.green { background:var(--green); color:white; border-color:var(--green); }
+    .accounting-actions button.brown { background:var(--brown); color:white; border-color:var(--brown); }
+    .accounting-filter-box { padding:10px; border:1px solid #d7e1ec; border-radius:8px; background:#fff; min-width:0; max-width:100%; overflow:hidden; }
+    .accounting-filters { display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:9px; align-items:end; min-width:0; max-width:100%; }
+    .accounting-filters label { display:grid; gap:5px; color:#475569; font-size:12px; font-weight:700; text-transform:uppercase; }
+    .accounting-filters input,.accounting-filters select { min-width:0; height:34px; }
+    .accounting-radio { display:flex; gap:10px; align-items:center; height:34px; border:1px solid #d7e1ec; border-radius:7px; padding:0 9px; background:#f8fbfe; }
+    .accounting-radio label { display:flex; grid-auto-flow:column; gap:6px; align-items:center; text-transform:none; font-weight:700; color:#334155; }
+    .accounting-radio input { width:14px; height:14px; }
+    .accounting-toolbar { display:flex; gap:8px; flex-wrap:wrap; align-items:center; margin-top:10px; padding-top:10px; border-top:1px solid #edf2f7; max-width:100%; overflow:visible; }
+    .accounting-toolbar button,.accounting-menu summary { height:34px; border:1px solid #cfd9e5; border-radius:7px; padding:0 12px; background:#fff; color:#122033; display:inline-flex; align-items:center; cursor:pointer; font-weight:600; }
+    .accounting-toolbar button.primary { background:var(--blue); color:#fff; border-color:var(--blue); }
+    .accounting-menu { position:relative; }
+    .accounting-menu summary { list-style:none; }
+    .accounting-menu summary::-webkit-details-marker { display:none; }
+    .accounting-menu[open] summary { border-color:#8ab8e5; background:#edf7ff; color:#005da8; }
+    .accounting-menu-panel { position:absolute; z-index:12; top:39px; left:0; min-width:255px; display:grid; gap:4px; padding:8px; border:1px solid #cfd9e5; border-radius:8px; background:#fff; box-shadow:0 18px 42px rgba(15,31,53,.18); }
+    .accounting-menu-panel button { justify-content:flex-start; width:100%; text-align:left; border:0; background:#fff; color:#122033; }
+    .accounting-menu-panel button:hover { background:#edf7ff; }
+    .accounting-work { min-width:0; max-width:100%; display:grid; gap:10px; overflow:visible; }
+    .accounting-work .table-wrap { max-height:620px; width:100%; max-width:calc(100vw - 340px); overflow:auto; scrollbar-gutter:stable both-edges; }
+    .accounting-work table { width:max-content; min-width:100%; }
+    .accounting-banner { border:1px solid #d7e1ec; border-radius:8px; background:#fff; padding:10px 12px; color:#52637a; }
+    .accounting-entry-summary { cursor:pointer; }
+    .accounting-entry-summary:hover { background:#edf7ff; }
+    .accounting-entry-summary td { font-weight:700; }
+    .accounting-entry-lines-row > td { background:#fbfdff; padding:0; max-width:none; overflow:visible; }
+    .accounting-entry-lines-box { padding:9px 10px 12px; border-top:1px solid #dbe5f0; width:100%; max-width:calc(100vw - 370px); overflow:auto; scrollbar-gutter:stable both-edges; }
+    .accounting-entry-lines-box table { width:max-content; min-width:100%; border-collapse:collapse; }
+    .accounting-entry-lines-box th,.accounting-entry-lines-box td { padding:6px 8px; border-bottom:1px solid #edf2f7; font-weight:400; }
+    .accounting-entry-lines-box th:nth-child(3),.accounting-entry-lines-box td:nth-child(3) { min-width:320px; max-width:760px; white-space:normal; overflow-wrap:anywhere; }
+    .accounting-entry-toggle { display:inline-flex; align-items:center; justify-content:center; width:24px; height:24px; border:1px solid #cfd9e5; border-radius:6px; background:#fff; color:#005da8; font-weight:900; }
+    .accounting-report-head { display:flex; flex-wrap:wrap; justify-content:space-between; gap:10px; align-items:center; margin:0 0 10px; }
+    .accounting-report-head h3 { margin:0; font-size:16px; }
+    .accounting-report-head .muted { font-size:12px; }
+    .accounting-summary-grid { display:grid; grid-template-columns:repeat(4,minmax(160px,1fr)); gap:10px; margin-bottom:10px; }
+    .accounting-summary-card { border:1px solid #d7e1ec; border-radius:8px; background:#f8fbfe; padding:10px; }
+    .accounting-summary-card span { display:block; color:#64748b; font-size:11px; font-weight:800; letter-spacing:.04em; text-transform:uppercase; }
+    .accounting-summary-card strong { display:block; margin-top:5px; color:#0f172a; font-size:19px; }
+    .accounting-alerts { display:grid; gap:8px; }
+    .accounting-alert-item { border:1px solid #e5edf6; border-left:4px solid #f59e0b; border-radius:7px; padding:8px 10px; background:#fff; }
+    .accounting-alert-item.critical { border-left-color:#b42318; background:#fff7f6; }
+    .accounting-alert-item.warning { border-left-color:#b7791f; background:#fffaf0; }
+    .accounting-entry-lines { display:grid; gap:8px; }
+    .accounting-entry-line { display:grid; grid-template-columns:minmax(170px,1.2fr) minmax(180px,1.4fr) 110px 110px 34px; gap:8px; align-items:end; }
+    .service-selected { background:#eaf6ff; }
+    .pick-col { width:42px; min-width:42px; text-align:center; }
+    .row-pick { appearance:none; -webkit-appearance:none; width:20px; height:20px; border:1.5px solid #8b95a5; border-radius:50%; background:#fff; display:inline-grid; place-content:center; margin:0; vertical-align:middle; cursor:pointer; }
+    .row-pick::before { content:""; width:10px; height:10px; border-radius:50%; transform:scale(0); transition:transform .08s ease-in-out; background:var(--blue); }
+    .row-pick:checked { border-color:var(--blue); background:#eff7ff; }
+    .row-pick:checked::before { transform:scale(1); }
+    .hr-emp-filters { display:grid; grid-template-columns:repeat(4,minmax(160px,1fr)) auto auto; gap:10px; align-items:end; margin-bottom:12px; }
+    .hr-emp-toolbar { display:flex; justify-content:space-between; gap:12px; align-items:center; margin-bottom:10px; flex-wrap:wrap; }
+    .hr-emp-actions { display:flex; gap:8px; flex-wrap:wrap; }
+    .hr-emp-table table { min-width:2200px; }
+    .hr-emp-table th,.hr-emp-table td { font-size:12px; }
+    .hr-emp-modal { width:min(980px,96vw); }
+    .hr-emp-tabs { display:flex; gap:8px; flex-wrap:wrap; margin-bottom:12px; border-bottom:1px solid var(--line); padding-bottom:8px; }
+    .hr-emp-tabs button { background:#fff; color:#122033; border:1px solid #cfd9e5; }
+    .hr-emp-tabs button.active { background:#005da8; color:#fff; border-color:#005da8; }
+    .hr-emp-tab-panel { display:none; }
+    .hr-emp-tab-panel.active { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:10px; }
+    .hr-emp-tab-panel label { display:grid; gap:5px; font-weight:700; color:#334155; }
+    .hr-emp-tab-panel label.wide { grid-column:1 / -1; }
+    .hr-emp-tab-panel input,.hr-emp-tab-panel select,.hr-emp-tab-panel textarea { width:100%; min-width:0; }
+    .hr-emp-tab-panel textarea { min-height:72px; resize:vertical; }
+    .hr-emp-check { display:flex !important; align-items:center; gap:9px; min-height:38px; }
+    .hr-emp-check input { width:auto; }
+    .hr-salary-layout { display:grid; grid-template-columns:minmax(360px,1fr) minmax(420px,1fr); gap:14px; align-items:start; }
+    .hr-salary-tabs { display:flex; gap:8px; flex-wrap:wrap; margin-bottom:12px; border-bottom:1px solid var(--line); padding-bottom:8px; }
+    .hr-salary-tabs button { background:#fff; color:#122033; border:1px solid #cfd9e5; }
+    .hr-salary-tabs button.active { background:#005da8; color:#fff; border-color:#005da8; }
+    .hr-salary-pane { display:none; }
+    .hr-salary-pane.active { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:10px; }
+    .hr-salary-pane label,.hr-salary-expense label { display:grid; gap:5px; font-weight:700; color:#334155; }
+    .hr-salary-pane label.wide,.hr-salary-expense.wide { grid-column:1 / -1; }
+    .hr-salary-check { display:flex !important; align-items:center; gap:9px; min-height:38px; }
+    .hr-salary-check input { width:auto; }
+    .hr-salary-expense { grid-column:1 / -1; border:1px solid var(--line); border-radius:8px; padding:10px; background:#fbfdff; }
+    .hr-salary-expense-grid { display:grid; grid-template-columns:minmax(160px,1.2fr) 130px 110px 100px minmax(150px,1fr) auto; gap:8px; align-items:end; }
+    .hr-salary-expense-list { display:grid; gap:6px; margin-top:10px; max-height:160px; overflow:auto; }
+    .hr-salary-expense-row { display:flex; justify-content:space-between; gap:10px; align-items:center; border:1px solid #d7e1ec; border-radius:8px; padding:7px 9px; background:#fff; }
+    .hr-salary-result { display:grid; gap:10px; }
+    .hr-salary-kpis { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:10px; }
+    .hr-salary-detail { white-space:pre-wrap; line-height:1.42; max-height:460px; overflow:auto; border:1px solid var(--line); border-radius:8px; padding:12px; background:#fff; }
+    .hr-medical-shell { display:grid; gap:10px; min-width:0; }
+    .hr-medical-actions { display:flex; flex-wrap:wrap; gap:8px; align-items:center; justify-content:space-between; }
+    .hr-medical-tools { display:flex; flex-wrap:wrap; gap:8px; align-items:center; }
+    .hr-medical-filters { display:grid; grid-template-columns:repeat(4,minmax(170px,1fr)); gap:10px; align-items:end; }
+    .hr-medical-filters label { display:grid; gap:4px; color:#475569; font-size:12px; font-weight:800; text-transform:uppercase; }
+    .hr-medical-quick { display:flex; flex-wrap:wrap; gap:7px; align-items:center; color:#607086; font-size:13px; }
+    .hr-medical-layout { display:grid; grid-template-columns:minmax(0,1.35fr) minmax(320px,.65fr); gap:12px; align-items:start; }
+    .hr-medical-table tr.selected { background:#eaf6ff; }
+    .hr-medical-table tr.virtual td { color:#0f766e; }
+    .hr-medical-detail { border:1px solid #d7e1ec; border-radius:8px; background:#fff; padding:14px; position:sticky; top:10px; box-shadow:0 10px 26px rgba(15,31,53,.07); min-width:0; }
+    .hr-medical-detail h3 { margin:0 0 8px; color:#0f4c81; font-size:17px; overflow-wrap:anywhere; }
+    .hr-medical-detail pre { white-space:pre-wrap; font:inherit; line-height:1.42; margin:0 0 12px; color:#334155; }
+    .hr-medical-detail-actions { display:grid; gap:8px; }
+    .hr-policy-shell { display:grid; gap:10px; min-width:0; }
+    .hr-policy-actions { display:flex; flex-wrap:wrap; gap:8px; align-items:end; justify-content:space-between; }
+    .hr-policy-actions label { display:grid; gap:4px; min-width:240px; color:#475569; font-size:12px; font-weight:800; text-transform:uppercase; }
+    .hr-policy-tools { display:flex; flex-wrap:wrap; gap:8px; align-items:center; }
+    .hr-policy-layout { display:grid; grid-template-columns:minmax(280px,.8fr) minmax(0,1.2fr); gap:12px; align-items:start; }
+    .hr-policy-list { display:grid; gap:8px; min-width:0; }
+    .hr-policy-card { border:1px solid #d7e1ec; border-left:5px solid #005da8; border-radius:8px; background:#fff; padding:12px; text-align:left; cursor:pointer; }
+    .hr-policy-card:hover,.hr-policy-card.selected { border-color:#9ec9ee; background:#f6fbff; }
+    .hr-policy-card h3 { margin:0; color:#122033; font-size:16px; line-height:1.25; overflow-wrap:anywhere; }
+    .hr-policy-card p { margin:5px 0 0; color:#607086; }
+    .hr-policy-reader { border:1px solid #d7e1ec; border-radius:8px; background:#fff; padding:16px; min-width:0; position:sticky; top:10px; box-shadow:0 10px 26px rgba(15,31,53,.07); }
+    .hr-policy-reader h3 { margin:0 0 4px; color:#122033; font-size:20px; overflow-wrap:anywhere; }
+    .hr-policy-reader pre { white-space:pre-wrap; font:inherit; line-height:1.5; margin:14px 0; color:#263548; }
+    .hr-policy-reader-footer { border-top:1px solid #e5edf5; padding-top:10px; color:#64748b; font-size:12px; text-align:center; }
+    .hr-policy-reader-actions { display:flex; flex-wrap:wrap; gap:8px; margin-top:12px; }
+    .hr-salary-history table { min-width:680px; }
+    .service-warning { background:#fff3f3; }
+    .badge { display:inline-flex; align-items:center; min-height:24px; border:1px solid var(--line); border-radius:999px; padding:2px 9px; background:#f8fafc; font-size:12px; }
+    .badge.open { border-color:#b7d8ff; color:#005da8; background:#edf7ff; }
+    .badge.closed { border-color:#bde5cd; color:#087a52; background:#effaf4; }
+    .badge.cancel { border-color:#f3c4c0; color:#b42318; background:#fff3f1; }
+    .modal-backdrop { position:fixed; inset:0; z-index:20; background:rgba(5,18,32,.44); display:flex; align-items:center; justify-content:center; padding:4px; }
+    .modal { width:min(1120px,96vw); max-height:92vh; overflow:auto; background:#fff; border:1px solid var(--line); border-radius:9px; box-shadow:0 26px 90px rgba(0,0,0,.24); padding:16px; }
+    .modal.small { width:min(560px,94vw); }
+    .modal.itp-biweekly-modal { width:calc(100vw - 8px); height:calc(100vh - 8px); max-width:none; max-height:none; display:flex; flex-direction:column; gap:10px; overflow:hidden; background:#eef3f8; border:1px solid #cbd8e6; border-radius:10px; padding:12px; color:#122033; }
+    .itp-bi-header { display:grid; grid-template-columns:minmax(300px,1fr) minmax(420px,760px) auto; gap:14px; align-items:center; padding:10px 12px; border:1px solid #d5e0ec; border-radius:9px; background:#fff; box-shadow:0 10px 24px rgba(15,31,53,.07); }
+    .itp-bi-eyebrow { margin:0 0 4px; color:#005da8; font-size:11px; font-weight:800; letter-spacing:.08em; text-transform:uppercase; }
+    .itp-bi-header h2 { margin:0; font-size:24px; line-height:1.08; letter-spacing:0; }
+    .itp-bi-subtitle { margin:6px 0 0; color:#607089; font-size:13px; }
+    .itp-bi-company { display:inline-flex; align-items:center; margin-top:8px; min-height:26px; border:1px solid #b8d5f1; border-radius:999px; padding:3px 10px; background:#edf7ff; color:#005da8; font-size:12px; font-weight:800; }
+    .itp-bi-close { height:38px; padding:0 18px; border-radius:8px; border:1px solid #cfd9e5; background:#fff; color:#122033; }
+    .itp-bi-totals { display:grid; grid-template-columns:repeat(3,minmax(120px,1fr)); gap:10px; text-align:left; }
+    .itp-bi-totals strong,.itp-bi-totals span { display:block; min-height:58px; border:1px solid #d7e1ec; border-radius:9px; background:#f8fbfe; padding:9px 12px; color:#0f172a; font-size:20px; font-weight:800; }
+    .itp-bi-totals strong::before,.itp-bi-totals span::before { display:block; margin-bottom:5px; color:#64748b; font-size:11px; font-weight:800; letter-spacing:.04em; text-transform:uppercase; }
+    .itp-bi-totals strong:nth-child(1)::before { content:"Total CRC"; }
+    .itp-bi-totals strong:nth-child(2)::before { content:"Total USD"; }
+    .itp-bi-totals span::before { content:"Lineas"; }
+    .itp-bi-controls { display:grid; grid-template-columns:150px 140px repeat(5,max-content); align-items:end; gap:10px; padding:10px 12px; border:1px solid #d7e1ec; border-radius:9px; background:white; box-shadow:0 10px 24px rgba(15,31,53,.06); }
+    .itp-bi-controls label { display:grid; gap:5px; font-size:12px; font-weight:700; color:#475569; text-transform:uppercase; }
+    .itp-bi-controls input,.itp-bi-controls select { width:100%; min-width:0; height:36px; border-radius:7px; padding:0 10px; }
+    .itp-bi-controls .period-input { width:100%; }
+    .itp-bi-controls .fortnight-input { width:100%; }
+    .itp-bi-controls button,.itp-bi-tools button { height:36px; border-radius:7px; background:#fff; color:#122033; border:1px solid #cfd9e5; }
+    .itp-bi-controls button:first-of-type { background:#005da8; color:white; border-color:#005da8; }
+    .itp-bi-controls button.green { background:#00703c; color:white; border-color:#00703c; }
+    .itp-bi-body { flex:1; min-height:0; display:flex; flex-direction:column; gap:10px; overflow:hidden; }
+    .itp-bi-actions { display:none; }
+    .itp-bi-tools-title { margin:0; font-size:12px; font-weight:800; color:#334155; letter-spacing:.04em; text-transform:uppercase; }
+    .itp-bi-tools { display:flex; align-items:center; flex-wrap:wrap; gap:8px; padding:10px 12px; border:1px solid #d7e1ec; border-radius:9px; background:#fff; box-shadow:0 10px 24px rgba(15,31,53,.06); }
+    .itp-bi-tools button { min-width:92px; }
+    .itp-bi-tools .wide { min-width:150px; }
+    .itp-bi-instruction { display:none; }
+    .itp-biweekly-modal .status { display:none; border-radius:9px; padding:8px 10px; border:1px solid #d8e3ef; background:#fff; color:#52637a; line-height:1.35; }
+    .itp-biweekly-modal .status.error { border-color:#fac5bd; background:#fff4f2; color:#b42318; }
+    .itp-bi-main { min-width:0; min-height:0; display:flex; flex-direction:column; gap:10px; overflow:hidden; }
+    .itp-bi-table { flex:1 1 auto; min-height:0; overflow:hidden; }
+    .itp-bi-table .table-wrap { width:100%; height:100%; max-height:none; overflow:auto; background:#fff; border-radius:9px; border-color:#d7e1ec; box-shadow:0 10px 24px rgba(15,31,53,.06); }
+    .itp-bi-table table { width:max-content; min-width:2320px; font-size:13px; }
+    .itp-bi-table th,.itp-bi-table td { border-bottom:1px solid #e7edf4; padding:7px 8px; }
+    .itp-bi-table th { background:#edf4fb; color:#334155; font-size:12px; text-transform:uppercase; }
+    .itp-bi-table input,.itp-bi-table select { width:100%; height:30px; border-radius:6px; padding:0 7px; }
+    .itp-bi-table th:nth-child(1),.itp-bi-table td:nth-child(1) { min-width:54px; text-align:center; }
+    .itp-bi-table th:nth-child(2),.itp-bi-table td:nth-child(2) { min-width:170px; }
+    .itp-bi-table th:nth-child(3),.itp-bi-table td:nth-child(3) { min-width:250px; }
+    .itp-bi-table th:nth-child(4),.itp-bi-table td:nth-child(4) { min-width:120px; }
+    .itp-bi-table th:nth-child(5),.itp-bi-table td:nth-child(5) { min-width:86px; }
+    .itp-bi-table th:nth-child(6),.itp-bi-table td:nth-child(6) { min-width:105px; }
+    .itp-bi-table th:nth-child(7),.itp-bi-table td:nth-child(7) { min-width:190px; }
+    .itp-bi-table th:nth-child(8),.itp-bi-table td:nth-child(8) { min-width:260px; }
+    .itp-bi-table th:nth-child(9),.itp-bi-table td:nth-child(9) { min-width:190px; }
+    .itp-bi-table th:nth-child(10),.itp-bi-table td:nth-child(10) { min-width:140px; }
+    .itp-bi-table th:nth-child(11),.itp-bi-table td:nth-child(11) { min-width:126px; }
+    .itp-bi-table th:nth-child(12),.itp-bi-table td:nth-child(12) { min-width:80px; }
+    .itp-bi-table th:nth-child(13),.itp-bi-table td:nth-child(13) { min-width:190px; }
+    .itp-bi-table th:nth-child(14),.itp-bi-table td:nth-child(14) { min-width:120px; }
+    .itp-bi-table th:nth-child(15),.itp-bi-table td:nth-child(15) { min-width:115px; }
+    .itp-bi-table th:nth-child(16),.itp-bi-table td:nth-child(16) { min-width:280px; }
+    .itp-bi-table th:nth-child(17),.itp-bi-table td:nth-child(17) { min-width:90px; }
+    .itp-bi-selected td { outline:2px solid #005da8; outline-offset:-2px; background:#e9f4ff !important; }
+    .itp-bi-summary { flex:0 0 188px; display:grid; grid-template-columns:1fr 1fr; gap:10px; min-height:0; overflow:hidden; }
+    .itp-bi-summary h3 { margin:0 0 6px; font-size:13px; font-weight:800; color:#334155; text-transform:uppercase; }
+    .itp-bi-summary .table-wrap { height:158px; max-height:none; overflow:auto; border-radius:9px; background:white; border-color:#d7e1ec; }
+    .itp-bi-summary th,.itp-bi-summary td { border-bottom:1px solid #e7edf4; padding:6px 8px; }
+    .modal-head { display:flex; justify-content:space-between; gap:12px; align-items:center; margin-bottom:14px; }
+    .surveyors-box { border:1px solid var(--line); border-radius:8px; padding:10px; background:#fbfdff; }
+    .surveyor-line { display:grid; grid-template-columns:minmax(220px,1fr) 140px 34px; gap:8px; align-items:center; margin-top:8px; }
+    .pager { display:flex; justify-content:space-between; gap:12px; align-items:center; margin-top:10px; }
+    .export-note { font-size:12px; color:var(--muted); }
+    .view-grid { grid-template-columns:repeat(4,minmax(0,1fr)); }
+    .view-card { padding:15px; cursor:pointer; min-height:86px; border-top:3px solid var(--blue); }
+    .view-card:hover { outline:2px solid rgba(0,93,168,.18); }
+    .master-empty { margin-top:12px; }
+    .workspace { margin-top:12px; min-width:0; max-width:100%; }
+    .table-wrap { overflow:auto; border:1px solid var(--line); border-radius:8px; max-height:520px; max-width:100%; }
+    table { border-collapse:collapse; width:100%; min-width:850px; font-size:13px; }
+    th,td { border-bottom:1px solid #e6edf4; padding:8px 10px; text-align:left; white-space:nowrap; }
+    th { background:#f0f4f8; position:sticky; top:0; z-index:1; }
+    .warn-row td { background:#fff8e6; color:#6f4a00; }
+    .ok-row td { background:#eefbf3; color:#175f36; }
+    .bar-row { display:grid; grid-template-columns:130px 1fr auto; gap:9px; align-items:center; font-size:13px; margin-bottom:9px; }
+    .track { height:13px; background:#e7eef6; border-radius:999px; overflow:hidden; }
+    .fill { height:100%; background:linear-gradient(90deg,var(--blue),#029fcf); min-width:2px; }
+    .status { padding:10px 12px; background:var(--soft); border-radius:8px; color:var(--muted); }
+    .error { color:var(--red); }
+    .hidden { display:none !important; }
+    @media(max-width:980px) {
+      .login,.app,.kpis,.kpi-grid,.home-grid,.home-hero,.home-work-grid,.home-insight-grid,.home-action-layout,.home-exec-grid,.home-action-summary,.view-grid,.grid.two { grid-template-columns:1fr; }
+      .login-card { max-width:none; padding:34px 24px; }
+      .hero-logo { min-height:300px; padding:22px; }
+      .hero-logo img { width:min(88%,520px); height:250px; }
+      .form-grid { grid-template-columns:1fr; }
+      .service-command-center,.hr-hero,.hr-request-workspace { grid-template-columns:1fr; }
+      .hr-request-detail { position:static; }
+      .itp-action-grid { grid-template-columns:1fr; }
+      .itp-bi-header,.itp-bi-controls,.itp-bi-body,.itp-bi-summary { grid-template-columns:1fr; }
+      .itp-bi-totals { grid-template-columns:1fr; }
+      .finance-filter-row,.finance-filter-row.compact,.hr-hours-filters,.hr-emp-filters,.hr-emp-tab-panel.active,.hr-salary-layout,.hr-salary-pane.active,.hr-salary-expense-grid,.hr-salary-kpis,.hr-medical-filters,.hr-medical-layout,.hr-policy-layout,.pln-command,.pln-controls,.pln-scenario-body,.pln-exec,.pln-mini-grid,.pln-profit-strip,.pln-liquidity-grid,.pln-coverage-row,.pln-sections { grid-template-columns:1fr; }
+      .hr-policy-reader { position:static; }
+      .news-item { grid-template-columns:1fr; }
+      .news-item-actions { justify-content:flex-start; }
+      .accounting-hero,.accounting-grid,.accounting-filters,.accounting-entry-line,.accounting-topline,.accounting-tc { grid-template-columns:1fr; }
+      .accounting-entry-lines-box { max-width:calc(100vw - 40px); }
+      .surveyor-line { grid-template-columns:1fr; }
+      aside { min-height:auto; }
+      header { flex-direction:column; }
+    }
+  </style>
+</head>
+<body>
+  <section id="loginView" class="login">
+    <div class="login-card">
+      <h1>ERP-SOM Web</h1>
+      <p>Ingresa con tu usuario de SOM y guarda este dispositivo para entrar luego con Windows Hello, passkey, iris o huella cuando el navegador lo permita.</p>
+      <div id="loginForm" class="form">
+        <input id="user" autocomplete="username" placeholder="Usuario" />
+        <input id="pass" autocomplete="current-password" placeholder="Contraseña" type="password" />
+        <select id="loginCompany">
+          <option value="MSL-CR">MSL-CR | MSL MARINE SURVEYORS AND LOGISTICS GROUP SRL</option>
+          <option value="MCI-CR">MCI-CR | MSL MARINE CLAIMS RISK & INTELLIGENCE</option>
+        </select>
+        <label class="remember"><input id="rememberDevice" type="checkbox" /> Guardar credenciales en este dispositivo</label>
+        <button id="loginBtn">Ingresar</button>
+        <button id="bioBtn" class="secondary" type="button">Entrar con Windows Hello / passkey</button>
+        <div id="loginMsg" class="muted"></div>
+        <a href="/som/privacy" target="_blank" rel="noopener">Política de privacidad de Gmail</a>
+      </div>
+      <div id="totpForm" class="form hidden">
+        <img id="qr" class="qr hidden" alt="QR Authenticator" />
+        <input id="code" inputmode="numeric" autocomplete="one-time-code" placeholder="Código Authenticator" />
+        <button id="totpBtn">Validar código</button>
+        <button id="backLogin" class="secondary">Volver</button>
+        <div id="totpMsg" class="muted"></div>
+      </div>
+    </div>
+    <div class="hero-logo"><img src="/som/logo/msl?v={asset_version}" alt="MSL" /></div>
+  </section>
+
+  <section id="appView" class="app hidden">
+    <aside>
+      <div class="brand">
+        <img id="brandLogo" src="/som/logo/msl?v={asset_version}" alt="Logo" />
+        <div><strong>SOM Web</strong><span id="sessionText">Sesión activa</span></div>
+      </div>
+      <div class="nav" id="moduleNav"></div>
+      <div class="side-foot">
+        <select id="company"></select>
+        <button id="setupPasskey" class="secondary">Configurar Windows Hello / passkey</button>
+        <button id="logout" class="secondary">Cerrar sesión</button>
+      </div>
+    </aside>
+    <main>
+      <header>
+        <div>
+          <h1 id="pageTitle">Inicio</h1>
+        <div id="pageSubtitle" class="muted">Pendientes, aprobaciones, revisiones y alertas según permisos.</div>
+        </div>
+        <div class="toolbar">
+          <select id="companyTop"></select>
+          <select id="year"></select>
+          <div class="notify-wrap">
+            <button id="notifyEnable" class="secondary" type="button" title="Activar notificaciones">Activar alertas</button>
+            <button id="notifyBell" class="secondary notify-btn" type="button" title="Notificaciones">Alertas<span id="notifyCount" class="notify-count"></span></button>
+            <div id="notifyPanel" class="notify-panel hidden">
+              <div class="notify-head">
+                <h2>Notificaciones</h2>
+                <button class="secondary" onclick="markAllNotificationsRead()">Marcar leídas</button>
+              </div>
+              <div id="notifyList" class="notify-list"><div class="status">Sin notificaciones cargadas.</div></div>
+            </div>
+          </div>
+        </div>
+      </header>
+      <section class="grid kpis">
+        <div class="card kpi"><span id="kpiLabel1">Servicios</span><strong id="kpiValue1">-</strong><small id="kpiHint1">Desde agosto</small></div>
+        <div class="card kpi"><span id="kpiLabel2">Facturación</span><strong id="kpiValue2">-</strong><small id="kpiHint2">Desde agosto</small></div>
+        <div class="card kpi"><span id="kpiLabel3">CxC</span><strong id="kpiValue3">-</strong><small id="kpiHint3">Saldo pendiente</small></div>
+        <div class="card kpi"><span id="kpiLabel4">Informes</span><strong id="kpiValue4">-</strong><small id="kpiHint4">Desde agosto</small></div>
+      </section>
+      <section id="content"></section>
+    </main>
+  </section>
+
+  <link rel="stylesheet" href="/som/tally-assets/tabulator.min.css?v=1">
+  <link rel="stylesheet" href="/som/tally-assets/tally.css?v=1">
+  <script src="/som/tally-assets/tabulator.min.js?v=1"></script>
+  <script src="/som/tally-assets/papaparse.min.js?v=1"></script>
+  <script src="/som/tally-assets/tally.js?v=1"></script>
+  <script>
+    const DEFAULT_COMPANIES = [
+      { company_code:"MSL-CR", company_name:"MSL MARINE SURVEYORS AND LOGISTICS GROUP SRL" },
+      { company_code:"MCI-CR", company_name:"MSL MARINE CLAIMS RISK & INTELLIGENCE" }
+    ];
+    const intFmt = new Intl.NumberFormat("en-US", { maximumFractionDigits:0 });
+    const moneyFmt = new Intl.NumberFormat("en-US", { notation:"compact", maximumFractionDigits:1 });
+    const $ = id => document.getElementById(id);
+    const esc = value => String(value ?? "").replace(/[&<>"']/g, ch => ({ "&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;", "'":"&#39;" }[ch]));
+    const SESSION_KEY = "somWebSession";
+    const PASSKEY_KEY = "somWebPasskey";
+    const SAVED_LOGIN_KEY = "somWebSavedLogin";
+    const ASSET_VERSION = "{asset_version}";
+    let notificationPollTimer = null;
+    let lastNotificationSeenId = Number(localStorage.getItem("somWebLastNotificationId") || 0);
+    function readLocalJson(key) {
+      try {
+        return JSON.parse(localStorage.getItem(key) || "null");
+      } catch {
+        localStorage.removeItem(key);
+        return null;
+      }
+    }
+    const rememberedSession = readLocalJson(SESSION_KEY);
+    let session = null;
+    let pendingUser = null;
+    let pendingAction = null;
+    let catalog = { modules:[], master_data_actions:[], master_data_views:[] };
+    let homeSummary = null;
+    let currentModule = "dashboard";
+    let selectedMasterView = null;
+    let currentRows = [];
+    let bankAccessToken = "";
+    let bankRows = [];
+    let serviceRows = [];
+    let serviceMeta = {};
+    let serviceSurveyorCatalog = [];
+    const SERVICE_PAGE_SIZE = 25;
+    let servicePage = 1;
+    let serviceTotal = 0;
+    let selectedServiceIndex = null;
+    let selectedServiceIndexes = new Set();
+    let financeTab = "finance-home";
+    let billableRows = [];
+    let billingRows = [];
+    let advanceServiceRows = [];
+    let selectedBillableIndex = null;
+    let selectedBillingIndex = null;
+    let selectedBillableIndexes = new Set();
+    let selectedBillingIndexes = new Set();
+    let billingPane = "billables";
+    let creditRows = [];
+    let selectedCreditIndex = null;
+    let selectedCreditIndexes = new Set();
+    let collectionRows = [];
+    let selectedCollectionIndex = null;
+    let selectedCollectionIndexes = new Set();
+    let collectionPage = 1;
+    let collectionTotal = 0;
+    let collectionClientesLoaded = false;
+    let collectionClientes = [];
+    let collectionViewMode = "table";
+    let collectionCalendarMonth = null;
+    let collectionCalendarRows = [];
+    let bankRowsWeb = [];
+    let selectedBankIndex = null;
+    let selectedBankIndexes = new Set();
+    let bankStatementRows = [];
+    let selectedBankStatementId = null;
+    let selectedBankStatementIds = new Set();
+    let bankStatementLineRows = [];
+    let selectedBankLineIndex = null;
+    let selectedBankLineIndexes = new Set();
+    let selectedGenericFinanceIndexes = new Set();
+    let accountingRows = [];
+    let accountingEntryViewRows = [];
+    let selectedAccountingEntryId = null;
+    let expandedAccountingEntryIds = new Set();
+    let accountingAccounts = [];
+    let itpRows = [];
+    let selectedItpIndex = null;
+    let selectedItpIndexes = new Set();
+    let itpScheduleMonth = null;
+    let itpBiweeklyRows = [];
+    let selectedItpBiweeklyIndex = null;
+    let itpBiweeklyChecked = new Set();
+    let itpBiweeklySuppressed = new Set();
+    let planningPayload = null;
+    let selectedPaidInvoiceIndexes = new Set();
+    let disputeRows = [];
+    let disputeHistoryRows = [];
+    let selectedDisputeIndex = null;
+    let selectedDisputeIndexes = new Set();
+    let portRows = [];
+    let financeClientes = [];
+    let financeClienteRows = [];
+    let hrCurrentView = "home";
+    let hrRows = [];
+    let hrMedicalRows = [];
+    let hrMedicalFilters = {};
+    let hrNewsData = {};
+    let selectedHrMedicalIndex = null;
+    let selectedHrRequestIndex = null;
+    let selectedHrHourIds = new Set();
+    let hrHourPolicies = new Map();
+    let selectedHrPayrollIndex = null;
+    let selectedHrPayslipIndex = null;
+    let selectedHrEmployeeIndex = null;
+    let selectedHrPolicyId = null;
+    let hrEmployeePage = 1;
+    let hrEmployeeTotal = 0;
+    let hrPayrollPreview = null;
+    let hrSalaryScenario = "EMPLOYEE";
+    let hrSalaryRules = null;
+    let hrSalaryExpenses = [];
+    let hrSalaryHistoryRows = [];
+    const DISPUTE_STATUSES = ["New","In process","Process by Sales","Process by RTR","Process by Invoicing","Process by Collections","Process by Bank","Process by Disputes","Written Off","Resolved"];
+    const SERVICE_COLUMNS = [
+      "consec","tipo","estado","num_informe","buque_contenedor","cliente","contacto","detalle",
+      "continente","pais","puerto","operacion","surveyor","honorarios","costo_operativo",
+      "costo_tarjetas","fecha_inicio","hora_inicio","fecha_fin","hora_fin","demoras","duracion",
+      "factura","valor_factura","fecha_factura","terminos_pago","fecha_vencimiento","dias_vencido"
+    ];
+    const SERVICE_HIDDEN_COLUMNS = new Set(["credit_status","credit_release_by","credit_release_at","credit_decision"]);
+    const visibleServiceColumns = () => SERVICE_COLUMNS.filter(col => !SERVICE_HIDDEN_COLUMNS.has(col));
+    let serviceEditBaseline = null;
+    let serviceCreditApprovalCache = null;
+
+    const MASTER_CONFIG = {
+      clientes: {
+        title:"Cliente",
+        endpoint:"/clientes",
+        add:"/clientes/add",
+        update:"/clientes/update",
+        ultimo:"/clientes/ultimo",
+        suffix:"C",
+        codeKey:"Codigo",
+        methodKeys:"upperClient",
+        fields:[
+          ["Codigo","Código","text","",true],["NombreJuridico","Nombre jurídico","text","",true],
+          ["NombreComercial","Nombre comercial","text","",true],["Pais","País","text","Costa Rica",false],
+          ["Correo","Correo","email","",false],["Telefono","Teléfono","text","",false],
+          ["CedulaJuridicaVAT","Cédula jurídica / VAT","text","",false],["ActividadEconomica","Actividad económica","text","",false],["Prefijo","Prefijo","text","",false],
+          ["Provincia","Provincia","text","",false],["Canton","Cantón","text","",false],
+          ["Distrito","Distrito","text","",false],["FechaDePago","Fecha de pago","date","",false],
+          ["ContactoPrincipal","Contacto principal","text","",false],["ContactoSecundario","Contacto secundario","text","",false],
+          ["DireccionExacta","Dirección exacta","textarea","",false],["Comentarios","Comentarios","textarea","",false]
+        ]
+      },
+      proveedores: {
+        title:"Proveedor",
+        endpoint:"/proveedores",
+        add:"/proveedores/add",
+        update:"/proveedores/update",
+        ultimo:"/proveedores/ultimo",
+        suffix:"P",
+        codeKey:"Codigo",
+        fields:[
+          ["Codigo","Código","text","",true],["Activo","Activo","checkbox",true,false],
+          ["Nombre","Nombre","text","",true],["Apellidos","Apellidos","text","",false],
+          ["NombreComercial","Nombre comercial","text","",false],["Cedula","Cédula / VAT","text","",false],
+          ["Pais","País","text","Costa Rica",false],["Provincia","Provincia","text","",false],
+          ["Canton","Cantón","text","",false],["Distrito","Distrito","text","",false],
+          ["Prefijo","Prefijo","text","",false],["Telefono","Teléfono","text","",false],
+          ["Correo","Correo","email","",false],["TerminosPago","Términos pago","number","30",false],
+          ["Banco","Banco","text","",false],["CuentaIBAN","Cuenta IBAN","text","",false],
+          ["SwiftCode","Swift Code","text","",false],["UID","UID","text","",false],
+          ["DireccionBanco","Dirección banco","textarea","",false],["DireccionExacta","Dirección exacta","textarea","",false],
+          ["TipoProveeduria","Tipo proveeduría","text","",false],["Comentarios","Comentarios","textarea","",false]
+        ]
+      },
+      empleados: {
+        title:"Empleado",
+        endpoint:"/empleados",
+        add:"/empleados/add",
+        update:"/empleados/update",
+        codeKey:"codigo",
+        fields:[
+          ["codigo","Código","text","AUTO",true],["activo","Activo","checkbox",true,false],
+          ["nombre","Nombre","text","",true],["apellidos","Apellidos","text","",true],
+          ["estado_civil","Estado civil","text","",false],["genero","Género","text","",false],
+          ["nacionalidad","Nacionalidad","text","Costarricense",false],["prefijo","Prefijo","text","",false],
+          ["telefono","Teléfono","text","",false],["provincia","Provincia","text","",false],
+          ["canton","Cantón","text","",false],["distrito","Distrito","text","",false],
+          ["direccion","Dirección","textarea","",false],["jornada","Jornada","text","",false],
+          ["salario","Salario","number","",false],["horas_contratadas","Horas pactadas","number","",false],
+          ["horas_tope_ordinario","Tope ordinario","number","",false],["horas_tope_maximo","Tope máximo","number","",false],
+          ["tarifa_hora_extra","Tarifa hora extra","number","",false],["pago_minimo_garantizado","Pago mínimo garantizado","checkbox",false,false],
+          ["pago","Forma de pago","text","",false],["banco","Banco","text","",false],
+          ["cuenta_iban","Cuenta IBAN","text","",false],["moneda","Moneda","text","CRC",false],
+          ["enfermedades","Enfermedades","textarea","",false],["contacto_emergencia","Contacto emergencia","text","",false],
+          ["telefono_emergencia","Teléfono emergencia","text","",false],["activo1","Activo 1","text","",false],
+          ["marca1","Marca 1","text","",false],["serial1","Serial 1","text","",false],
+          ["activo2","Activo 2","text","",false],["marca2","Marca 2","text","",false],
+          ["serial2","Serial 2","text","",false],["activo3","Activo 3","text","",false],
+          ["marca3","Marca 3","text","",false],["serial3","Serial 3","text","",false]
+        ]
+      },
+      surveyores: {
+        title:"Surveyor",
+        endpoint:"/surveyores",
+        add:"/surveyores/add",
+        update:"/surveyores/update",
+        ultimo:"/surveyores/ultimo",
+        suffix:"S",
+        codeKey:"codigo",
+        fields:[
+          ["codigo","Código","text","",true],["activo","Activo","checkbox",true,false],
+          ["nombre","Nombre","text","",true],["apellidos","Apellidos","text","",false],
+          ["email","Correo","email","",false],["estado_civil","Estado civil","text","",false],
+          ["genero","Género","text","",false],["nacionalidad","Nacionalidad","text","Costarricense",false],
+          ["prefijo","Prefijo","text","",false],["telefono","Teléfono","text","",false],
+          ["provincia","Provincia","text","",false],["canton","Cantón","text","",false],
+          ["distrito","Distrito","text","",false],["direccion","Dirección","textarea","",false],
+          ["jornada","Jornada","text","",false],["puerto","Puerto","text","",false],
+          ["operacion","Operación","text","",false],["honorario","Honorario","number","",false],
+          ["pago","Forma de pago","text","",false],["banco","Banco","text","",false],
+          ["direccion_banco","Dirección banco","textarea","",false],["cuenta_iban","Cuenta IBAN","text","",false],
+          ["moneda","Moneda","text","USD",false],["swift","Swift","text","",false],
+          ["uid","UID","text","",false],["enfermedades","Enfermedades","textarea","",false],
+          ["contacto_emergencia","Contacto emergencia","text","",false],["telefono_emergencia","Teléfono emergencia","text","",false]
+        ]
+      },
+      servicios_md: {
+        title:"Servicio",
+        endpoint:"/servicios_md/",
+        add:"/servicios_md/add",
+        update:"/servicios_md/update",
+        ultimo:"/servicios_md/ultimo",
+        suffix:"SV",
+        codeKey:"codigo",
+        fields:[
+          ["codigo","Código","text","",true],["codigo_prod","Código producto","text","",false],
+          ["nombre","Nombre","text","",true],["costo","Costo","number","0",false]
+        ]
+      },
+      puertos: {
+        title:"Puerto",
+        endpoint:"/cpp/ports",
+        add:"/cpp/ports",
+        update:"/cpp/ports/{id}",
+        codeKey:"id",
+        fields:[
+          ["continente","Continente","text","",true],
+          ["pais","País","text","",true],
+          ["puerto","Puerto","text","",true]
+        ]
+      },
+      company_fiscal: {
+        title:"Datos fiscales",
+        endpoint:"/companies",
+        add:null,
+        update:"/companies/{company}/",
+        codeKey:"company_code",
+        fields:[
+          ["company_code","Código empresa","text","",true],["company_name","Nombre empresa","text","",true],
+          ["legal_name","Razón social","text","",false],["trade_name","Nombre comercial","text","",false],
+          ["tax_id","Cédula jurídica","text","",false],["economic_activity","Actividad económica","text","",false],
+          ["phone","Teléfono","text","",false],["billing_email","Correo facturación","email","",false],
+          ["email","Correo general","email","",false],["country","País","text","Costa Rica",false],
+          ["province","Provincia","text","",false],["canton","Cantón","text","",false],
+          ["district","Distrito","text","",false],["address","Dirección","textarea","",false],
+          ["notes","Notas","textarea","",false]
+        ]
+      }
+    };
+
+    const money = value => "$" + moneyFmt.format(Number(value || 0));
+    const kpiValue = item => item?.format === "money" ? money(item.value) : intFmt.format(Number(item?.value || 0));
+    function sessionModuleCodes() {
+      return [...new Set([...(session?.modules || []), ...Object.keys(session?.permissions || {})])];
+    }
+    function sessionPermissionCodes() {
+      const perms = session?.permissions || {};
+      const out = [];
+      Object.entries(perms).forEach(([module, actions]) => {
+        (actions || []).forEach(action => {
+          out.push(String(action));
+          out.push(`${module}:${action}`);
+        });
+      });
+      return [...new Set(out)];
+    }
+    const headers = (extra={}) => ({
+      "Content-Type":"application/json",
+      "X-Company-Code": selectedCompany(),
+      "X-User": session?.usuario || "",
+      "X-Role": session?.rol || "",
+      "X-User-Role": session?.rol || "",
+      "X-Modules": sessionModuleCodes().join(","),
+      "X-Permissions": sessionPermissionCodes().join(","),
+      ...extra
+    });
+    function selectedCompany() {
+      return $("companyTop")?.value || $("company")?.value || session?.company || "MSL-CR";
+    }
+
+    let gmailAdminSession = null;
+    let gmailAdminPrompt = null;
+    async function authorizeGmailAdministration() {
+      const identity = `${session?.usuario || ""}:${selectedCompany()}`;
+      if (gmailAdminSession?.identity === identity && gmailAdminSession.until > Date.now()) return gmailAdminSession.token;
+      if (gmailAdminPrompt) return gmailAdminPrompt;
+      gmailAdminPrompt = new Promise((resolve, reject) => {
+        const dialog = document.createElement("dialog");
+        dialog.style.cssText = "width:440px;max-width:calc(100vw - 32px);border:1px solid #d6e0eb;border-radius:8px;padding:24px;color:#122033";
+        dialog.innerHTML = `<form><h2 style="font-size:20px;margin-top:0">Acceso administrativo</h2>
+          <p>${esc(session?.usuario)} · ${esc(selectedCompany())}</p>
+          <label>Contraseña SOM<input name="password" type="password" autocomplete="current-password" required maxlength="200"></label>
+          <label>Código Authenticator<input name="codigo" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6}" maxlength="6" required></label>
+          <p class="error" role="alert"></p><div style="display:flex;gap:8px"><button type="submit">Autorizar</button><button type="button" class="secondary">Cancelar</button></div></form>`;
+        const form = dialog.querySelector("form");
+        const finish = (token) => { form.reset(); dialog.close(); dialog.remove(); token ? resolve(token) : reject(new Error("Autorización Gmail cancelada")); };
+        dialog.addEventListener("cancel", event => { event.preventDefault(); finish(null); });
+        dialog.querySelector('button[type="button"]').onclick = () => finish(null);
+        form.onsubmit = async event => {
+          event.preventDefault();
+          const button = form.querySelector('button[type="submit"]');
+          button.disabled = true;
+          try {
+            const resp = await fetch("/accounting/tax/gmail/session", { method:"POST", headers:headers(), body:JSON.stringify({ usuario:session?.usuario, password:form.elements.password.value, codigo:form.elements.codigo.value }) });
+            const data = await resp.json();
+            form.reset();
+            if (!resp.ok) throw new Error(typeof data.detail === "string" ? data.detail : "No se pudo autorizar Gmail");
+            if (identity !== `${session?.usuario || ""}:${selectedCompany()}`) throw new Error("La sesión o empresa cambió. Vuelva a autorizar.");
+            gmailAdminSession = { identity, token:data.access_token, until:Date.now() + (data.expires_in - 15) * 1000 };
+            finish(data.access_token);
+          } catch (err) { form.querySelector('[role="alert"]').textContent = err.message; }
+          finally { button.disabled = false; }
+        };
+        document.body.appendChild(dialog);
+        dialog.showModal();
+      });
+      try { return await gmailAdminPrompt; }
+      finally { gmailAdminPrompt = null; }
+    }
+    async function secureFetch(path, options) {
+      const protectedPath = path.startsWith("/accounting/tax/gmail/") || path.startsWith("/admin/users");
+      if (protectedPath) {
+        const token = await authorizeGmailAdministration();
+        options.headers = { ...options.headers, Authorization:`Bearer ${token}` };
+      }
+      const response = await fetch(path, options);
+      if (protectedPath && response.status === 401) gmailAdminSession = null;
+      return response;
+    }
+    async function getJSON(path, extraHeaders={}) {
+      const resp = await secureFetch(path, { headers:headers(extraHeaders) });
+      if (!resp.ok) {
+        let msg = resp.statusText || `${resp.status}`;
+        try { msg = (await resp.json()).detail || msg; } catch {}
+        throw new Error(msg);
+      }
+      return resp.json();
+    }
+    async function postJSON(path, payload) {
+      const resp = await secureFetch(path, { method:"POST", headers:headers(), body:JSON.stringify(payload) });
+      if (!resp.ok) {
+        let msg = resp.statusText;
+        try { msg = (await resp.json()).detail || msg; } catch {}
+        throw new Error(msg);
+      }
+      return resp.json();
+    }
+    function urlBase64ToUint8Array(base64String) {
+      const padding = "=".repeat((4 - base64String.length % 4) % 4);
+      const base64 = (base64String + padding).replace(/-/g, "+").replace(/_/g, "/");
+      const rawData = atob(base64);
+      return Uint8Array.from([...rawData].map(char => char.charCodeAt(0)));
+    }
+    async function registerSomServiceWorker() {
+      if (!("serviceWorker" in navigator)) return null;
+      try {
+        return await navigator.serviceWorker.register(`/som/service-worker.js?v=${ASSET_VERSION}`);
+      } catch {
+        return null;
+      }
+    }
+    async function enableNotifications() {
+      const status = $("notifyEnable");
+      if (!("Notification" in window)) {
+        if (status) status.textContent = "Sin soporte";
+        alert("Este navegador no soporta notificaciones.");
+        return;
+      }
+      const permission = Notification.permission === "granted" ? "granted" : await Notification.requestPermission();
+      if (permission !== "granted") {
+        if (status) status.textContent = "Alertas bloqueadas";
+        return;
+      }
+      const sw = await registerSomServiceWorker();
+      const config = await getJSON("/notifications/push/config").catch(() => ({ enabled:false, public_key:"" }));
+      if (sw && config.public_key && "PushManager" in window) {
+        const existing = await sw.pushManager.getSubscription();
+        const subscription = existing || await sw.pushManager.subscribe({
+          userVisibleOnly:true,
+          applicationServerKey:urlBase64ToUint8Array(config.public_key)
+        });
+        await postJSON("/notifications/push/subscribe", subscription.toJSON());
+        if (status) status.textContent = "Alertas activas";
+      } else if (status) {
+        status.textContent = "Alertas en pantalla";
+      }
+      await loadNotifications(true);
+    }
+    function showForegroundNotification(item) {
+      if (!item || Number(item.id || 0) <= lastNotificationSeenId) return;
+      lastNotificationSeenId = Number(item.id || 0);
+      localStorage.setItem("somWebLastNotificationId", String(lastNotificationSeenId));
+      if ("Notification" in window && Notification.permission === "granted") {
+        try {
+          const n = new Notification(item.title || "SOM", { body:item.message || "", icon:"/som/icon/msl-192.png" });
+          n.onclick = () => window.focus();
+        } catch {}
+      }
+    }
+    async function loadNotifications(foreground=false) {
+      if (!session) return;
+      try {
+        const payload = await getJSON("/notifications?limit=30");
+        const rows = rowsList(payload);
+        const count = Number(payload.unread_count || 0);
+        const badge = $("notifyCount");
+        if (badge) {
+          badge.textContent = count > 99 ? "99+" : String(count);
+          badge.classList.toggle("visible", count > 0);
+        }
+        const list = $("notifyList");
+        if (list) {
+          list.innerHTML = rows.length ? rows.map(row => `
+            <div class="notify-item">
+              <strong>${esc(row.title)}</strong>
+              <p>${esc(row.message)}</p>
+              <small>${esc(row.created_at || "")}</small>
+            </div>`).join("") : '<div class="status">Sin notificaciones.</div>';
+        }
+        if (foreground && rows.length) showForegroundNotification(rows[0]);
+      } catch {}
+    }
+    async function scanNotificationAlerts() {
+      if (!session) return;
+      const role = String(session.rol || "").toLowerCase();
+      if (!["admin","master"].includes(role)) return;
+      await postJSON("/notifications/scan", { days_ahead:3 }).catch(() => null);
+      await loadNotifications(true);
+    }
+    function startNotificationPolling() {
+      if (notificationPollTimer) clearInterval(notificationPollTimer);
+      loadNotifications(false);
+      scanNotificationAlerts();
+      notificationPollTimer = setInterval(() => loadNotifications(true), 60000);
+    }
+    async function markAllNotificationsRead() {
+      await sendJSON("PATCH", "/notifications/read-all", {});
+      await loadNotifications(false);
+    }
+    async function sendJSON(method, path, payload, extraHeaders={}) {
+      const resp = await secureFetch(path, { method, headers:headers(extraHeaders), body:payload ? JSON.stringify(payload) : undefined });
+      if (!resp.ok) {
+        let msg = resp.statusText;
+        try { msg = (await resp.json()).detail || msg; } catch {}
+        throw new Error(msg);
+      }
+      return resp.json();
+    }
+    async function downloadBinary(path, filename, extraHeaders={}) {
+      const resp = await fetch(path, { method:"GET", headers:headers(extraHeaders) });
+      if (!resp.ok) {
+        let msg = resp.statusText || `${resp.status}`;
+        try { msg = (await resp.json()).detail || msg; } catch {}
+        throw new Error(msg);
+      }
+      const blob = await resp.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    }
+    async function sendForm(path, formData) {
+      const h = headers();
+      delete h["Content-Type"];
+      const resp = await fetch(path, { method:"POST", headers:h, body:formData });
+      if (!resp.ok) {
+        let msg = resp.statusText;
+        try { msg = (await resp.json()).detail || msg; } catch {}
+        throw new Error(msg);
+      }
+      return resp.json();
+    }
+    function rowsList(value) {
+      if (Array.isArray(value)) return value;
+      if (Array.isArray(value?.data)) return value.data;
+      if (Array.isArray(value?.items)) return value.items;
+      return [];
+    }
+    function easterSunday(year) {
+      const a = year % 19, b = Math.floor(year / 100), c = year % 100;
+      const d = Math.floor(b / 4), e = b % 4, f = Math.floor((b + 8) / 25), g = Math.floor((b - f + 1) / 3);
+      const h = (19 * a + b - d - g + 15) % 30, i = Math.floor(c / 4), k = c % 4;
+      const l = (32 + 2 * e + 2 * i - h - k) % 7, m = Math.floor((a + 11 * h + 22 * l) / 451);
+      const month = Math.floor((h + l - 7 * m + 114) / 31), day = ((h + l - 7 * m + 114) % 31) + 1;
+      return new Date(Date.UTC(year, month - 1, day));
+    }
+    function isoFromDateUTC(date) {
+      return date.toISOString().slice(0,10);
+    }
+    function crHolidaySet(year) {
+      const easter = easterSunday(year);
+      const addDays = days => {
+        const d = new Date(easter);
+        d.setUTCDate(d.getUTCDate() + days);
+        return isoFromDateUTC(d);
+      };
+      return new Set([
+        `${year}-01-01`, addDays(-3), addDays(-2), `${year}-04-11`, `${year}-05-01`,
+        `${year}-07-25`, `${year}-08-02`, `${year}-08-15`, `${year}-09-15`,
+        `${year}-12-01`, `${year}-12-25`
+      ]);
+    }
+    function previousBusinessDayCR(isoDate) {
+      const d = new Date(`${isoDate}T00:00:00Z`);
+      let holidays = crHolidaySet(d.getUTCFullYear());
+      while (d.getUTCDay() === 0 || d.getUTCDay() === 6 || holidays.has(isoFromDateUTC(d))) {
+        d.setUTCDate(d.getUTCDate() - 1);
+        holidays = crHolidaySet(d.getUTCFullYear());
+      }
+      return isoFromDateUTC(d);
+    }
+    function firstFromSet(set) {
+      const first = set.values().next();
+      return first.done ? null : first.value;
+    }
+    function setIndexSelection(set, index, checked) {
+      if (checked) set.add(index);
+      else set.delete(index);
+      return firstFromSet(set);
+    }
+    function options(values, selected="", placeholder="Todos") {
+      const list = [...new Set(rowsList(values).map(v => String(v ?? "").trim()).filter(Boolean))].sort((a,b) => a.localeCompare(b));
+      return `<option value="">${esc(placeholder)}</option>` + list.map(v => `<option value="${esc(v)}"${v === selected ? " selected" : ""}>${esc(v)}</option>`).join("");
+    }
+    function cellText(row, index) {
+      return (row.cells[index]?.innerText || row.cells[index]?.textContent || "").trim();
+    }
+    function compareExcelValues(a, b) {
+      const na = Number(String(a).replace(/[$,\\s]/g, ""));
+      const nb = Number(String(b).replace(/[$,\\s]/g, ""));
+      if (!Number.isNaN(na) && !Number.isNaN(nb)) return na - nb;
+      return String(a).localeCompare(String(b), "es", { numeric:true, sensitivity:"base" });
+    }
+    function closeExcelFilterMenus() {
+      document.querySelectorAll(".excel-filter-menu").forEach(menu => menu.remove());
+    }
+    function applyExcelTableFilters(table) {
+      const filters = table._excelFilters || new Map();
+      Array.from(table.tBodies[0]?.rows || []).forEach(row => {
+        let show = true;
+        filters.forEach((values, index) => {
+          if (values && values.size && !values.has(cellText(row, index))) show = false;
+        });
+        row.style.display = show ? "" : "none";
+      });
+      Array.from(table.tHead?.rows[0]?.cells || []).forEach((th, index) => {
+        th.classList.toggle("filtered", Boolean(filters.get(index)?.size));
+      });
+    }
+    function sortExcelTable(table, index, dir) {
+      const body = table.tBodies[0];
+      if (!body) return;
+      const rows = Array.from(body.rows);
+      rows.sort((ra, rb) => compareExcelValues(cellText(ra, index), cellText(rb, index)) * dir);
+      rows.forEach(row => body.appendChild(row));
+      applyExcelTableFilters(table);
+    }
+    function openExcelFilterMenu(table, th, index) {
+      closeExcelFilterMenus();
+      if (!table._excelFilters) table._excelFilters = new Map();
+      const current = table._excelFilters.get(index) || new Set();
+      const values = [...new Set(Array.from(table.tBodies[0]?.rows || []).map(row => cellText(row, index)).filter(Boolean))]
+        .sort((a,b) => compareExcelValues(a,b));
+      const menu = document.createElement("div");
+      menu.className = "excel-filter-menu";
+      menu.innerHTML = `
+        <h4>${esc(th.innerText || "Columna")}</h4>
+        <div class="excel-filter-actions">
+          <button class="secondary" data-sort="1">A-Z / Menor</button>
+          <button class="secondary" data-sort="-1">Z-A / Mayor</button>
+          <button class="secondary" data-select="all">Marcar todo</button>
+          <button class="secondary" data-select="none">Desmarcar</button>
+        </div>
+        <input class="excel-filter-search" placeholder="Buscar valor..." />
+        <div class="excel-filter-values">${values.map((value, i) => {
+          const checked = !current.size || current.has(value);
+          return `<label data-value-row><input type="checkbox" value="${esc(value)}" ${checked ? "checked" : ""} /><span title="${esc(value)}">${esc(value)}</span></label>`;
+        }).join("") || '<div class="muted">Sin valores</div>'}</div>
+        <div class="excel-filter-footer">
+          <button class="secondary" data-clear="one">Limpiar columna</button>
+          <button class="secondary" data-clear="all">Limpiar todo</button>
+          <button data-apply="1">Aplicar</button>
+        </div>`;
+      document.body.appendChild(menu);
+      const rect = th.getBoundingClientRect();
+      menu.style.left = `${Math.min(rect.left, window.innerWidth - menu.offsetWidth - 10)}px`;
+      menu.style.top = `${Math.min(rect.bottom + 6, window.innerHeight - menu.offsetHeight - 10)}px`;
+      menu.addEventListener("click", event => event.stopPropagation());
+      menu.querySelector("[data-sort='1']").onclick = () => { sortExcelTable(table, index, 1); closeExcelFilterMenus(); };
+      menu.querySelector("[data-sort='-1']").onclick = () => { sortExcelTable(table, index, -1); closeExcelFilterMenus(); };
+      menu.querySelector("[data-select='all']").onclick = () => menu.querySelectorAll(".excel-filter-values input").forEach(input => input.checked = true);
+      menu.querySelector("[data-select='none']").onclick = () => menu.querySelectorAll(".excel-filter-values input").forEach(input => input.checked = false);
+      menu.querySelector("[data-clear='one']").onclick = () => { table._excelFilters.delete(index); applyExcelTableFilters(table); closeExcelFilterMenus(); };
+      menu.querySelector("[data-clear='all']").onclick = () => { table._excelFilters = new Map(); applyExcelTableFilters(table); closeExcelFilterMenus(); };
+      menu.querySelector("[data-apply='1']").onclick = () => {
+        const checked = Array.from(menu.querySelectorAll(".excel-filter-values input:checked")).map(input => input.value);
+        if (!checked.length || checked.length === values.length) table._excelFilters.delete(index);
+        else table._excelFilters.set(index, new Set(checked));
+        applyExcelTableFilters(table);
+        closeExcelFilterMenus();
+      };
+      menu.querySelector(".excel-filter-search").oninput = event => {
+        const q = event.target.value.toLowerCase();
+        menu.querySelectorAll("[data-value-row]").forEach(label => {
+          label.style.display = label.innerText.toLowerCase().includes(q) ? "" : "none";
+        });
+      };
+    }
+    function enhanceExcelTables(root=document) {
+      root.querySelectorAll(".table-wrap table").forEach(table => {
+        if (table.dataset.excelEnhanced === "1" || !table.tHead || !table.tBodies.length) return;
+        table.dataset.excelEnhanced = "1";
+        Array.from(table.tHead.rows[0]?.cells || []).forEach((th, index) => {
+          if (th.classList.contains("pick-col") || !th.innerText.trim()) return;
+          th.classList.add("excel-th");
+          th.title = "Filtrar u ordenar esta columna";
+          th.addEventListener("click", event => {
+            event.stopPropagation();
+            openExcelFilterMenu(table, th, index);
+          });
+        });
+      });
+    }
+    function valueFrom(id) {
+      return ($(id)?.value || "").trim();
+    }
+    function downloadText(filename, text, mime="text/plain;charset=utf-8") {
+      const blob = new Blob([text], { type:mime });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    }
+    function selectedService() {
+      if (selectedServiceIndex === null) selectedServiceIndex = firstFromSet(selectedServiceIndexes);
+      return selectedServiceIndex === null ? null : serviceRows[selectedServiceIndex];
+    }
+    function requireService() {
+      const row = selectedService();
+      if (!row) alert("Seleccione primero un servicio de la tabla.");
+      return row;
+    }
+    function fillCompanySelect(select) {
+      if (!select) return;
+      select.innerHTML = "";
+      DEFAULT_COMPANIES.forEach(c => {
+        const option = document.createElement("option");
+        option.value = c.company_code;
+        option.textContent = `${c.company_code} | ${c.company_name}`;
+        select.appendChild(option);
+      });
+    }
+    function bootSelectors() {
+      fillCompanySelect($("loginCompany"));
+      fillCompanySelect($("company"));
+      fillCompanySelect($("companyTop"));
+      for (let y = {year}; y >= {year} - 4; y--) {
+        const option = document.createElement("option");
+        option.value = String(y);
+        option.textContent = String(y);
+        $("year").appendChild(option);
+      }
+      const savedLogin = readLocalJson(SAVED_LOGIN_KEY);
+      const rememberedLogin = savedLogin || (rememberedSession ? { usuario:rememberedSession.usuario, company:rememberedSession.company } : null);
+      if (rememberedLogin) {
+        $("user").value = rememberedLogin.usuario || "";
+        $("loginCompany").value = rememberedLogin.company || "MSL-CR";
+        $("rememberDevice").checked = true;
+      }
+      localStorage.removeItem(SESSION_KEY);
+      $("bioBtn").disabled = !window.PublicKeyCredential || !localStorage.getItem(PASSKEY_KEY);
+    }
+    async function loadCatalog() {
+      catalog = await getJSON("/som/catalog").catch(() => ({ modules:[], master_data_actions:[], master_data_views:[] }));
+    }
+    function canView(code) {
+      if (!session) return false;
+      const role = String(session.rol || "").toLowerCase();
+      if (["admin","master"].includes(role)) return true;
+      const perms = session.permissions || {};
+      return (session.modules || []).includes(code) || (perms[code] || []).length > 0;
+    }
+    function canHr(action) {
+      if (!session) return false;
+      const role = String(session.rol || "").toLowerCase();
+      const user = String(session.usuario || "").toLowerCase();
+      if (["admin","master"].includes(role) || ["admin","aaron01","gerencia1"].includes(user)) return true;
+      const surveyorBasic = ["payslips_view","payslips_download","requests_view","requests_create","hours_view","hours_register","medical_network","policies_view"];
+      if (["surveyor01","surveyor02","surveyor03"].includes(user)) return surveyorBasic.includes(action);
+      const perms = session.permissions || {};
+      const all = new Set([...(perms.hhrre || []), ...(perms.hhrr || [])].map(x => String(x).toLowerCase()));
+      if (all.has("admin") || all.has("*") || all.has(String(action).toLowerCase())) return true;
+      const backendAliases = {
+        payslips_view:["payslips","view"],
+        payslips_download:["payslips","view"],
+        requests_view:["view","approve"],
+        requests_create:["view"],
+        requests_approve:["approve"],
+        hours_view:["ot_log","view"],
+        hours_register:["ot_log","view"],
+        hours_approve:["ot_log_status","ot_log","view"],
+        payroll_view:["payroll","view"],
+        payroll_generate:["generate","payroll"],
+        employees_view:["employees","view"],
+        employees_edit:["employees"],
+        salary_calculator:["view"],
+        medical_network:["view"],
+        policies_view:["view"],
+        policies_edit:["view"],
+        news_publish:["view"]
+      };
+      if ((backendAliases[action] || []).some(alias => all.has(alias))) return true;
+      const employeeBasic = new Set(surveyorBasic);
+      const hrPrivileged = new Set(["payroll_view","payroll_generate","employees_view","employees_edit","requests_approve","hours_approve","policies_edit","news_publish","salary_calculator","liquidations"]);
+      if (employeeBasic.has(action)) return ["user","hr","rrhh","hhrre","hhrr","finance","accounting"].includes(role);
+      if (hrPrivileged.has(action)) return ["hr","rrhh","hhrre","hhrr"].includes(role);
+      return false;
+    }
+    function showLogin() {
+      gmailAdminSession = null;
+      $("loginView").classList.remove("hidden");
+      $("appView").classList.add("hidden");
+      $("loginForm").classList.remove("hidden");
+      $("totpForm").classList.add("hidden");
+    }
+    function showApp() {
+      $("loginView").classList.add("hidden");
+      $("appView").classList.remove("hidden");
+      $("sessionText").textContent = `${session.usuario} · ${session.rol}`;
+      $("company").value = session.company || "MSL-CR";
+      $("companyTop").value = session.company || "MSL-CR";
+      renderNav();
+      selectModule(currentModule);
+      registerSomServiceWorker();
+      startNotificationPolling();
+    }
+    async function login() {
+      $("loginMsg").textContent = "Validando...";
+      try {
+        const data = await postJSON("/auth/mobile/login", { usuario:$("user").value, password:$("pass").value });
+        pendingUser = data.usuario || $("user").value;
+        pendingAction = data.action;
+        if (data.action === "ENROLL_TOTP" && data.qr_base64) {
+          $("qr").src = "data:image/png;base64," + data.qr_base64;
+          $("qr").classList.remove("hidden");
+        } else {
+          $("qr").classList.add("hidden");
+        }
+        $("loginForm").classList.add("hidden");
+        $("totpForm").classList.remove("hidden");
+        $("totpMsg").textContent = data.action === "ENROLL_TOTP" ? "Escanea el QR y valida el primer código." : "Ingresa tu código Authenticator.";
+      } catch (err) {
+        $("loginMsg").innerHTML = `<span class="error">${err.message}</span>`;
+      }
+    }
+    async function validateTotp() {
+      $("totpMsg").textContent = "Validando código...";
+      try {
+        const path = pendingAction === "ENROLL_TOTP" ? "/auth/mobile/totp/confirm" : "/auth/mobile/totp/verify";
+        const data = await postJSON(path, { usuario:pendingUser, codigo:$("code").value });
+        session = { ...data, company:$("loginCompany").value };
+        localStorage.setItem(SESSION_KEY, JSON.stringify(session));
+        if ($("rememberDevice").checked) {
+          localStorage.setItem(SAVED_LOGIN_KEY, JSON.stringify({ usuario:session.usuario, company:session.company }));
+        } else {
+          localStorage.removeItem(SAVED_LOGIN_KEY);
+        }
+        $("bioBtn").disabled = !window.PublicKeyCredential || !localStorage.getItem(PASSKEY_KEY);
+        await loadCatalog();
+        showApp();
+      } catch (err) {
+        $("totpMsg").innerHTML = `<span class="error">${err.message}</span>`;
+      }
+    }
+    function bytesFromBase64url(value) {
+      const text = value.replace(/-/g, "+").replace(/_/g, "/");
+      return Uint8Array.from(atob(text + "===".slice((text.length + 3) % 4)), c => c.charCodeAt(0));
+    }
+    function base64url(bytes) {
+      return btoa(String.fromCharCode(...new Uint8Array(bytes))).replace(/\\+/g, "-").replace(/\\//g, "_").replace(/=+$/g, "");
+    }
+    async function registerDevicePasskey() {
+      if (!window.PublicKeyCredential || !session) return;
+      const challenge = crypto.getRandomValues(new Uint8Array(32));
+      const userId = crypto.getRandomValues(new Uint8Array(16));
+      try {
+        const cred = await navigator.credentials.create({
+          publicKey: {
+            challenge,
+            rp: { name:"ERP-SOM Web" },
+            user: { id:userId, name:session.usuario, displayName:session.usuario },
+            pubKeyCredParams:[{ type:"public-key", alg:-7 }, { type:"public-key", alg:-257 }],
+            authenticatorSelection:{ userVerification:"required" },
+            timeout:60000
+          }
+        });
+        localStorage.setItem(PASSKEY_KEY, JSON.stringify({ id:base64url(cred.rawId), session, usuario:session.usuario, company:session.company }));
+        alert("Windows Hello / passkey quedó configurado para este dispositivo.");
+        $("bioBtn").disabled = false;
+      } catch {
+        alert("No se pudo configurar Windows Hello / passkey.");
+      }
+    }
+    async function unlockWithPasskey() {
+      const saved = readLocalJson(PASSKEY_KEY);
+      if (!saved || !window.PublicKeyCredential) return;
+      $("loginMsg").textContent = "Validando dispositivo...";
+      try {
+        await navigator.credentials.get({
+          publicKey: {
+            challenge:crypto.getRandomValues(new Uint8Array(32)),
+            allowCredentials:[{ type:"public-key", id:bytesFromBase64url(saved.id) }],
+            userVerification:"required",
+            timeout:60000
+          }
+        });
+        pendingUser = saved.usuario || saved.session?.usuario || $("user").value;
+        pendingAction = "VERIFY_TOTP";
+        $("loginCompany").value = saved.company || saved.session?.company || $("loginCompany").value || "MSL-CR";
+        $("loginForm").classList.add("hidden");
+        $("totpForm").classList.remove("hidden");
+        $("qr").classList.add("hidden");
+        $("code").value = "";
+        $("totpMsg").textContent = "Windows Hello validado. Ingresa tu código Authenticator para completar el ingreso.";
+      } catch (err) {
+        $("loginMsg").innerHTML = '<span class="error">No se pudo validar este dispositivo.</span>';
+      }
+    }
+    function renderNav() {
+      $("moduleNav").innerHTML = "";
+      catalog.modules.filter(m => canView(m.code)).forEach(mod => {
+        const btn = document.createElement("button");
+        btn.textContent = mod.title;
+        btn.className = mod.code === currentModule ? "active" : "";
+        btn.onclick = () => selectModule(mod.code);
+        $("moduleNav").appendChild(btn);
+      });
+    }
+    function setBrand() {
+      $("brandLogo").src = selectedCompany().startsWith("MCI") ? "/som/logo/mci?v={asset_version}" : "/som/logo/msl?v={asset_version}";
+    }
+    function selectModule(code) {
+      if (currentModule === "informes" && window.SOMTally && !SOMTally.canLeave()) return;
+      if (currentModule === "informes" && window.SOMTally) SOMTally.destroy();
+      currentModule = code;
+      selectedMasterView = null;
+      setBrand();
+      const mod = catalog.modules.find(m => m.code === code) || catalog.modules[0];
+      $("pageTitle").textContent = mod?.title || "SOM";
+      $("pageSubtitle").textContent = mod?.subtitle || "";
+      renderNav();
+      if (code === "dashboard") refreshSummary();
+      else resetKpisForManualLoad();
+      if (code === "dashboard") renderHome();
+      else if (code === "master_data") renderMasterData();
+      else if (code === "servicios" || code === "servicios_op" || (mod?.title || "").toLowerCase() === "servicios") renderServicios();
+      else if (code === "finanzas") renderFinanzas();
+      else if (code === "informes") renderInformesTally();
+      else if (code === "hhrre" || code === "hhrr") renderHHRR();
+      else renderComingSoon(mod);
+    }
+    function renderInformesTally() {
+      const fixedHeaders = headers();
+      const tallyRequest = async (path, method="GET", body) => {
+        const response = await fetch(path, {method, headers:fixedHeaders, body:body === undefined ? undefined : JSON.stringify(body)});
+        const data = await response.json();
+        if (!response.ok) throw new Error(typeof data.detail === "string" ? data.detail : (Array.isArray(data.detail) ? data.detail.map(x => `${x.loc.slice(1).join(".")}: ${x.msg}`).join("; ") : "No se pudo completar la operacion"));
+        return data;
+      };
+      SOMTally.mount($("content"), {user:session.usuario, company:selectedCompany(), headers:()=>({...fixedHeaders}),
+        getJSON:path=>tallyRequest(path), postJSON:(path,body)=>tallyRequest(path,"POST",body), sendJSON:(method,path,body)=>tallyRequest(path,method,body)});
+    }
+    async function refreshSummary() {
+      try {
+        const path = currentModule === "dashboard"
+          ? `/som/summary?anio=${$("year").value}`
+          : `/som/module-summary?module=${encodeURIComponent(currentModule)}&anio=${$("year").value}`;
+        const data = await getJSON(path);
+        if (currentModule === "dashboard") homeSummary = data;
+        const financeVisible = currentModule !== "dashboard" || dashboardCanSeeFinance(data);
+        const items = data.kpis instanceof Array ? data.kpis : (
+          financeVisible
+            ? [
+                { label:"Servicios YTD", value:data.kpis.services || 0, hint:"Operaciones del año", format:"int" },
+                { label:"Facturas FE", value:data.kpis.invoiced || 0, hint:"Electrónicas año a fecha", format:"money" },
+                { label:"CxC", value:data.kpis.ar || 0, hint:"Saldo pendiente", format:"money" },
+                { label:"Informes YTD", value:data.kpis.reports || 0, hint:"Servicios con informe", format:"int" }
+              ]
+            : [
+                { label:"Servicios YTD", value:data.kpis.services || 0, hint:"Operaciones del año", format:"int" },
+                { label:"Informes YTD", value:data.kpis.reports || 0, hint:"Servicios con informe", format:"int" },
+                { label:"Pendientes", value:0, hint:"Según permisos", format:"int" },
+                { label:"Empresa", value:1, hint:selectedCompany(), format:"int" }
+              ]
+        );
+        for (let i = 0; i < 4; i++) {
+          const item = items[i] || { label:"-", value:0, hint:"" };
+          $(`kpiLabel${i+1}`).textContent = item.label;
+          $(`kpiValue${i+1}`).textContent = kpiValue(item);
+          $(`kpiHint${i+1}`).textContent = item.hint || "";
+        }
+        if (currentModule === "dashboard") {
+          renderHomeExecutive(data);
+          loadHomeActionCenter();
+        }
+      } catch {
+        for (let i = 1; i <= 4; i++) {
+          $(`kpiValue${i}`).textContent = "0";
+        }
+      }
+    }
+    function dashboardCanSeeFinance(data=homeSummary) {
+      return Boolean(data?.visibility?.finance || canView("finanzas"));
+    }
+    function dashboardCanSeeExecutive(data=homeSummary) {
+      const role = String(session?.rol || "").toLowerCase();
+      return Boolean(data?.visibility?.executive || ["admin","master"].includes(role));
+    }
+    function resetKpisForManualLoad() {
+      const mod = catalog.modules.find(m => m.code === currentModule);
+      const labels = currentModule === "finanzas"
+        ? ["CxC abierta", "Clientes con crédito", "Hold manual", "Order-to-Cash"]
+        : currentModule === "master_data"
+          ? ["Clientes", "Proveedores", "Empleados", "Servicios"]
+          : currentModule === "servicios"
+            ? ["Servicios", "Abiertos", "Finalizados", "Pendientes"]
+            : [mod?.title || "SOM", "Datos", "Acciones", "Estado"];
+      for (let i = 0; i < 4; i++) {
+        $(`kpiLabel${i+1}`).textContent = labels[i] || "-";
+        $(`kpiValue${i+1}`).textContent = "0";
+        $(`kpiHint${i+1}`).textContent = "Presione Actualizar";
+      }
+    }
+    function homeJs(value) {
+      const slash = String.fromCharCode(92);
+      const text = String(value ?? "")
+        .split(slash).join(slash + slash)
+        .split("'").join(slash + "'")
+        .split(String.fromCharCode(10)).join(" ")
+        .split(String.fromCharCode(13)).join(" ");
+      return "'" + text + "'";
+    }
+    function homeEncodedPayload(value) {
+      return encodeURIComponent(JSON.stringify(value || {}));
+    }
+    function homeToggle(id, btnId) {
+      const el = $(id);
+      const btn = $(btnId);
+      if (!el) return;
+      const closed = el.classList.toggle("home-section-collapsed");
+      if (btn) {
+        btn.textContent = closed ? "+" : "-";
+        btn.setAttribute("aria-expanded", closed ? "false" : "true");
+      }
+    }
+    function homeSubsection(title, id, body, collapsed=false) {
+      const btnId = `${id}Toggle`;
+      return `<div class="home-subhead"><h3>${esc(title)}</h3><button class="home-collapse-btn" id="${btnId}" aria-expanded="${collapsed ? "false" : "true"}" onclick="homeToggle('${id}','${btnId}')">${collapsed ? "+" : "-"}</button></div><div id="${id}" class="${collapsed ? "home-section-collapsed" : ""}">${body}</div>`;
+    }
+    function canManageNews() {
+      const role = String(session?.rol || "").toLowerCase();
+      return ["admin","master"].includes(role);
+    }
+    function newsItems(data=hrNewsData) {
+      return [1,2,3,4,5].map(slot => ({ slot, text:String(data?.[`noticia_${slot}`] || "").trim() })).filter(item => item.text);
+    }
+    function renderNewsBoard(targetId, title="Noticias internas", compact=false) {
+      const target = $(targetId);
+      if (!target) return;
+      const items = newsItems();
+      const canManage = canManageNews();
+      const stamp = hrNewsData?.created_at ? new Date(hrNewsData.created_at).toLocaleString() : "";
+      const meta = [hrNewsData?.created_by ? `Publicado por ${hrNewsData.created_by}` : "", stamp].filter(Boolean).join(" · ");
+      const tools = canManage
+        ? `<div class="news-board-tools"><button onclick="openNewsEditor()">Agregar noticia</button>${hrNewsData?.id ? '<button class="secondary" onclick="openNewsBoardEditor()">Editar cartelera</button><button class="brown" onclick="deleteNewsBoard()">Eliminar cartelera</button>' : ""}</div>`
+        : "";
+      target.innerHTML = `
+        <section class="news-board ${compact ? "compact" : ""}">
+          <div class="news-board-head">
+            <div>
+              <h2>${esc(title)}</h2>
+              <p>${meta ? esc(meta) : "Comunicados visibles para todos los usuarios autorizados del ERP."}</p>
+            </div>
+            ${tools}
+          </div>
+          <div class="news-list">
+            ${items.length ? items.map(item => `
+              <article class="news-item">
+                <div class="news-item-main"><strong>Noticia ${item.slot}</strong><p>${esc(item.text)}</p></div>
+                ${canManage ? `<div class="news-item-actions"><button class="secondary" onclick="openNewsEditor(${item.slot})">Editar</button><button class="brown" onclick="deleteNewsItem(${item.slot})">Eliminar</button></div>` : ""}
+              </article>`).join("") : '<div class="news-empty">Sin noticias publicadas.</div>'}
+          </div>
+        </section>`;
+    }
+    async function loadNewsBoards() {
+      try {
+        hrNewsData = await getJSON("/noticias/latest");
+      } catch (err) {
+        hrNewsData = { error:err.message };
+      }
+      ["homeNewsBoard","hrNewsBoard","hrNews"].forEach(id => {
+        if ($(id)) renderNewsBoard(id, id === "homeNewsBoard" ? "Noticias internas" : "Noticias HHRR", id !== "homeNewsBoard");
+      });
+    }
+    function nextNewsSlot() {
+      const used = new Set(newsItems().map(item => item.slot));
+      return [1,2,3,4,5].find(slot => !used.has(slot)) || null;
+    }
+    function openNewsEditor(slot=null) {
+      if (!canManageNews()) return alert("Solo admin/master pueden administrar noticias.");
+      const targetSlot = slot || nextNewsSlot();
+      if (!targetSlot) return alert("La cartelera ya tiene 5 noticias. Edite o elimine una noticia existente.");
+      const current = hrNewsData?.[`noticia_${targetSlot}`] || "";
+      closeModal();
+      document.body.insertAdjacentHTML("beforeend", `
+        <div class="modal-backdrop" id="svcModal">
+          <div class="modal small">
+            <div class="modal-head"><h2>${slot ? "Editar noticia" : "Agregar noticia"}</h2><button class="secondary" onclick="closeModal()">Cerrar</button></div>
+            <div class="hr-form">
+              <label class="wide">Noticia ${targetSlot}<textarea id="newsEditorText">${esc(current)}</textarea></label>
+              <div class="wide md-actions"><button onclick="saveNewsItem(${targetSlot})">Guardar</button><button class="secondary" onclick="closeModal()">Cancelar</button></div>
+            </div>
+          </div>
+        </div>`);
+    }
+    function openNewsBoardEditor() {
+      if (!canManageNews()) return alert("Solo admin/master pueden administrar noticias.");
+      closeModal();
+      document.body.insertAdjacentHTML("beforeend", `
+        <div class="modal-backdrop" id="svcModal">
+          <div class="modal">
+            <div class="modal-head"><h2>Editar cartelera de noticias</h2><button class="secondary" onclick="closeModal()">Cerrar</button></div>
+            <div class="hr-form">
+              ${[1,2,3,4,5].map(i => `<label class="wide">Noticia ${i}<textarea id="newsBoard${i}">${esc(hrNewsData?.[`noticia_${i}`] || "")}</textarea></label>`).join("")}
+              <div class="wide md-actions"><button onclick="saveNewsBoard()">Guardar cartelera</button><button class="secondary" onclick="closeModal()">Cancelar</button></div>
+            </div>
+          </div>
+        </div>`);
+    }
+    function readNewsBoardPayload() {
+      const payload = {};
+      [1,2,3,4,5].forEach(i => {
+        payload[`noticia_${i}`] = valueFrom(`newsBoard${i}`).trim() || null;
+      });
+      return payload;
+    }
+    async function saveNewsBoard(payload=null) {
+      if (!canManageNews()) return alert("Solo admin/master pueden administrar noticias.");
+      const body = payload || readNewsBoardPayload();
+      if (![1,2,3,4,5].some(i => body[`noticia_${i}`])) return alert("Debe ingresar al menos una noticia.");
+      try {
+        hrNewsData = hrNewsData?.id
+          ? await sendJSON("PUT", `/noticias/${encodeURIComponent(hrNewsData.id)}`, body)
+          : await postJSON("/noticias", body);
+        closeModal();
+        await loadNewsBoards();
+        hrStatus("Noticias actualizadas.");
+      } catch (err) {
+        alert(err.message);
+      }
+    }
+    async function saveNewsItem(slot) {
+      const text = valueFrom("newsEditorText").trim();
+      if (!text) return alert("La noticia no puede quedar vacía.");
+      const body = {};
+      [1,2,3,4,5].forEach(i => body[`noticia_${i}`] = hrNewsData?.[`noticia_${i}`] || null);
+      body[`noticia_${slot}`] = text;
+      await saveNewsBoard(body);
+    }
+    async function deleteNewsItem(slot) {
+      if (!canManageNews()) return alert("Solo admin/master pueden administrar noticias.");
+      const body = {};
+      [1,2,3,4,5].forEach(i => body[`noticia_${i}`] = i === slot ? null : (hrNewsData?.[`noticia_${i}`] || null));
+      if (![1,2,3,4,5].some(i => body[`noticia_${i}`])) {
+        await deleteNewsBoard();
+        return;
+      }
+      if (!confirm("¿Eliminar esta noticia?")) return;
+      await saveNewsBoard(body);
+    }
+    async function deleteNewsBoard() {
+      if (!canManageNews()) return alert("Solo admin/master pueden administrar noticias.");
+      if (!hrNewsData?.id) return;
+      if (!confirm("¿Eliminar toda la cartelera de noticias?")) return;
+      try {
+        await sendJSON("DELETE", `/noticias/${encodeURIComponent(hrNewsData.id)}`);
+        hrNewsData = {};
+        closeModal();
+        await loadNewsBoards();
+        hrStatus("Cartelera eliminada.");
+      } catch (err) {
+        alert(err.message);
+      }
+    }
+    function showHomeInsightFromEncoded(kind, encoded) {
+      try {
+        showHomeInsight(kind, JSON.parse(decodeURIComponent(encoded || "%7B%7D")));
+      } catch (err) {
+        showHomeInsight(kind, {});
+      }
+    }
+    function homeInsightMetric(label, value) {
+      return `<div><span>${esc(label)}</span><strong title="${esc(value)}">${esc(value)}</strong></div>`;
+    }
+    function homeSmartAction(moduleName, label) {
+      if (!moduleName || !canView(moduleName)) return "";
+      return `<button onclick="closeModal(); selectModule(${homeJs(moduleName)})">${esc(label || "Abrir")}</button>`;
+    }
+    function homeFinanceAction(tab, label) {
+      if (!canView("finanzas")) return "";
+      return `<button onclick="closeModal(); selectModule('finanzas'); setTimeout(() => switchFinanceTab(${homeJs(tab)}), 0)">${esc(label || "Abrir finanzas")}</button>`;
+    }
+    function showHomeInsight(kind, item={}) {
+      const titleMap = {
+        action:"Pendiente",
+        month:"Lectura mensual",
+        service:"Mix de servicios",
+        topClient:"Top cliente",
+        top3:"Facturas FE abiertas",
+        ar:"CxC abierta",
+        aging:"Aging CxC"
+      };
+      const title = titleMap[kind] || "Detalle inteligente";
+      const body = buildHomeInsight(kind, item || {});
+      closeModal();
+      document.body.insertAdjacentHTML("beforeend", `
+        <div class="modal-backdrop" id="svcModal">
+          <div class="modal small">
+            <div class="modal-head"><h2>${esc(title)}</h2><button class="secondary" onclick="closeModal()">Cerrar</button></div>
+            ${body}
+          </div>
+        </div>`);
+    }
+    function buildHomeInsight(kind, item) {
+      const totalServices = Number(homeSummary?.kpis?.services || 0) || 0;
+      const mixTotal = (homeSummary?.executive?.service_mix || []).reduce((s,r) => s + Number(r.value || 0), 0) || 1;
+      if (kind === "action") {
+        return `<div class="home-insight-metrics">${homeInsightMetric("Cantidad", item.count || 0)}${homeInsightMetric("Severidad", item.severity || "info")}${homeInsightMetric("Módulo", item.module || "-")}</div><p class="home-insight-note">${esc(item.detail || "Pendiente visible según tu rol y permisos.")}</p><div class="home-insight-actions">${homeSmartAction(item.module, item.cta || "Abrir módulo")}</div>`;
+      }
+      if (kind === "month") {
+        const services = Number(item.services || 0);
+        const ar = Number(item.ar_open || 0);
+        const note = ar > 0 ? "Mes con CxC abierta: conviene revisar antigüedad, cliente y cobros antes de que se vuelva vencido." : "Mes sin CxC abierta visible; úsalo como referencia contra servicios emitidos y cierres operativos.";
+        return `<div class="home-insight-metrics">${homeInsightMetric("Mes", item.month || "-")}${homeInsightMetric("Servicios", intFmt.format(services))}${homeInsightMetric("CxC abierta", money(ar))}</div><p class="home-insight-note">${note}</p><div class="home-insight-actions">${homeFinanceAction("collections", "Abrir CxC")}${homeSmartAction("servicios", "Abrir servicios")}</div>`;
+      }
+      if (kind === "service") {
+        const value = Number(item.value || 0);
+        const pct = Math.round(value / mixTotal * 100);
+        return `<div class="home-insight-metrics">${homeInsightMetric("Servicio", item.label || "-")}${homeInsightMetric("Cantidad", intFmt.format(value))}${homeInsightMetric("Participación", `${pct}%`)}</div><p class="home-insight-note">Este servicio concentra ${pct}% del mix visible del año. Sirve para revisar demanda, asignación de surveyors y posibles paquetes comerciales.</p><div class="home-insight-actions">${homeSmartAction("servicios", "Ver servicios")}${homeSmartAction("informes", "Ver informes")}</div>`;
+      }
+      if (kind === "topClient") {
+        const amount = Number(item.amount || 0);
+        return `<div class="home-insight-metrics">${homeInsightMetric("Cliente", item.client || "-")}${homeInsightMetric("Facturas FE", item.count || 0)}${homeInsightMetric("Monto", money(amount))}</div><p class="home-insight-note">Cliente con mayor peso en facturación electrónica del año. Buen punto para revisar concentración, crédito y cobros abiertos.</p><div class="home-insight-actions">${homeFinanceAction("collections", "Abrir CxC")}${homeFinanceAction("credit", "Ver crédito")}</div>`;
+      }
+      if (kind === "top3") {
+        const rows = item.rows || [];
+        const count = rows.reduce((s,r) => s + Number(r.count || 0), 0);
+        return `<div class="home-insight-metrics">${homeInsightMetric("Top 3", money(item.amount || 0))}${homeInsightMetric("Facturas FE", intFmt.format(count))}${homeInsightMetric("Clientes", intFmt.format(rows.length))}</div><p class="home-insight-note">Este monto suma facturas electrónicas abiertas del año para los tres clientes principales. No incluye facturas manuales cortas.</p><div class="home-insight-actions">${homeFinanceAction("collections", "Abrir CxC")}</div>`;
+      }
+      if (kind === "aging") {
+        return `<div class="home-insight-metrics">${homeInsightMetric("Rango", item.bucket || "-")}${homeInsightMetric("Monto", money(item.amount || 0))}${homeInsightMetric("Prioridad", String(item.bucket || "").includes("90") ? "Alta" : "Normal")}</div><p class="home-insight-note">Usa este rango para decidir la siguiente gestión de cobro. Los rangos altos deben revisarse antes que nueva facturación del mismo cliente.</p><div class="home-insight-actions">${homeFinanceAction("collections", "Abrir CxC")}</div>`;
+      }
+      const aging = homeSummary?.executive?.aging || [];
+      return `<div class="home-insight-metrics">${homeInsightMetric("CxC abierta", money(item.amount || homeSummary?.kpis?.ar || 0))}${homeInsightMetric("Servicios YTD", intFmt.format(totalServices))}${homeInsightMetric("Buckets", intFmt.format(aging.length))}</div><p class="home-insight-note">Vista financiera abierta según permisos. Prioriza cobros vencidos y revisa si hay facturas FE sin gestión reciente.</p><div class="home-insight-actions">${homeFinanceAction("collections", "Abrir CxC")}</div>`;
+    }
+    function renderHome() {
+      const role = String(session?.rol || "").toLowerCase();
+      $("content").innerHTML = `
+        <div id="homeNewsBoard" class="home-news-mount"></div>
+        <div class="home-action-layout">
+          <div class="home-command">
+            <div class="card home-action-hero">
+              <h2>Centro de control SOM</h2>
+              <p>Inicio personalizado para ${esc(session?.usuario || "usuario")} según rol, permisos y empresa activa. Solo aparecen tareas, indicadores y áreas autorizadas.</p>
+              <div class="home-action-summary">
+                <div><span>Críticos</span><strong id="homeCriticalCount">-</strong></div>
+                <div><span>Revisión</span><strong id="homeWarningCount">-</strong></div>
+                <div><span>Total tareas</span><strong id="homeTotalCount">-</strong></div>
+              </div>
+            </div>
+            <div class="card panel">
+              <div class="panel-head">
+                <h2>Pendientes y aprobaciones</h2>
+                <div class="home-panel-tools"><span class="muted" id="homeActionStamp">Consultando...</span><button class="home-collapse-btn" id="homeActionToggle" aria-expanded="true" onclick="homeToggle('homeActionBody','homeActionToggle')">-</button></div>
+              </div>
+              <div id="homeActionBody"><div id="homeActionList" class="home-action-list"><div class="status">Cargando pendientes...</div></div></div>
+            </div>
+            <div id="homeExecutiveMain" class="home-exec-grid"></div>
+          </div>
+          <div class="home-side-stack">
+            <div class="card home-role-panel">
+              <span class="muted">Sesión</span>
+              <strong>${esc(session?.usuario || "-")}</strong>
+              <span>${esc((session?.rol || role || "user").toUpperCase())} · ${esc(selectedCompany())}</span>
+            </div>
+            <div class="card panel">
+              <div class="panel-head">
+                <h2>Vista ejecutiva</h2>
+                <div class="home-panel-tools"><span class="muted" id="homeExecScope">según permisos</span><button class="home-collapse-btn" id="homeExecutiveToggle" aria-expanded="true" onclick="homeToggle('homeExecutiveBody','homeExecutiveToggle')">-</button></div>
+              </div>
+              <div id="homeExecutiveBody"><div id="homeExecutiveSide" class="status">Cargando indicadores...</div></div>
+            </div>
+          </div>
+        </div>`;
+      loadNewsBoards();
+      loadHomeActionCenter();
+      renderHomeExecutive(homeSummary);
+    }
+    async function loadHomeActionCenter() {
+      const list = $("homeActionList");
+      if (!list) return;
+      try {
+        const payload = await getJSON(`/som/action-center?anio=${encodeURIComponent($("year").value)}`);
+        const rows = (payload.actions || []).filter(item => canView(item.module));
+        const counts = rows.reduce((acc,item) => {
+          const amount = Number(item.count || 0);
+          acc.total += amount;
+          if (item.severity === "critical") acc.critical += amount;
+          if (item.severity === "warning") acc.warning += amount;
+          return acc;
+        }, {critical:0, warning:0, total:0});
+        if ($("homeCriticalCount")) $("homeCriticalCount").textContent = counts.critical;
+        if ($("homeWarningCount")) $("homeWarningCount").textContent = counts.warning;
+        if ($("homeTotalCount")) $("homeTotalCount").textContent = counts.total;
+        if ($("homeActionStamp")) $("homeActionStamp").textContent = payload.generated_at ? new Date(payload.generated_at).toLocaleString() : "Actualizado";
+        if (!rows.length) {
+          list.innerHTML = '<div class="card home-action-empty"><strong>Sin pendientes visibles para tu rol.</strong><p class="muted">Cuando haya aprobaciones, pagos vencidos, informes por revisar o asientos por postear, aparecerán aquí.</p></div>';
+          return;
+        }
+        list.innerHTML = rows.map(item => `
+          <div class="home-action-item home-clickable ${esc(item.severity || "info")}" onclick="showHomeInsightFromEncoded('action','${homeEncodedPayload(item)}')">
+            <div class="home-action-count">${esc(item.count)}</div>
+            <div class="home-action-copy"><strong>${esc(item.title)}</strong><span>${esc(item.detail || "")}</span></div>
+            <button onclick="event.stopPropagation(); selectModule(${homeJs(item.module)})">${esc(item.cta || "Abrir")}</button>
+          </div>`).join("");
+      } catch (err) {
+        list.innerHTML = `<div class="status error">No se pudieron cargar pendientes: ${esc(err.message)}</div>`;
+      }
+    }
+    function renderHomeExecutive(data=homeSummary) {
+      const main = $("homeExecutiveMain");
+      const side = $("homeExecutiveSide");
+      if (!main || !side) return;
+      if (!data) {
+        main.innerHTML = '<div class="card panel"><div class="status">Cargando vista ejecutiva...</div></div>';
+        side.className = "status";
+        side.textContent = "Cargando...";
+        return;
+      }
+      const canFinance = dashboardCanSeeFinance(data);
+      const canExecutive = dashboardCanSeeExecutive(data);
+      const months = data.monthly || [];
+      const serviceMix = data.executive?.service_mix || [];
+      const topClients = canExecutive ? (data.executive?.top_clients || []) : [];
+      const aging = canFinance ? (data.executive?.aging || []) : [];
+      if ($("homeExecScope")) $("homeExecScope").textContent = canExecutive ? "admin/master" : (canFinance ? "finanzas" : "operativo");
+      main.innerHTML = `
+        <div class="card panel chart-card">
+          <div class="panel-head">
+            <h2>Últimos 6 meses</h2>
+            <div class="home-panel-tools"><span class="muted">${canFinance ? "Servicios + CxC abierta" : "Cantidad de servicios"}</span><button class="home-collapse-btn" id="homeMonthsToggle" aria-expanded="true" onclick="homeToggle('homeMonthsBody','homeMonthsToggle')">-</button></div>
+          </div>
+          <div id="homeMonthsBody">${renderComboChart(months, canFinance)}</div>
+        </div>
+        <div class="card panel">
+          <div class="panel-head">
+            <h2>Mix de servicios</h2>
+            <div class="home-panel-tools"><span class="muted">${$("year").value}</span><button class="home-collapse-btn" id="homeMixToggle" aria-expanded="true" onclick="homeToggle('homeMixBody','homeMixToggle')">-</button></div>
+          </div>
+          <div id="homeMixBody">${renderServiceMix(serviceMix)}</div>
+        </div>`;
+      if (canExecutive) {
+        const top3Amount = topClients.reduce((s,r) => s + Number(r.amount || 0), 0);
+        side.className = "";
+        side.innerHTML = `
+          ${homeSubsection("Indicadores ejecutivos", "homeExecPillsBody", `<div class="home-pill-list">
+            <div class="home-clickable" onclick="showHomeInsightFromEncoded('topClient','${homeEncodedPayload(topClients[0] || {})}')"><strong>Top cliente</strong><span title="${esc(topClients[0]?.client || "-")}">${esc(topClients[0]?.client || "-")}</span></div>
+            <div class="home-clickable" onclick="showHomeInsightFromEncoded('top3','${homeEncodedPayload({amount:top3Amount, rows:topClients})}')"><strong>Facturas FE top 3</strong><span title="${money(top3Amount)}">${money(top3Amount)}</span></div>
+            <div class="home-clickable" onclick="showHomeInsightFromEncoded('ar','${homeEncodedPayload({amount:data.kpis?.ar || 0, aging})}')"><strong>CxC abierta</strong><span>${money(data.kpis?.ar || 0)}</span></div>
+          </div>`)}
+          ${homeSubsection("Top 3 clientes del año", "homeTopClientsBody", renderTopClients(topClients))}
+          ${homeSubsection("Aging CxC", "homeAgingBody", renderAging(aging))}`;
+      } else if (canFinance) {
+        side.className = "";
+        side.innerHTML = `${homeSubsection("Indicadores financieros", "homeFinancePillsBody", `<div class="home-pill-list"><div class="home-clickable" onclick="showHomeInsightFromEncoded('ar','${homeEncodedPayload({amount:data.kpis?.ar || 0, aging})}')"><strong>CxC abierta</strong><span>${money(data.kpis?.ar || 0)}</span></div><div class="home-clickable" onclick="showHomeInsightFromEncoded('top3','${homeEncodedPayload({amount:data.kpis?.invoiced || 0, rows:[]})}')"><strong>Facturas FE año a fecha</strong><span>${money(data.kpis?.invoiced || 0)}</span></div></div>`)}${homeSubsection("Aging CxC", "homeAgingBody", renderAging(aging))}`;
+      } else {
+        side.className = "status";
+        side.textContent = "Tu inicio muestra pendientes operativos y servicios. Las métricas financieras se ocultan por rol/permisos.";
+      }
+    }
+    function renderComboChart(rows, canFinance) {
+      if (!rows.length) {
+        const k = homeSummary?.kpis || {};
+        return `<div class="home-empty-insight">
+          <div><span>Servicios YTD</span><strong>${intFmt.format(Number(k.services || 0))}</strong></div>
+          ${canFinance ? `<div><span>CxC abierta</span><strong>${money(k.ar || 0)}</strong></div>` : ""}
+          <div><span>Informes YTD</span><strong>${intFmt.format(Number(k.reports || 0))}</strong></div>
+        </div><div class="status">Sin movimiento mensual reciente para graficar; se muestran indicadores del año.</div>`;
+      }
+      const maxMoney = Math.max(...rows.map(r => Number(r.ar_open || 0)), 1);
+      const maxServices = Math.max(...rows.map(r => Number(r.services || 0)), 1);
+      return `<div class="chart-combo">${rows.map(r => {
+        const arH = canFinance ? Math.max(4, Number(r.ar_open || 0) / maxMoney * 150) : 0;
+        const svcH = Math.max(4, Number(r.services || 0) / maxServices * 150);
+        return `<div class="combo-col home-clickable" onclick="showHomeInsightFromEncoded('month','${homeEncodedPayload(r)}')"><div class="combo-bars">${canFinance ? `<div title="CxC abierta ${money(r.ar_open)}" class="combo-bar ar" style="height:${arH}px"></div>` : ""}<div title="Servicios ${esc(r.services)}" class="combo-bar services" style="height:${svcH}px;background:#0f172a"></div></div><div class="combo-label">${esc(r.month)}</div></div>`;
+      }).join("")}</div><div class="chart-legend">${canFinance ? '<span><i class="legend-dot ar"></i>CxC abierta</span>' : ""}<span><i class="legend-dot services"></i>Servicios</span></div>`;
+    }
+    function renderServiceMix(rows) {
+      if (!rows.length) return '<div class="status">Sin servicios para clasificar.</div>';
+      const total = rows.reduce((sum,row) => sum + Number(row.value || 0), 0) || 1;
+      const colors = ["#005da8","#029fcf","#087a52","#b7791f","#8a5cf6","#64748b"];
+      let start = 0;
+      const stops = rows.map((row, i) => {
+        const pct = Number(row.value || 0) / total * 100;
+        const part = `${colors[i % colors.length]} ${start}% ${start + pct}%`;
+        start += pct;
+        return part;
+      }).join(", ");
+      const top = rows[0] || {};
+      return `<div class="pie-wrap"><div class="pie-metric home-clickable" onclick="showHomeInsightFromEncoded('service','${homeEncodedPayload(top)}')"><div class="css-pie" style="background:conic-gradient(${stops})"></div><strong>${esc(top.value || 0)}</strong><span title="${esc(top.label || "")}">${esc(top.label || "Sin datos")}</span></div><div class="mini-bars">${rows.slice(0,5).map((row,i) => `<div class="mini-bar-row home-clickable" onclick="showHomeInsightFromEncoded('service','${homeEncodedPayload(row)}')"><strong title="${esc(row.label)}">${esc(row.label)}</strong><div class="mini-track"><div class="mini-fill" style="width:${Math.max(5, Number(row.value || 0) / total * 100)}%;background:${colors[i % colors.length]}"></div></div><span>${esc(row.value)}</span></div>`).join("")}</div></div>`;
+    }
+    function renderTopClients(rows) {
+      if (!rows.length) return '<div class="status">Visible solo para admin/master o sin datos del año.</div>';
+      const max = Math.max(...rows.map(r => Number(r.amount || 0)), 1);
+      return `<div class="mini-bars">${rows.map(row => `<div class="mini-bar-row home-clickable" onclick="showHomeInsightFromEncoded('topClient','${homeEncodedPayload(row)}')"><strong title="${esc(row.client)}">${esc(row.client)}</strong><div class="mini-track"><div class="mini-fill" style="width:${Math.max(5, Number(row.amount || 0) / max * 100)}%"></div></div><span>${money(row.amount)}</span></div>`).join("")}</div>`;
+    }
+    function renderAging(rows) {
+      if (!rows.length) return '<div class="status">Sin CxC abierta visible.</div>';
+      const max = Math.max(...rows.map(r => Number(r.amount || 0)), 1);
+      return `<div class="mini-bars">${rows.map(row => `<div class="mini-bar-row home-clickable" onclick="showHomeInsightFromEncoded('aging','${homeEncodedPayload(row)}')"><strong>${esc(row.bucket)}</strong><div class="mini-track"><div class="mini-fill" style="width:${Math.max(5, Number(row.amount || 0) / max * 100)}%;background:#b7791f"></div></div><span>${money(row.amount)}</span></div>`).join("")}</div>`;
+    }
+    function renderFinanzas() {
+      if (financeTab === "invoicing") financeTab = "billing";
+      $("content").innerHTML = `
+        <div class="grid home-grid">
+          <div class="card home-card" onclick="openFinanceBlock('order-to-cash')"><h2>Order To Cash</h2><p class="muted">Credit, Invoicing and Billing, Collections, Bank y Disputes.</p></div>
+          <div class="card home-card" onclick="openFinanceBlock('invoice-to-pay')"><h2>Invoice To Pay</h2><p class="muted">Obligaciones, proveedores y pagos.</p></div>
+          <div class="card home-card" onclick="openFinanceBlock('planning')"><h2>PLN / Planificación</h2><p class="muted">ITP, gastos, pagos, metas, proyectos y ahorros.</p></div>
+          <div class="card home-card" onclick="openFinanceBlock('accounting')"><h2>Accounting</h2><p class="muted">Asientos, cierres, fiscal y reportes.</p></div>
+        </div>
+        <div id="financeWorkspace" class="workspace"></div>`;
+      if (["credit","billing","collections","bank","disputes"].includes(financeTab)) {
+        openFinanceBlock("order-to-cash");
+        switchFinanceTab(financeTab);
+      } else if (financeTab && financeTab !== "finance-home") {
+        openFinanceBlock(financeTab);
+      } else {
+        openFinanceBlock("order-to-cash");
+      }
+    }
+    function openFinanceBlock(block) {
+      financeTab = block;
+      const ws = $("financeWorkspace");
+      if (block === "order-to-cash") {
+        ws.innerHTML = `
+          <div class="card panel">
+            <div class="panel-head"><h2>Order To Cash</h2><span class="muted">Seleccione una sección y luego presione Buscar</span></div>
+            <div class="tabs">
+              <button onclick="switchFinanceTab('credit')">Credit, Order Hold and Release</button>
+              <button onclick="switchFinanceTab('billing')">Invoicing and Billing</button>
+              <button onclick="switchFinanceTab('collections')">Collections</button>
+              <button onclick="switchFinanceTab('bank')">Bank</button>
+              <button onclick="switchFinanceTab('disputes')">Disputes</button>
+            </div>
+            <div id="orderCashWorkspace" class="workspace"><div class="status">Seleccione Credit, Order Hold and Release, Invoicing and Billing, Collections, Bank o Disputes.</div></div>
+          </div>`;
+        switchFinanceTab("credit");
+        return;
+      }
+      if (block === "invoice-to-pay") {
+        ws.innerHTML = `<div class="card panel"><div id="itpWorkspace"></div></div>`;
+        renderItpWeb($("itpWorkspace"));
+        return;
+      }
+      if (block === "planning") {
+        ws.innerHTML = `<div class="card panel"><div id="planningWorkspace"></div></div>`;
+        renderFinancePlanning($("planningWorkspace"));
+        return;
+      }
+      if (block === "accounting") {
+        ws.innerHTML = `<div class="card panel"><div id="accountingWorkspace"></div></div>`;
+        renderAccountingWeb($("accountingWorkspace"));
+      }
+    }
+    function orderCashWorkspace() {
+      return $("orderCashWorkspace") || $("financeWorkspace");
+    }
+    async function loadGenericFinance(path, targetId) {
+      const target = $(targetId);
+      selectedGenericFinanceIndexes = new Set();
+      target.className = "status";
+      target.textContent = "Consultando...";
+      try {
+        const payload = await getJSON(path);
+        const rows = rowsList(payload);
+        target.className = "";
+        target.innerHTML = renderFinanceGenericTable(rows);
+      } catch (err) {
+        target.className = "status error";
+        target.textContent = err.message;
+      }
+    }
+    function renderFinanceGenericTable(rows) {
+      if (!rows.length) return '<div class="status">Sin datos para esta consulta.</div>';
+      const cols = Object.keys(rows[0]).filter(k => !String(k).toLowerCase().includes("hash")).slice(0, 12);
+      return `<div class="table-wrap"><table><thead><tr><th class="pick-col"></th>${cols.map(c => `<th>${esc(c)}</th>`).join("")}</tr></thead><tbody>${rows.slice(0,100).map((row, idx) => {
+        const selected = selectedGenericFinanceIndexes.has(idx);
+        return `<tr class="${selected ? "service-selected" : ""}" onclick="toggleGenericFinanceRow(${idx})"><td class="pick-col"><input class="row-pick" type="checkbox" ${selected ? "checked" : ""} onclick="event.stopPropagation(); toggleGenericFinanceRow(${idx}, this.checked)" /></td>${cols.map(c => `<td>${esc(row[c])}</td>`).join("")}</tr>`;
+      }).join("")}</tbody></table></div>`;
+    }
+    function toggleGenericFinanceRow(idx, checked=null) {
+      const next = checked === null ? !selectedGenericFinanceIndexes.has(idx) : checked;
+      setIndexSelection(selectedGenericFinanceIndexes, idx, next);
+      document.querySelectorAll("#itpWorkspace .table-wrap tr, #accountingWorkspace .table-wrap tr, #disputesWorkspace .table-wrap tr").forEach((tr, i) => {
+        if (i === 0) return;
+        tr.classList.toggle("service-selected", selectedGenericFinanceIndexes.has(i - 1));
+        const input = tr.querySelector("input.row-pick");
+        if (input) input.checked = selectedGenericFinanceIndexes.has(i - 1);
+      });
+    }
+    function renderAccountingWeb(target) {
+      const thisPeriod = new Date().toISOString().slice(0,7);
+      target.innerHTML = `
+        <div class="accounting-shell">
+          <div class="accounting-topline">
+            <div class="accounting-title">
+              <h2>Accounting</h2>
+              <p>Asientos, balance de comprobación, reportes, automatizaciones y control fiscal.</p>
+              <span class="accounting-company">Empresa activa: ${esc(selectedCompany())}</span>
+            </div>
+            <div class="accounting-tc">
+              <h3>Tipo de Cambio BCCR</h3>
+              <label>TC<input id="accTcRate" readonly placeholder="-" /></label>
+              <label>Fecha<input id="accTcDate" readonly placeholder="-" /></label>
+              <button onclick="fetchAccountingTc()">Buscar TC</button>
+            </div>
+          </div>
+          <div class="accounting-hero">
+            <div class="accounting-kpi"><span>Debe periodo</span><strong id="accKpiDebit">-</strong></div>
+            <div class="accounting-kpi"><span>Haber periodo</span><strong id="accKpiCredit">-</strong></div>
+            <div class="accounting-kpi"><span>IVA neto</span><strong id="accKpiIva">-</strong></div>
+          </div>
+          <div class="accounting-filter-box">
+            <h3>Filtros contables</h3>
+            <div class="accounting-filters">
+              <div class="accounting-radio">
+                <label><input name="accModeRadio" type="radio" value="SINGLE" checked onchange="setAccountingMode('SINGLE')" /> Periodo</label>
+                <label><input name="accModeRadio" type="radio" value="RANGE" onchange="setAccountingMode('RANGE')" /> Rango</label>
+              </div>
+              <input id="accMode" type="hidden" value="SINGLE" />
+              <label id="accPeriodLabel">Periodo<input id="accPeriod" type="month" value="${thisPeriod}" onchange="refreshAccountingDashboard()" /></label>
+              <label id="accFromLabel" style="display:none">Desde<input id="accPeriodFrom" type="month" value="${thisPeriod}" /></label>
+              <label id="accToLabel" style="display:none">Hasta<input id="accPeriodTo" type="month" value="${thisPeriod}" /></label>
+              <label>Origen<select id="accOrigin"><option value="">TODOS</option><option>ITP</option><option>ITP_PAYMENT</option><option>ITP_BIWEEKLY_PAYMENT</option><option>COLLECTIONS</option><option>INVOICING</option><option>MANUAL</option><option>CASH_APP</option><option>REVERSAL</option><option>CORP_CARD</option><option>CORP_CARD_SETTLEMENT</option></select></label>
+              <label>Cuenta<input id="accAccountCode" list="accAccountList" placeholder="TODOS" /><datalist id="accAccountList"></datalist></label>
+              <label>Tipo<select id="accAccountType"><option value="">TODOS</option><option>ACTIVO</option><option>PASIVO</option><option>PATRIMONIO</option><option>INGRESO</option><option>COSTO</option><option>GASTO</option></select></label>
+              <label>Reporte<select id="accReport"><option value="ASIENTOS">Asientos</option><option value="ANALITICO_CUENTA">Analítico de cuenta</option><option value="DETALLE_TIPO">Detalle por tipo de cuenta</option><option value="MAYOR">Libro Mayor</option><option value="BC">Balance de Comprobación</option><option value="ESF">Estado de Situación Financiera</option><option value="ER">Estado de Resultados</option><option value="FC">Flujo de Caja</option></select></label>
+              <button onclick="loadAccountingWeb()">Buscar</button>
+              <button class="secondary" onclick="clearAccountingWeb()">Limpiar</button>
+            </div>
+            <div class="accounting-toolbar">
+              <button class="primary" onclick="selectAccountingReport('ANALITICO_CUENTA')">Analítico</button>
+              ${accountingMenu("Acciones", [["Nuevo asiento","openAccountingManualEntry()"],["Ajustar asiento seleccionado","openAccountingEntryEditor()"],["Enviar a revisión","transitionAccountingEntry('submit')"],["Aprobar","transitionAccountingEntry('approve')"],["Contabilizar","transitionAccountingEntry('post')"],["Reversar asiento seleccionado","reverseAccountingEntry()"],["Cierre mensual guiado","openAccountingGuidedClose()"]])}
+              ${accountingMenu("Reportes", [["Asientos","selectAccountingReport('ASIENTOS')"],["Analítico de cuenta","selectAccountingReport('ANALITICO_CUENTA')"],["Detalle por tipo de cuenta","selectAccountingReport('DETALLE_TIPO')"],["Libro Mayor","selectAccountingReport('MAYOR')"],["Balance de Comprobación","selectAccountingReport('BC')"],["Estado de Situación Financiera","selectAccountingReport('ESF')"],["Estado de Resultados","selectAccountingReport('ER')"],["Flujo de Caja","selectAccountingReport('FC')"],["Estados financieros completos","loadAccountingCompleteStatements()"],["Reporte financiero ejecutivo","loadAccountingExecutive()"]])}
+              ${accountingMenu("Herramientas", [["Mi espacio contable","loadAccountingWorkspace()"],["Auxiliares contables","loadAccountingAuxiliaries()"],["Catálogo maestro de cuentas","loadAccountingAccounts()"],["Activos fijos","loadAccountingFixedAssets()"],["Tarjetas corporativas","loadAccountingCards()"],["Inventarios","loadAccountingInventory()"],["Sincronizar asientos ERP","runAccountingSyncAll()"],["Autorizar Gmail backend","startGmailFiscalOAuth()"],["Activar Gmail automático","enableGmailFiscalAutomation()"],["Estado Gmail backend","loadGmailFiscalStatus()"],["Sincronizar Gmail ahora","runGmailFiscalSync()"],["Revisar Outlook local","runAccountingOutlookSync(false)"],["Historial BAC tarjetas","runAccountingOutlookSync(true)"],["Motor de contabilización","loadAccountingPostingRules()"]])}
+              ${accountingMenu("Avanzado", [["Alertas y validaciones","loadAccountingAlerts()"],["Auditoría por usuario","loadAccountingAudit()"],["Accounting avanzado","loadAccountingAdvancedDashboard()"],["PORTIA contable","runPortiaAccounting()"],["Simulador fiscal multiempresa","loadTaxScenarioPlanner()"],["Centro fiscal Costa Rica","loadAccountingTaxCenter()"],["Biblioteca legal Costa Rica","loadAccountingLegalLibrary()"],["TRIBU-CR 150 IVA","openTaxDeclaration('IVA')"],["102 Impuesto sobre utilidades","openTaxDeclaration('ISU')"]])}
+              <button onclick="exportAccountingReport('xlsx')">Exportar Excel</button>
+              <button onclick="exportAccountingReport('pdf')">Exportar PDF</button>
+            </div>
+          </div>
+          <div class="accounting-grid">
+            <main class="accounting-work">
+              <div id="accountingResult" class="status">Configure filtros y presione Buscar.</div>
+            </main>
+          </div>
+        </div>`;
+      initAccountingWeb();
+    }
+    function accountingMenu(label, items) {
+      return `<details class="accounting-menu"><summary>${esc(label)}</summary><div class="accounting-menu-panel">${items.map(([text, action]) => `<button onclick="${action}; closeAccountingMenus()">${esc(text)}</button>`).join("")}</div></details>`;
+    }
+    function closeAccountingMenus() {
+      document.querySelectorAll(".accounting-menu[open]").forEach(menu => menu.removeAttribute("open"));
+    }
+    function accountingReportButtons() {
+      const reports = [["ASIENTOS","Asientos"],["ANALITICO_CUENTA","Analítico de cuenta"],["DETALLE_TIPO","Detalle por tipo de cuenta"],["MAYOR","Libro Mayor"],["BC","Balance de Comprobación"],["ESF","Estado de Situación Financiera"],["ER","Estado de Resultados"],["FC","Flujo de Caja"]];
+      return reports.map(([code,label]) => `<button onclick="selectAccountingReport('${code}')">${label}</button>`).join("");
+    }
+    async function initAccountingWeb() {
+      selectedAccountingEntryId = null;
+      await Promise.allSettled([loadAccountingAccountOptions(), refreshAccountingDashboard()]);
+    }
+    function setAccountingMode(mode) {
+      if ($("accMode")) $("accMode").value = mode;
+      document.querySelectorAll("input[name='accModeRadio']").forEach(r => { r.checked = r.value === mode; });
+      toggleAccountingMode();
+    }
+    function toggleAccountingMode() {
+      const range = valueFrom("accMode") === "RANGE";
+      $("accPeriodLabel").style.display = range ? "none" : "";
+      $("accFromLabel").style.display = range ? "" : "none";
+      $("accToLabel").style.display = range ? "" : "none";
+    }
+    function accountingParams() {
+      const params = new URLSearchParams();
+      const mode = valueFrom("accMode");
+      if (mode === "RANGE") {
+        const from = valueFrom("accPeriodFrom");
+        const to = valueFrom("accPeriodTo");
+        if (from) params.set("period_from", from);
+        if (to) params.set("period_to", to);
+      } else {
+        const period = valueFrom("accPeriod");
+        if (period) params.set("period", period);
+      }
+      const report = valueFrom("accReport") || "BC";
+      const type = valueFrom("accAccountType");
+      const account = valueFrom("accAccountCode");
+      const origin = valueFrom("accOrigin");
+      params.set("report", report);
+      if (type) params.set("account_type", type);
+      if (account) params.set("account_code", account);
+      if (origin) params.set("origin", origin);
+      params.set("company_code", selectedCompany());
+      return params;
+    }
+    function accountingPeriodValue() {
+      return valueFrom("accMode") === "RANGE" ? (valueFrom("accPeriodTo") || valueFrom("accPeriodFrom") || valueFrom("accPeriod")) : valueFrom("accPeriod");
+    }
+    function accountingResolveAccount(raw) {
+      const text = String(raw || "").trim();
+      if (!text) return "";
+      const exact = accountingAccounts.find(a => text === `${a.account_code} ${a.account_name}` || text === `${a.account_code} - ${a.account_name}` || text === a.account_code);
+      if (exact) return exact.account_code;
+      const found = accountingAccounts.find(a => String(a.account_code || "").includes(text) || String(a.account_name || "").toLowerCase().includes(text.toLowerCase()));
+      return found ? found.account_code : text;
+    }
+    async function loadAccountingAccountOptions() {
+      try {
+        const payload = await getJSON("/accounting/accounts");
+        accountingAccounts = rowsList(payload);
+        const list = $("accAccountList");
+        if (list) list.innerHTML = accountingAccounts.map(a => `<option value="${esc(a.account_code)}">${esc(a.account_code)} - ${esc(a.account_name)}</option>`).join("");
+      } catch {}
+    }
+    async function loadAccountingWeb() {
+      const target = $("accountingResult");
+      target.className = "status";
+      target.textContent = "Consultando...";
+      try {
+        const params = accountingParams();
+        const report = String(params.get("report") || "ASIENTOS").toUpperCase();
+        if (params.has("account_code")) params.set("account_code", accountingResolveAccount(params.get("account_code")));
+        let payload;
+        if (report === "ASIENTOS") {
+          params.delete("report");
+          payload = await getJSON(`/accounting/ledger?${params.toString()}`);
+        } else {
+          params.delete("report");
+          payload = await getJSON(`/accounting-lines?${params.toString()}`);
+        }
+        const rows = rowsList(payload);
+        accountingRows = rows;
+        target.className = "";
+        if (!rows.length) {
+          target.innerHTML = '<div class="status">Sin datos para esta consulta.</div>';
+          return;
+        }
+        target.innerHTML = renderAccountingPreview(rows);
+      } catch (err) {
+        target.className = "status error";
+        target.textContent = err.message;
+      }
+    }
+    function renderAccountingPreview(rows) {
+      const report = valueFrom("accReport") || "BC";
+      if (report === "ASIENTOS") return renderAccountingEntryGroups(rows);
+      if (report === "BC") return renderAccountingTrialBalance(rows);
+      if (report === "ANALITICO_CUENTA") return renderAccountingAnalytic(rows);
+      if (report === "DETALLE_TIPO") return renderAccountingTypeDetail(rows);
+      return renderAccountingGroupedLines(rows);
+    }
+    function groupAccountingFlatLines(rows) {
+      const map = new Map();
+      rows.forEach((row, idx) => {
+        const id = String(row.entry_id || `SIN_ASIENTO_${idx}`);
+        const entry = map.get(id) || {
+          entry_id: row.entry_id || "",
+          entry_date: row.entry_date || "",
+          period: row.period || "",
+          origin: row.origin || "",
+          workflow_status: row.workflow_status || "",
+          description: row.entry_description || row.description || row.line_description || "",
+          lines: []
+        };
+        entry.lines.push({
+          line_id: row.line_id || "",
+          account_code: row.account_code || "",
+          account_name: row.account_name || "",
+          account_type: row.account_type || "",
+          line_description: row.line_description || "",
+          debit: row.debit || 0,
+          credit: row.credit || 0
+        });
+        map.set(id, entry);
+      });
+      return [...map.values()];
+    }
+    function renderAccountingGroupedLines(rows) {
+      return renderAccountingEntryGroups(groupAccountingFlatLines(rows));
+    }
+    function renderAccountingEntryGroups(rows) {
+      accountingEntryViewRows = Array.isArray(rows) ? rows : [];
+      const fmt = n => Number(n || 0).toLocaleString("en-US", {minimumFractionDigits:2, maximumFractionDigits:2});
+      const totals = entry => (entry.lines || []).reduce((acc,line) => {
+        acc.debit += Number(line.debit || 0);
+        acc.credit += Number(line.credit || 0);
+        return acc;
+      }, {debit:0, credit:0});
+      return `<div class="table-wrap"><table><thead><tr><th></th><th>Fecha</th><th>Asiento</th><th>Periodo</th><th>Origen</th><th>Estado</th><th>Descripción</th><th>Debe</th><th>Haber</th><th>Diferencia</th></tr></thead><tbody>${rows.slice(0,500).map((entry, idx) => {
+        const id = String(entry.entry_id || "");
+        const open = expandedAccountingEntryIds.has(id);
+        const selected = selectedAccountingEntryId && String(selectedAccountingEntryId) === id;
+        const total = totals(entry);
+        const diff = total.debit - total.credit;
+        const lineRows = open ? `<tr class="accounting-entry-lines-row"><td colspan="10"><div class="accounting-entry-lines-box">${renderAccountingEntryLineTable(entry.lines || [], fmt)}</div></td></tr>` : "";
+        return `<tr class="accounting-entry-summary ${selected ? "service-selected" : ""}" onclick="toggleAccountingEntryGroup(${idx})"><td><span class="accounting-entry-toggle">${open ? "-" : "+"}</span></td><td>${esc(entry.entry_date || "")}</td><td>${esc(entry.entry_id || "")}</td><td>${esc(entry.period || "")}</td><td>${esc(entry.origin || "")}</td><td>${esc(entry.workflow_status || "")}</td><td>${esc(entry.description || "")}</td><td>${fmt(total.debit)}</td><td>${fmt(total.credit)}</td><td>${fmt(diff)}</td></tr>${lineRows}`;
+      }).join("")}</tbody></table></div>`;
+    }
+    function renderAccountingEntryLineTable(lines, fmt) {
+      if (!lines.length) return '<div class="status">Este asiento no tiene líneas.</div>';
+      return `<table><thead><tr><th>Línea</th><th>Cuenta</th><th>Nombre</th><th>Detalle</th><th>Debe</th><th>Haber</th></tr></thead><tbody>${lines.map(line => `<tr><td>${esc(line.line_id || "")}</td><td>${esc(line.account_code || "")}</td><td>${esc(line.account_name || "")}</td><td>${esc(line.line_description || "")}</td><td>${fmt(line.debit)}</td><td>${fmt(line.credit)}</td></tr>`).join("")}</tbody></table>`;
+    }
+    function toggleAccountingEntryGroup(index) {
+      const entry = accountingEntryViewRows[index];
+      if (!entry) return;
+      const id = String(entry.entry_id || "");
+      selectedAccountingEntryId = entry.entry_id || null;
+      if (expandedAccountingEntryIds.has(id)) expandedAccountingEntryIds.delete(id);
+      else expandedAccountingEntryIds.add(id);
+      const target = $("accountingResult");
+      if (target) target.innerHTML = renderAccountingPreview(accountingRows);
+    }
+    function renderAccountingLines(rows) {
+      const cols = ["entry_date","entry_id","period","origin","workflow_status","account_code","account_name","account_type","line_description","debit","credit"];
+      const fmt = n => Number(n || 0).toLocaleString("en-US", {minimumFractionDigits:2, maximumFractionDigits:2});
+      return `<div class="table-wrap"><table><thead><tr><th class="pick-col"></th>${cols.map(c => `<th>${esc(c.replace(/_/g," "))}</th>`).join("")}</tr></thead><tbody>${rows.slice(0,1000).map((row, idx) => {
+        const selected = selectedAccountingEntryId && String(row.entry_id) === String(selectedAccountingEntryId);
+        return `<tr class="${selected ? "service-selected" : ""}" onclick="selectAccountingEntry(${idx})"><td class="pick-col"><input class="row-pick" type="radio" name="accPick" ${selected ? "checked" : ""} onclick="event.stopPropagation(); selectAccountingEntry(${idx})" /></td>${cols.map(c => `<td>${esc(["debit","credit"].includes(c) ? fmt(row[c]) : row[c])}</td>`).join("")}</tr>`;
+      }).join("")}</tbody></table></div>`;
+    }
+    function selectAccountingEntry(index) {
+      const row = accountingRows[index];
+      selectedAccountingEntryId = row?.entry_id || null;
+      const target = $("accountingResult");
+      if (target && accountingRows.length) target.innerHTML = renderAccountingPreview(accountingRows);
+    }
+    function renderAccountingAnalytic(rows) {
+      const fmt = n => Number(n || 0).toLocaleString("en-US", {minimumFractionDigits:2, maximumFractionDigits:2});
+      const account = accountingResolveAccount(valueFrom("accAccountCode"));
+      const debit = rows.reduce((sum,row) => sum + Number(row.debit || 0), 0);
+      const credit = rows.reduce((sum,row) => sum + Number(row.credit || 0), 0);
+      const header = `<div class="accounting-report-head"><h3>Analítico de cuenta</h3><span class="muted">${esc(account || "Seleccione una cuenta o abra una cuenta del resumen")}</span></div>`;
+      if (!account) {
+        const map = new Map();
+        rows.forEach(row => {
+          const code = String(row.account_code || "").trim();
+          if (!code) return;
+          const item = map.get(code) || {account_code:code, account_name:row.account_name || "", account_type:row.account_type || "", debit:0, credit:0, lines:0};
+          item.debit += Number(row.debit || 0);
+          item.credit += Number(row.credit || 0);
+          item.lines += 1;
+          map.set(code, item);
+        });
+        const out = [...map.values()].sort((a,b) => Math.abs((b.debit - b.credit)) - Math.abs((a.debit - a.credit)));
+        return `${header}<div class="accounting-summary-grid">
+          <div class="accounting-summary-card"><span>Debe</span><strong>${fmt(debit)}</strong></div>
+          <div class="accounting-summary-card"><span>Haber</span><strong>${fmt(credit)}</strong></div>
+          <div class="accounting-summary-card"><span>Saldo neto</span><strong>${fmt(debit - credit)}</strong></div>
+          <div class="accounting-summary-card"><span>Cuentas</span><strong>${out.length}</strong></div>
+        </div><div class="table-wrap"><table><thead><tr><th>Cuenta</th><th>Nombre</th><th>Tipo</th><th>Líneas</th><th>Debe</th><th>Haber</th><th>Saldo</th></tr></thead><tbody>${out.map(row => `<tr onclick="pickAccountingAccount(${JSON.stringify(row.account_code || "")})" class="accounting-entry-summary"><td>${esc(row.account_code)}</td><td>${esc(row.account_name)}</td><td>${esc(row.account_type)}</td><td>${row.lines}</td><td>${fmt(row.debit)}</td><td>${fmt(row.credit)}</td><td>${fmt(row.debit - row.credit)}</td></tr>`).join("")}</tbody></table></div>`;
+      }
+      const byMonth = new Map();
+      rows.forEach(row => {
+        const month = String(row.period || row.entry_date || "").slice(0,7) || "Sin periodo";
+        const item = byMonth.get(month) || {period:month, debit:0, credit:0};
+        item.debit += Number(row.debit || 0);
+        item.credit += Number(row.credit || 0);
+        byMonth.set(month, item);
+      });
+      const monthRows = [...byMonth.values()].sort((a,b) => a.period.localeCompare(b.period));
+      return `${header}<div class="accounting-summary-grid">
+        <div class="accounting-summary-card"><span>Debe</span><strong>${fmt(debit)}</strong></div>
+        <div class="accounting-summary-card"><span>Haber</span><strong>${fmt(credit)}</strong></div>
+        <div class="accounting-summary-card"><span>Saldo neto</span><strong>${fmt(debit - credit)}</strong></div>
+        <div class="accounting-summary-card"><span>Movimientos</span><strong>${rows.length}</strong></div>
+      </div><div class="table-wrap"><table><thead><tr><th>Mes</th><th>Debe</th><th>Haber</th><th>Saldo</th></tr></thead><tbody>${monthRows.map(row => `<tr><td>${esc(row.period)}</td><td>${fmt(row.debit)}</td><td>${fmt(row.credit)}</td><td>${fmt(row.debit - row.credit)}</td></tr>`).join("")}</tbody></table></div>${renderAccountingGroupedLines(rows)}`;
+    }
+    function pickAccountingAccount(code) {
+      if ($("accAccountCode")) $("accAccountCode").value = code;
+      loadAccountingWeb();
+    }
+    function renderAccountingTypeDetail(rows) {
+      const fmt = n => Number(n || 0).toLocaleString("en-US", {minimumFractionDigits:2, maximumFractionDigits:2});
+      const map = new Map();
+      rows.forEach(row => {
+        const type = String(row.account_type || "SIN TIPO").trim() || "SIN TIPO";
+        const item = map.get(type) || {type, debit:0, credit:0, lines:0};
+        item.debit += Number(row.debit || 0);
+        item.credit += Number(row.credit || 0);
+        item.lines += 1;
+        map.set(type, item);
+      });
+      const out = [...map.values()].sort((a,b) => a.type.localeCompare(b.type));
+      return `<div class="accounting-report-head"><h3>Detalle por tipo de cuenta</h3><span class="muted">${rows.length} líneas contables</span></div><div class="table-wrap"><table><thead><tr><th>Tipo</th><th>Líneas</th><th>Debe</th><th>Haber</th><th>Saldo</th></tr></thead><tbody>${out.map(row => `<tr><td>${esc(row.type)}</td><td>${row.lines}</td><td>${fmt(row.debit)}</td><td>${fmt(row.credit)}</td><td>${fmt(row.debit - row.credit)}</td></tr>`).join("")}</tbody></table></div>${renderAccountingGroupedLines(rows)}`;
+    }
+    function renderAccountingTrialBalance(rows) {
+      const map = new Map();
+      rows.forEach(row => {
+        const code = String(row.account_code || "").trim();
+        if (!code) return;
+        const key = `${code}||${row.account_name || ""}||${row.account_type || ""}`;
+        const item = map.get(key) || {account_code:code, account_name:row.account_name || "", account_type:row.account_type || "", debit:0, credit:0};
+        item.debit += Number(row.debit || 0);
+        item.credit += Number(row.credit || 0);
+        map.set(key, item);
+      });
+      const out = [...map.values()].sort((a,b) => a.account_code.localeCompare(b.account_code)).map(row => {
+        const balance = row.debit - row.credit;
+        const type = String(row.account_type || "").toUpperCase();
+        const creditNature = ["PASIVO", "PATRIMONIO", "INGRESO", "LIABILITY", "EQUITY", "REVENUE", "INCOME"].includes(type) || /^[234]/.test(String(row.account_code || ""));
+        const naturalBalance = creditNature ? (row.credit - row.debit) : balance;
+        return {
+          ...row,
+          saldo_neto: balance,
+          saldo_natural: naturalBalance,
+          saldo_deudor: balance > 0 ? balance : 0,
+          saldo_acreedor: balance < 0 ? -balance : 0,
+          alerta: naturalBalance < -0.005 ? "Saldo contrario" : ""
+        };
+      });
+      const totals = out.reduce((acc,row) => {
+        acc.debit += row.debit; acc.credit += row.credit; acc.saldo_neto += row.saldo_neto; acc.saldo_natural += row.saldo_natural; acc.saldo_deudor += row.saldo_deudor; acc.saldo_acreedor += row.saldo_acreedor;
+        return acc;
+      }, {debit:0, credit:0, saldo_neto:0, saldo_natural:0, saldo_deudor:0, saldo_acreedor:0});
+      const fmt = n => Number(n || 0).toLocaleString("en-US", {minimumFractionDigits:2, maximumFractionDigits:2});
+      return `<div class="table-wrap"><table><thead><tr><th>Cuenta</th><th>Nombre</th><th>Tipo</th><th>Debe</th><th>Haber</th><th>Saldo neto</th><th>Saldo natural</th><th>Saldo deudor</th><th>Saldo acreedor</th><th>Alerta</th></tr></thead><tbody>
+        ${out.map(row => `<tr class="${row.alerta ? "warn-row" : ""}"><td>${esc(row.account_code)}</td><td>${esc(row.account_name)}</td><td>${esc(row.account_type)}</td><td>${fmt(row.debit)}</td><td>${fmt(row.credit)}</td><td>${fmt(row.saldo_neto)}</td><td>${fmt(row.saldo_natural)}</td><td>${fmt(row.saldo_deudor)}</td><td>${fmt(row.saldo_acreedor)}</td><td>${esc(row.alerta)}</td></tr>`).join("")}
+        <tr class="total-row"><td colspan="3"><b>Total</b></td><td><b>${fmt(totals.debit)}</b></td><td><b>${fmt(totals.credit)}</b></td><td><b>${fmt(totals.saldo_neto)}</b></td><td><b>${fmt(totals.saldo_natural)}</b></td><td><b>${fmt(totals.saldo_deudor)}</b></td><td><b>${fmt(totals.saldo_acreedor)}</b></td><td></td></tr>
+      </tbody></table></div>`;
+    }
+    function clearAccountingWeb() {
+      renderAccountingWeb($("accountingWorkspace"));
+    }
+    function selectAccountingReport(code) {
+      if ($("accReport")) $("accReport").value = code;
+      loadAccountingWeb();
+    }
+    function exportAccountingReport(ext) {
+      const params = accountingParams();
+      if (params.has("account_code")) params.set("account_code", accountingResolveAccount(params.get("account_code")));
+      const path = ext === "pdf" ? "/accounting/reports/pdf" : "/accounting/reports/excel";
+      window.open(`${path}?${params.toString()}`, "_blank");
+    }
+    function fmtAccMoney(value) {
+      return Number(value || 0).toLocaleString("en-US", {minimumFractionDigits:2, maximumFractionDigits:2});
+    }
+    async function refreshAccountingDashboard() {
+      const period = accountingPeriodValue() || new Date().toISOString().slice(0,7);
+      try {
+        const [dashboard, iva, fx] = await Promise.all([
+          getJSON(`/accounting/workspace/dashboard?period=${encodeURIComponent(period)}&company_code=${encodeURIComponent(selectedCompany())}`).catch(() => null),
+          getJSON(`/accounting/iva?period=${encodeURIComponent(period)}&company_code=${encodeURIComponent(selectedCompany())}`).catch(() => null),
+          getJSON("/accounting/advanced/fx/rate").catch(() => null)
+        ]);
+        if (dashboard?.kpis) {
+          $("accKpiDebit").textContent = fmtAccMoney(dashboard.kpis.debit);
+          $("accKpiCredit").textContent = fmtAccMoney(dashboard.kpis.credit);
+        }
+        if (iva) $("accKpiIva").textContent = fmtAccMoney(iva.iva_total ?? iva?.fiscal?.net_tax);
+        applyAccountingTc(fx);
+      } catch {}
+    }
+    function applyAccountingTc(fx) {
+      if (!fx) return;
+      const rate = fx.rate || fx.exchange_rate;
+      const date = fx.date || fx.rate_date || "";
+      if ($("accTcRate")) $("accTcRate").value = rate ? fmtAccMoney(rate) : "";
+      if ($("accTcDate")) $("accTcDate").value = date || "";
+    }
+    async function fetchAccountingTc() {
+      try {
+        const fx = await getJSON("/accounting/advanced/fx/rate");
+        applyAccountingTc(fx);
+      } catch (err) {
+        alert(`No se pudo consultar TC BCCR: ${err.message}`);
+      }
+    }
+    function requireAccountingEntryId() {
+      if (!selectedAccountingEntryId) alert("Seleccione primero una línea del asiento.");
+      return selectedAccountingEntryId;
+    }
+    function openAccountingManualEntry() {
+      document.body.insertAdjacentHTML("beforeend", `
+        <div class="modal-backdrop" id="svcModal">
+          <div class="modal">
+            <div class="modal-head"><h2>Nuevo asiento contable</h2><button class="secondary" onclick="closeModal()">Cerrar</button></div>
+            <div class="form-grid">
+              <label>Fecha<input id="accNewDate" type="date" value="${new Date().toISOString().slice(0,10)}" /></label>
+              <label>Moneda<select id="accNewCurrency"><option>CRC</option><option>USD</option></select></label>
+              <label>Tipo cambio<input id="accNewFx" type="number" step="0.000001" value="1" /></label>
+              <label class="wide">Descripción<input id="accNewDesc" placeholder="Detalle del asiento" /></label>
+            </div>
+            <div class="accounting-entry-lines" id="accNewLines"></div>
+            <div class="md-actions"><button onclick="addAccountingEntryLine('accNewLines')">Agregar línea</button><button class="green" onclick="saveAccountingManualEntry()">Guardar borrador</button><button class="secondary" onclick="closeModal()">Cancelar</button></div>
+            <div id="accNewMsg" class="status hidden"></div>
+          </div>
+        </div>`);
+      addAccountingEntryLine("accNewLines", {debit:"0", credit:"0"});
+      addAccountingEntryLine("accNewLines", {debit:"0", credit:"0"});
+    }
+    function accountOptions(selected="") {
+      return accountingAccounts.map(a => `<option value="${esc(a.account_code)}"${String(a.account_code) === String(selected) ? " selected" : ""}>${esc(a.account_code)} - ${esc(a.account_name)}</option>`).join("");
+    }
+    function addAccountingEntryLine(containerId, line={}) {
+      const box = $(containerId);
+      const idx = box.querySelectorAll(".accounting-entry-line").length;
+      box.insertAdjacentHTML("beforeend", `<div class="accounting-entry-line">
+        <label>Cuenta<select data-field="account_code">${accountOptions(line.account_code || "")}</select></label>
+        <label>Detalle<input data-field="line_description" value="${esc(line.line_description || "")}" /></label>
+        <label>Debe<input data-field="debit" type="number" step="0.01" value="${esc(line.debit || 0)}" /></label>
+        <label>Haber<input data-field="credit" type="number" step="0.01" value="${esc(line.credit || 0)}" /></label>
+        <button class="secondary" onclick="this.closest('.accounting-entry-line').remove()">×</button>
+      </div>`);
+    }
+    function collectAccountingEntryLines(containerId, includeIds=false) {
+      return [...$(containerId).querySelectorAll(".accounting-entry-line")].map(el => ({
+        line_id: includeIds ? Number(el.dataset.lineId || 0) || undefined : undefined,
+        account_code: el.querySelector('[data-field="account_code"]').value,
+        line_description: el.querySelector('[data-field="line_description"]').value,
+        debit: Number(el.querySelector('[data-field="debit"]').value || 0),
+        credit: Number(el.querySelector('[data-field="credit"]').value || 0)
+      }));
+    }
+    async function saveAccountingManualEntry() {
+      const msg = $("accNewMsg");
+      msg.className = "status"; msg.textContent = "Guardando...";
+      try {
+        const payload = { entry_date:valueFrom("accNewDate"), description:valueFrom("accNewDesc"), currency_code:valueFrom("accNewCurrency") || "CRC", exchange_rate:Number(valueFrom("accNewFx") || 1), company_code:selectedCompany(), lines:collectAccountingEntryLines("accNewLines") };
+        const result = await postJSON("/accounting/manual-entry", payload);
+        closeModal();
+        alert(`Asiento borrador creado: ${result.entry_id}`);
+        await loadAccountingWeb();
+      } catch (err) { msg.className = "status error"; msg.textContent = err.message; }
+    }
+    async function openAccountingEntryEditor() {
+      const id = requireAccountingEntryId();
+      if (!id) return;
+      try {
+        const entry = await getJSON(`/accounting/entry/${id}?company_code=${encodeURIComponent(selectedCompany())}`);
+        document.body.insertAdjacentHTML("beforeend", `
+          <div class="modal-backdrop" id="svcModal">
+            <div class="modal">
+              <div class="modal-head"><h2>Ajustar asiento ${esc(id)}</h2><button class="secondary" onclick="closeModal()">Cerrar</button></div>
+              <div class="form-grid">
+                <label>Fecha<input id="accEditDate" value="${esc(entry.entry_date || "")}" disabled /></label>
+                <label>Estado<input value="${esc(entry.workflow_status || "")}" disabled /></label>
+                <label class="wide">Descripción<input id="accEditDesc" value="${esc(entry.description || "")}" /></label>
+              </div>
+              <div class="accounting-entry-lines" id="accEditLines"></div>
+              <div class="md-actions"><button class="green" onclick="saveAccountingEntryEdit(${Number(id)}, ${Number(entry.version || 1)})">Guardar ajuste</button><button class="secondary" onclick="closeModal()">Cancelar</button></div>
+              <div id="accEditMsg" class="status hidden"></div>
+            </div>
+          </div>`);
+        (entry.lines || []).forEach(line => {
+          addAccountingEntryLine("accEditLines", line);
+          $("accEditLines").lastElementChild.dataset.lineId = line.line_id;
+        });
+      } catch (err) { alert(err.message); }
+    }
+    async function saveAccountingEntryEdit(entryId, version) {
+      const msg = $("accEditMsg");
+      msg.className = "status"; msg.textContent = "Guardando...";
+      try {
+        await sendJSON("PUT", `/accounting/entry/${entryId}`, { description:valueFrom("accEditDesc"), expected_version:version, lines:collectAccountingEntryLines("accEditLines", true) });
+        closeModal();
+        await loadAccountingWeb();
+      } catch (err) { msg.className = "status error"; msg.textContent = err.message; }
+    }
+    async function transitionAccountingEntry(action) {
+      const id = requireAccountingEntryId();
+      if (!id) return;
+      const labels = {submit:"enviar a revisión", approve:"aprobar", post:"contabilizar"};
+      if (!confirm(`¿Desea ${labels[action]} el asiento ${id}?`)) return;
+      try {
+        await postJSON(`/accounting/entry/${id}/${action}`, { user:session?.usuario || "WEB_USER", role:session?.rol || "" });
+        await loadAccountingWeb();
+      } catch (err) { alert(err.message); }
+    }
+    async function reverseAccountingEntry() {
+      const id = requireAccountingEntryId();
+      if (!id || !confirm(`¿Reversar asiento ${id}?`)) return;
+      try {
+        const result = await postJSON(`/accounting/reverse/${id}`, {});
+        alert(`Reverso creado: ${result.reversal_entry_id}`);
+        await loadAccountingWeb();
+      } catch (err) { alert(err.message); }
+    }
+    async function accountingLoadEndpoint(title, path, render=null) {
+      const target = $("accountingResult");
+      target.className = "status"; target.textContent = `Cargando ${title}...`;
+      try {
+        const payload = await getJSON(path);
+        target.className = "";
+        target.innerHTML = `<div class="section-head"><h3>${esc(title)}</h3></div>${render ? render(payload) : renderFinanceGenericTable(rowsList(payload))}`;
+      } catch (err) { target.className = "status error"; target.textContent = err.message; }
+    }
+    function loadAccountingWorkspace() { accountingLoadEndpoint("Mi espacio contable", `/accounting/workspace/dashboard?period=${encodeURIComponent(accountingPeriodValue())}&company_code=${encodeURIComponent(selectedCompany())}`, renderAccountingDashboardPayload); }
+    function renderAccountingDashboardPayload(payload) {
+      const rows = [
+        ...(payload.work_items || []).map(x => ({tipo:"Trabajo", prioridad:x.priority, titulo:x.title, cantidad:x.count, accion:x.action})),
+        ...(payload.recent_entries || []).map(x => ({tipo:"Asiento reciente", prioridad:x.workflow_status, titulo:x.description, cantidad:x.id, accion:x.origin}))
+      ];
+      return renderFinanceGenericTable(rows);
+    }
+    function loadAccountingAuxiliaries() { accountingLoadEndpoint("Auxiliares contables", `/accounting/auxiliaries/reconciliation/details?period=${encodeURIComponent(accountingPeriodValue())}&include_closed=true`); }
+    function loadAccountingAccounts() { accountingLoadEndpoint("Catálogo maestro de cuentas", "/accounting/accounts?include_inactive=true"); }
+    function loadAccountingPostingRules() { accountingLoadEndpoint("Motor de contabilización", "/accounting/posting-rules?include_inactive=true"); }
+    function loadAccountingFixedAssets() { accountingLoadEndpoint("Activos fijos", "/accounting/fixed-assets"); }
+    function loadAccountingInventory() { accountingLoadEndpoint("Inventarios", "/accounting/fixed-assets/inventory/items"); }
+    function loadAccountingCards() { accountingLoadEndpoint("Tarjetas corporativas", "/accounting/corporate-cards/statements"); }
+    function loadAccountingAlerts() { accountingLoadEndpoint("Alertas y validaciones", `/accounting/validation-alerts?period=${encodeURIComponent(accountingPeriodValue())}&company_code=${encodeURIComponent(selectedCompany())}`, payload => renderFinanceGenericTable(payload.alerts || payload.data || [])); }
+    function loadAccountingAudit() { accountingLoadEndpoint("Auditoría por usuario", "/accounting/audit?module=accounting&limit=300"); }
+    function loadAccountingAdvancedDashboard() { accountingLoadEndpoint("Accounting avanzado", `/accounting/advanced/executive-dashboard?period=${encodeURIComponent(accountingPeriodValue())}`, renderAccountingAdvancedPayload); }
+    function renderAccountingAdvancedPayload(payload) {
+      const rows = [
+        {seccion:"Liquidez", valor:payload?.liquidity?.banks, detalle:payload?.liquidity?.as_of},
+        {seccion:"Ingresos", valor:payload?.margin?.revenue, detalle:"Periodo"},
+        {seccion:"Gastos", valor:payload?.margin?.expenses, detalle:"Periodo"},
+        {seccion:"Utilidad", valor:payload?.margin?.profit, detalle:`Margen ${payload?.margin?.margin_pct || 0}%`},
+        {seccion:"CxC vencida", valor:payload?.overdue_ar?.total, detalle:payload?.overdue_ar?.count},
+        {seccion:"Pagos próximos", valor:payload?.upcoming_payments?.total, detalle:payload?.upcoming_payments?.count}
+      ];
+      return renderFinanceGenericTable(rows);
+    }
+    async function runPortiaAccounting() {
+      const target = $("accountingResult");
+      target.className = "status"; target.textContent = "PORTIA revisando Accounting...";
+      try {
+        const payload = await postJSON("/accounting/advanced/portia/review", { period:accountingPeriodValue(), language:"ES" });
+        target.className = "";
+        target.innerHTML = `<div class="accounting-banner" style="white-space:pre-wrap">${esc(payload.commentary || "")}</div>`;
+      } catch (err) { target.className = "status error"; target.textContent = err.message; }
+    }
+    function loadTaxScenarioPlanner() { accountingLoadEndpoint("Simulador fiscal multiempresa", "/accounting/tax-scenarios/history"); }
+    function loadAccountingTaxCenter() { accountingLoadEndpoint("Centro fiscal Costa Rica", `/accounting/tax/iva?period=${encodeURIComponent(accountingPeriodValue())}&company_code=${encodeURIComponent(selectedCompany())}`, payload => renderFinanceGenericTable([{seccion:"Fiscal", ...payload.fiscal}, {seccion:"Contable", ...payload.accounting}, {seccion:"Diferencias", ...payload.differences}, {seccion:"Calidad", ...payload.quality}])); }
+    function loadAccountingLegalLibrary() { accountingLoadEndpoint("Biblioteca legal Costa Rica", "/accounting/legal-library"); }
+    function openTaxDeclaration(type) {
+      if (type === "IVA") loadAccountingTaxCenter();
+      else loadTaxScenarioPlanner();
+    }
+    function loadAccountingCompleteStatements() { accountingLoadEndpoint("Estados financieros completos", `/accounting/financial-statements/complete?${accountingParams().toString()}`, renderAccountingCompletePayload); }
+    function renderAccountingCompletePayload(payload) {
+      const rows = [];
+      Object.entries(payload || {}).forEach(([section, value]) => {
+        if (Array.isArray(value)) value.forEach(item => rows.push({section, ...item}));
+        else if (value && typeof value === "object") rows.push({section, resumen:JSON.stringify(value).slice(0,900)});
+      });
+      return renderFinanceGenericTable(rows);
+    }
+    function loadAccountingExecutive() { loadAccountingAdvancedDashboard(); }
+    async function runAccountingSyncAll() {
+      const target = $("accountingResult");
+      target.className = "status"; target.textContent = "Sincronizando ERP hacia Accounting...";
+      try {
+        const payload = await postJSON("/accounting/sync/all", { user:session?.usuario || "WEB_USER", company_code:selectedCompany() });
+        target.className = "";
+        target.innerHTML = renderFinanceGenericTable(Object.entries(payload).map(([seccion, valor]) => ({seccion, valor: typeof valor === "object" ? JSON.stringify(valor) : valor})));
+        await refreshAccountingDashboard();
+      } catch (err) { target.className = "status error"; target.textContent = err.message; }
+    }
+    function openAccountingGuidedClose() { accountingLoadEndpoint("Cierre mensual guiado", `/accounting/workspace/guided-close?period=${encodeURIComponent(accountingPeriodValue())}&company_code=${encodeURIComponent(selectedCompany())}`, renderAccountingClosePayload); }
+    function renderAccountingClosePayload(payload) {
+      const checklist = payload.checklist || payload.data || [];
+      const summary = payload.summary || {};
+      return `<div class="grid kpis"><div class="card kpi"><span>Estado</span><strong>${esc(payload?.period_control?.status || "-")}</strong></div><div class="card kpi"><span>Listo para cierre</span><strong>${payload.ready_to_close ? "Sí" : "No"}</strong></div><div class="card kpi"><span>Diferencia</span><strong>${fmtAccMoney(summary.difference)}</strong></div><div class="card kpi"><span>Alertas críticas</span><strong>${esc(summary.critical_alerts || 0)}</strong></div></div>${renderFinanceGenericTable(checklist)}`;
+    }
+    function accountingGmailAccounts() {
+      if (selectedCompany() === "MCI-CR") return ["facturacion.fe@xtravon.com", "operations@xtravon.com"];
+      return ["gastos@mslogisticsgroup.com", "contabilidad@mslogisticsgroup.com"];
+    }
+    function accountingGmailAccount() {
+      return accountingGmailAccounts()[0];
+    }
+    function accountingMailStatusTarget() {
+      return $("accOutlookStatus") || $("accountingResult");
+    }
+    function setAccountingMailStatus(className, content, asHtml=false) {
+      const status = accountingMailStatusTarget();
+      if (!status) return;
+      status.className = className || "";
+      if (asHtml) status.innerHTML = content;
+      else status.textContent = content;
+    }
+    function renderGmailFiscalSummary(payload) {
+      const parts = [
+        `XML ${payload.imported || 0}`,
+        `PDF tarjetas ${payload.card_imported || 0}`,
+        `Pagos tarjetas ${payload.bac_card_posted || 0}`,
+        `Transferencias socio ${payload.bac_partner_imported || 0}`,
+        `Duplicados ${payload.duplicates || payload.card_duplicates || 0}`,
+        `Revisión ${payload.review || 0}`
+      ];
+      return parts.join(" · ");
+    }
+    async function startGmailFiscalOAuth() {
+      const accounts = accountingGmailAccounts();
+      setAccountingMailStatus("accounting-banner", `Preparando autorización Google para ${accounts.join(" y ")}...`);
+      try {
+        for (const account of accounts) {
+          const payload = await postJSON("/accounting/tax/gmail/oauth/start", { user:session?.usuario || "WEB_USER", account_email:account });
+          const url = payload.authorization_url;
+          if (url) window.open(url, "_blank", "noopener,noreferrer");
+        }
+        setAccountingMailStatus("accounting-banner", `Se abrió la autorización Google para ${accounts.join(" y ")}. Autorice cada buzón y luego active Gmail automático.`);
+      } catch (err) { setAccountingMailStatus("accounting-banner error", err.message); }
+    }
+    async function enableGmailFiscalAutomation() {
+      const accounts = accountingGmailAccounts();
+      setAccountingMailStatus("accounting-banner", `Activando revisión automática para ${accounts.join(" y ")}...`);
+      try {
+        const results = [];
+        for (const account of accounts) {
+          const payload = await sendJSON("PUT", "/accounting/tax/gmail/automation", { enabled:true, interval_minutes:10, user:session?.usuario || "WEB_USER", account_email:account });
+          results.push(`${payload.account_email || account}: ${payload.next_sync_at || "en breve"}`);
+        }
+        setAccountingMailStatus("accounting-banner", `Gmail automático activo. Próximas revisiones: ${results.join(" · ")}.`);
+      } catch (err) { setAccountingMailStatus("accounting-banner error", err.message); }
+    }
+    async function runGmailFiscalSync() {
+      setAccountingMailStatus("accounting-banner", "Ejecutando sincronización Gmail fiscal en backend...");
+      try {
+        const summaries = [];
+        for (const account of accountingGmailAccounts()) {
+          const payload = await postJSON(`/accounting/tax/gmail/sync?max_messages=100&account_email=${encodeURIComponent(account)}`, {});
+          summaries.push(`${account}: ${renderGmailFiscalSummary(payload)}`);
+        }
+        setAccountingMailStatus("accounting-banner", `Gmail backend: ${summaries.join(" · ")}.`);
+      } catch (err) { setAccountingMailStatus("accounting-banner error", err.message); }
+    }
+    async function loadGmailFiscalStatus() {
+      setAccountingMailStatus("accounting-banner", "Consultando estado Gmail backend...");
+      try {
+        const lines = [];
+        let oauthConfigured = true;
+        for (const account of accountingGmailAccounts()) {
+          const payload = await getJSON(`/accounting/tax/gmail/status?account_email=${encodeURIComponent(account)}`);
+          oauthConfigured = oauthConfigured && !!payload.oauth_configured;
+          const connection = payload.connection || {};
+          const counts = payload.message_counts?.[connection.account_email] || {};
+          lines.push(`${connection.account_email || account}: ${connection.authorized ? "conectado" : "sin autorización"} · auto ${connection.auto_enabled ? "activa" : "inactiva"} · sync ${connection.last_sync_at || "-"} · mensajes ${Object.entries(counts).map(([k,v]) => `${k}:${v}`).join(", ") || "0"}`);
+        }
+        setAccountingMailStatus("accounting-banner", `Gmail backend ${lines.join(" | ")}${oauthConfigured ? "" : " · OAuth no configurado en servidor"}`);
+      } catch (err) { setAccountingMailStatus("accounting-banner error", err.message); }
+    }
+    function summarizeAccountingOutlook(result) {
+      const history = result.card_history || {};
+      const parts = [
+        `Correos ${result.messages || 0}`,
+        `XML ${result.imported || 0}`,
+        `PDF BAC ${result.card_imported || 0}`,
+        `BAC pagos ${result.bac_partner_imported || 0}`,
+        `Tarjetas pagadas ${history.settlements || 0}`,
+        `Errores ${result.errors || 0}`
+      ];
+      return parts.join(" · ");
+    }
+    async function runAccountingOutlookSync(historyOnly) {
+      setAccountingMailStatus("muted", historyOnly ? "Cargando historial BAC 2025-2026..." : "Revisando Outlook/BAC local manual...");
+      try {
+        const result = historyOnly
+          ? await postJSON("/accounting/outlook-local/corporate-card-history", {})
+          : await postJSON("/accounting/outlook-local/scan", { max_messages:100, process_corporate_cards:true, post_corporate_card_history:true });
+        setAccountingMailStatus("muted", summarizeAccountingOutlook(result));
+      } catch (err) {
+        setAccountingMailStatus("error", err.message);
+      }
+    }
+    function renderItpWeb(target) {
+      target.innerHTML = `
+        <div class="panel-head">
+          <h2>Invoice To Pay</h2>
+          <span class="muted">Obligaciones, proveedores, cargas y pagos por consulta manual</span>
+        </div>
+        <div class="finance-filter-row compact">
+          <label>Tipo obligación<select id="itpObligationType"><option value="">Todos</option><option value="SURVEYOR">Surveyor</option><option value="SUPPLIER">Proveedor</option><option value="MANUAL">Manual</option></select></label>
+          <label>Beneficiario<input id="itpPayee" placeholder="Nombre beneficiario" /></label>
+          <label>Estado<select id="itpStatus"><option value="ALL">Todos</option><option>PENDING</option><option>PARTIAL</option><option>PAID</option></select></label>
+          <button onclick="loadItp()">Buscar</button>
+          <button class="secondary" onclick="clearItp()">Limpiar</button>
+        </div>
+        <div class="finance-filter-row compact">
+          <label>Factura desde<input id="itpIssueFrom" type="date" /></label>
+          <label>Factura hasta<input id="itpIssueTo" type="date" /></label>
+          <label>Vence desde<input id="itpDueFrom" type="date" /></label>
+          <label>Vence hasta<input id="itpDueTo" type="date" /></label>
+          <label>Pago planificado desde<input id="itpPaymentFrom" type="date" /></label>
+          <label>Pago planificado hasta<input id="itpPaymentTo" type="date" /></label>
+        </div>
+        <div class="itp-action-grid">
+          <div class="itp-action-group">
+            <h3>Registrar</h3>
+            <div class="itp-action-row">
+              <button class="green" onclick="openItpManualForm()">Obligación manual</button>
+              <button onclick="openItpUploadForm()">Cargar factura PDF / XML</button>
+              <button onclick="openItpBiweekly()">Obligaciones quincenales</button>
+            </div>
+          </div>
+          <div class="itp-action-group">
+            <h3>Acciones</h3>
+            <div class="itp-action-row">
+              <button onclick="openItpPlanPaymentForm()">Planificar pago</button>
+              <button class="green" onclick="openItpPaymentForm()">Aplicar pago</button>
+              <button class="brown" onclick="deleteSelectedItp()">Eliminar</button>
+            </div>
+          </div>
+          <div class="itp-action-group">
+            <h3>Reportes</h3>
+            <div class="itp-action-row">
+              <button class="secondary" onclick="downloadItpExcel()">Excel</button>
+              <button class="secondary" onclick="loadItpPaymentSchedule()">Cronograma pagos</button>
+            </div>
+          </div>
+        </div>
+        <div id="itpKpis" class="grid kpis hidden"></div>
+        <div id="itpAlerts" class="status hidden"></div>
+        <div id="itpMsg" class="status hidden"></div>
+        <div id="itpSchedule" class="workspace hidden"></div>
+        <div id="itpTable" class="workspace"><div class="status">Configure filtros y presione Buscar para consultar ITP.</div></div>`;
+    }
+    function itpParams() {
+      const params = new URLSearchParams();
+      const pairs = [
+        ["obligation_type","itpObligationType"], ["payee","itpPayee"], ["status","itpStatus"],
+        ["issue_date_from","itpIssueFrom"], ["issue_date_to","itpIssueTo"],
+        ["due_date_from","itpDueFrom"], ["due_date_to","itpDueTo"],
+        ["payment_date_from","itpPaymentFrom"], ["payment_date_to","itpPaymentTo"]
+      ];
+      pairs.forEach(([key,id]) => {
+        const value = valueFrom(id);
+        if (value) params.set(key, value);
+      });
+      if (!params.has("status")) params.set("status", "ALL");
+      return params.toString();
+    }
+    async function loadItp() {
+      const msg = $("itpMsg");
+      const table = $("itpTable");
+      selectedItpIndex = null;
+      selectedItpIndexes = new Set();
+      msg.className = "status";
+      msg.textContent = "Consultando ITP...";
+      try {
+        const [payload, kpis] = await Promise.all([
+          getJSON(`/invoice-to-pay/search?${itpParams()}`),
+          getJSON("/invoice-to-pay/kpis").catch(() => null)
+        ]);
+        itpRows = rowsList(payload);
+        msg.className = "status hidden";
+        renderItpKpis(kpis);
+        renderItpTable();
+        await refreshItpScheduleIfOpen();
+      } catch (err) {
+        itpRows = [];
+        table.innerHTML = "";
+        msg.className = "status error";
+        msg.textContent = err.message;
+      }
+    }
+    function renderItpKpis(kpis) {
+      const box = $("itpKpis");
+      if (!box || !kpis) return;
+      box.className = "grid kpis";
+      const cards = [
+        ["Pending Payables", kpis.pending],
+        ["Paid Amount", kpis.paid],
+        ["Avg Payment Days", kpis.dpo],
+        ["Overdue Amount", kpis.overdue_amount]
+      ];
+      box.innerHTML = cards.map(([label,value]) => `<div class="card kpi"><span>${esc(label)}</span><strong>${Number(value || 0).toLocaleString("en-US",{minimumFractionDigits:2, maximumFractionDigits:2})}</strong></div>`).join("");
+      const alerts = $("itpAlerts");
+      if (alerts) {
+        alerts.className = "status";
+        alerts.textContent = `Pagos próximos: ${Number(kpis.upcoming || 0)} · Pagos vencidos: ${Number(kpis.overdue || 0)}`;
+      }
+    }
+    function renderItpTable() {
+      const table = $("itpTable");
+      const cols = ["id","payee_name","obligation_type","referencia","planned_payment_date","due_date","currency","total","balance","status","origin","issue_date","last_payment_date","vessel","country","operation"];
+      const labels = { planned_payment_date:"Pago planificado", due_date:"Vence", payee_name:"Beneficiario", obligation_type:"Tipo", referencia:"Referencia", issue_date:"Factura", last_payment_date:"Último pago" };
+      if (!itpRows.length) {
+        table.innerHTML = '<div class="status">Sin obligaciones para esta consulta.</div>';
+        return;
+      }
+      table.innerHTML = `<div class="table-wrap"><table><thead><tr><th class="pick-col"></th>${cols.map(c => `<th>${esc(labels[c] || c.replace(/_/g," "))}</th>`).join("")}</tr></thead><tbody>${itpRows.map((row, idx) => {
+        const due = String(row.due_date || "").slice(0,10);
+        const overdue = ["PENDING","PARTIAL"].includes(String(row.status || "").toUpperCase()) && due && due < new Date().toISOString().slice(0,10);
+        const selected = selectedItpIndexes.has(idx);
+        return `<tr class="${selected ? "service-selected" : overdue ? "service-warning" : ""}" onclick="toggleItpRow(${idx})"><td class="pick-col"><input class="row-pick" type="checkbox" ${selected ? "checked" : ""} onclick="event.stopPropagation(); toggleItpRow(${idx}, this.checked)" /></td>${cols.map(c => `<td>${esc(["total","balance"].includes(c) ? Number(row[c] || 0).toLocaleString("en-US",{minimumFractionDigits:2, maximumFractionDigits:2}) : row[c])}</td>`).join("")}</tr>`;
+      }).join("")}</tbody></table></div>`;
+    }
+    function toggleItpRow(idx, checked=null) {
+      const next = checked === null ? !selectedItpIndexes.has(idx) : checked;
+      selectedItpIndex = setIndexSelection(selectedItpIndexes, idx, next);
+      renderItpTable();
+    }
+    function selectedItpRow() {
+      if (selectedItpIndex === null) selectedItpIndex = firstFromSet(selectedItpIndexes);
+      return selectedItpIndex === null ? null : itpRows[selectedItpIndex];
+    }
+    function requireItpRow() {
+      const row = selectedItpRow();
+      if (!row) alert("Seleccione primero una obligación ITP.");
+      return row;
+    }
+    function clearItp() {
+      ["itpObligationType","itpPayee","itpIssueFrom","itpIssueTo","itpDueFrom","itpDueTo","itpPaymentFrom","itpPaymentTo"].forEach(id => { if ($(id)) $(id).value = ""; });
+      if ($("itpStatus")) $("itpStatus").value = "ALL";
+      itpRows = [];
+      selectedItpIndex = null;
+      selectedItpIndexes = new Set();
+      if ($("itpSchedule")) {
+        $("itpSchedule").className = "workspace hidden";
+        $("itpSchedule").innerHTML = "";
+      }
+      $("itpTable").innerHTML = '<div class="status">Configure filtros y presione Buscar para consultar ITP.</div>';
+      $("itpMsg").className = "status hidden";
+      $("itpKpis").className = "grid kpis hidden";
+      $("itpAlerts").className = "status hidden";
+    }
+    function itpScheduleIsOpen() {
+      const box = $("itpSchedule");
+      return !!box && !box.classList.contains("hidden") && !!box.innerHTML.trim();
+    }
+    async function refreshItpScheduleIfOpen() {
+      if (itpScheduleIsOpen()) await loadItpPaymentSchedule(true);
+    }
+    async function loadItpPaymentSchedule(silent=false) {
+      const box = $("itpSchedule");
+      if (!box) return;
+      const today = new Date();
+      if (!itpScheduleMonth) itpScheduleMonth = new Date(today.getFullYear(), today.getMonth(), 1);
+      const from = new Date(itpScheduleMonth.getFullYear(), itpScheduleMonth.getMonth(), 1).toISOString().slice(0,10);
+      const to = new Date(itpScheduleMonth.getFullYear(), itpScheduleMonth.getMonth() + 1, 0).toISOString().slice(0,10);
+      box.className = "workspace";
+      if (!silent) box.innerHTML = '<div class="status">Cargando cronograma de pagos...</div>';
+      try {
+        const data = await getJSON(`/invoice-to-pay/payment-schedule?date_from=${from}&date_to=${to}`);
+        box.innerHTML = renderItpPaymentSchedule(data, from, to);
+        enhanceExcelTables(box);
+      } catch (err) {
+        box.innerHTML = `<div class="status error">${esc(err.message)}</div>`;
+      }
+    }
+    function shiftItpPaymentSchedule(months) {
+      const base = itpScheduleMonth || new Date();
+      itpScheduleMonth = new Date(base.getFullYear(), base.getMonth() + months, 1);
+      loadItpPaymentSchedule();
+    }
+    function resetItpPaymentSchedule() {
+      const today = new Date();
+      itpScheduleMonth = new Date(today.getFullYear(), today.getMonth(), 1);
+      loadItpPaymentSchedule();
+    }
+    function renderItpPaymentSchedule(data, from, to) {
+      const byDate = new Map((data.days || []).map(day => [day.date, day]));
+      const start = new Date(`${from}T00:00:00`);
+      const end = new Date(`${to}T00:00:00`);
+      const first = new Date(start);
+      first.setDate(first.getDate() - first.getDay());
+      const last = new Date(end);
+      last.setDate(last.getDate() + (6 - last.getDay()));
+      const todayKey = new Date().toISOString().slice(0,10);
+      const cells = [];
+      for (let d = new Date(first); d <= last; d.setDate(d.getDate() + 1)) {
+        const key = d.toISOString().slice(0,10);
+        const day = byDate.get(key);
+        const outside = key < from || key > to;
+        const totalText = day
+          ? Object.entries(day.totals || {}).map(([cur, amount]) => `${esc(cur)} ${Number(amount || 0).toLocaleString("en-US",{maximumFractionDigits:2})}`).join(" · ")
+          : "";
+        const items = (day?.items || []).slice(0, 4);
+        const hasItems = !!day && (day.items || []).length > 0;
+        cells.push(`
+          <div class="itp-calendar-day ${hasItems ? "has-items" : ""} ${outside ? "muted-day" : ""} ${key === todayKey ? "today" : ""}" ${hasItems ? `role="button" tabindex="0" onclick="showItpScheduleDay('${key}')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();showItpScheduleDay('${key}');}"` : ""}>
+            <strong>${d.getDate()}</strong>
+            ${totalText ? `<span class="itp-calendar-total">${totalText}</span>` : ""}
+            ${items.map((item, idx) => `<button class="itp-calendar-pill" onclick="event.stopPropagation(); showItpScheduleItem('${key}', ${idx})" title="${esc(item.payee_name || "Obligación")}">${esc(item.payee_name || "Obligación")} · ${esc(item.currency || "")} ${Number(item.balance || 0).toLocaleString("en-US",{maximumFractionDigits:2})}</button>`).join("")}
+            ${(day?.items || []).length > 4 ? `<button class="itp-calendar-more" onclick="event.stopPropagation(); showItpScheduleDay('${key}')">+${(day.items || []).length - 4} más</button>` : ""}
+          </div>`);
+      }
+      window.itpScheduleDays = Object.fromEntries((data.days || []).map(day => [day.date, day]));
+      const totalRange = Object.entries(data.totals || {}).map(([cur, amount]) => `${esc(cur)} ${Number(amount || 0).toLocaleString("en-US",{maximumFractionDigits:2})}`).join(" · ") || "Sin obligaciones";
+      const monthTitle = start.toLocaleDateString("es-CR", { month:"long", year:"numeric" });
+      const alerts = renderItpScheduleAlerts(data, from, to);
+      return `
+        <div class="itp-calendar-head">
+          <div>
+            <h2>Cronograma de pagos ITP</h2>
+            <span class="muted">${esc(monthTitle)} · ${totalRange}</span>
+          </div>
+          <div class="itp-calendar-nav">
+            <button class="secondary" onclick="shiftItpPaymentSchedule(-1)">‹</button>
+            <button class="secondary" onclick="resetItpPaymentSchedule()">Mes actual</button>
+            <button class="secondary" onclick="shiftItpPaymentSchedule(1)">›</button>
+          </div>
+        </div>
+        ${alerts}
+        <div class="itp-calendar-week"><span>Dom</span><span>Lun</span><span>Mar</span><span>Mié</span><span>Jue</span><span>Vie</span><span>Sáb</span></div>
+        <div class="itp-calendar">${cells.join("")}</div>
+        <div id="itpScheduleDetail" class="status">Seleccione un día u obligación para abrir el detalle en una ventana emergente.</div>`;
+    }
+    function renderItpScheduleAlerts(data, from, to) {
+      const todayKey = new Date().toISOString().slice(0,10);
+      const soon = new Date();
+      soon.setDate(soon.getDate() + 7);
+      const soonKey = soon.toISOString().slice(0,10);
+      const days = data.days || [];
+      const allItems = days.flatMap(day => (day.items || []).map(item => ({ ...item, schedule_date:item.schedule_date || item.planned_payment_date || day.date })));
+      const overdue = allItems.filter(item => item.schedule_date < todayKey);
+      const dueToday = allItems.filter(item => item.schedule_date === todayKey);
+      const upcoming = allItems.filter(item => item.schedule_date > todayKey && item.schedule_date <= soonKey);
+      const busyDays = days.filter(day => (day.items || []).length >= 8).sort((a,b) => (b.items || []).length - (a.items || []).length);
+      const moneyByCurrency = rows => rows.reduce((acc, item) => {
+        const currency = item.currency || "-";
+        acc[currency] = (acc[currency] || 0) + Number(item.balance || 0);
+        return acc;
+      }, {});
+      const moneyText = rows => Object.entries(moneyByCurrency(rows)).map(([cur, amount]) => `${esc(cur)} ${amount.toLocaleString("en-US",{maximumFractionDigits:2})}`).join(" · ") || "Sin monto";
+      const cards = [];
+      if (overdue.length) cards.push(["critical", overdue.length, "Vencidas", moneyText(overdue)]);
+      if (dueToday.length) cards.push(["warning", dueToday.length, "Vencen hoy", moneyText(dueToday)]);
+      if (upcoming.length) cards.push(["info", upcoming.length, "Próximos 7 días", moneyText(upcoming)]);
+      if (busyDays.length) cards.push(["warning", busyDays[0].items.length, `Día con más obligaciones: ${esc(busyDays[0].date)}`, "Click en el día para ver todas las líneas."]);
+      if (!cards.length) cards.push(["info", 0, "Sin alertas críticas", `Cronograma ${esc(from)} a ${esc(to)} actualizado.`]);
+      return `<div class="itp-calendar-alerts">${cards.map(([cls, count, title, detail]) => `<div class="itp-calendar-alert ${cls}"><strong>${esc(count)}</strong><span><b>${esc(title)}</b><br>${detail}</span></div>`).join("")}</div>`;
+    }
+    function openItpScheduleModal(title, body) {
+      closeModal();
+      document.body.insertAdjacentHTML("beforeend", `
+        <div class="modal-backdrop" id="svcModal">
+          <div class="modal itp-schedule-modal">
+            <div class="modal-head"><h2>${esc(title)}</h2><button class="secondary" onclick="closeModal()">Cerrar</button></div>
+            <div class="itp-schedule-content">${body}</div>
+          </div>
+        </div>`);
+      enhanceExcelTables($("svcModal"));
+    }
+    function showItpScheduleDay(key) {
+      const day = window.itpScheduleDays?.[key];
+      if (!day) return;
+      openItpScheduleModal(`${key} · ${(day.items || []).length} obligación(es)`, `
+        <div class="table-wrap"><table><thead><tr><th>Beneficiario</th><th>Referencia</th><th>Tipo</th><th>Pago planificado</th><th>Vence</th><th>Moneda</th><th>Saldo</th><th>Estado</th><th>Acción</th></tr></thead><tbody>
+          ${(day.items || []).map((item, idx) => `<tr><td>${esc(item.payee_name)}</td><td>${esc(item.referencia || item.invoice_number || "")}</td><td>${esc(item.obligation_type)}</td><td>${esc(item.schedule_date || item.planned_payment_date || key)}</td><td>${esc(item.due_date || "")}</td><td>${esc(item.currency)}</td><td>${Number(item.balance || 0).toLocaleString("en-US",{minimumFractionDigits:2, maximumFractionDigits:2})}</td><td>${esc(item.status)}</td><td><button class="secondary" onclick="openItpScheduleEdit('${key}', ${idx})">${String(item.id || "").match(/^\\d+$/) ? "Modificar" : "Crear / modificar"}</button></td></tr>`).join("")}
+        </tbody></table></div>`);
+    }
+    function showItpScheduleItem(key, index) {
+      const day = window.itpScheduleDays?.[key];
+      const item = day?.items?.[index];
+      if (!item) return;
+      const amount = `${item.currency || ""} ${Number(item.balance || 0).toLocaleString("en-US",{minimumFractionDigits:2, maximumFractionDigits:2})}`;
+      openItpScheduleModal(`${item.payee_name || "Obligación"} · ${key}`, `
+        <div class="itp-detail-grid">
+          <div><span>Monto pendiente</span><strong>${esc(amount)}</strong></div>
+          <div><span>Estado</span><strong>${esc(item.status || "-")}</strong></div>
+          <div><span>Origen</span><strong>${esc(item.origin || "-")}</strong></div>
+          <div><span>Tipo</span><strong>${esc(item.obligation_type || item.payee_type || "-")}</strong></div>
+          <div><span>Referencia</span><strong>${esc(item.referencia || item.reference || item.invoice_number || "-")}</strong></div>
+          <div><span>Pago planificado</span><strong>${esc(item.schedule_date || item.planned_payment_date || key)}</strong></div>
+          <div><span>Vencimiento</span><strong>${esc(item.due_date || "-")}</strong></div>
+          <div><span>Servicio / buque</span><strong>${esc(item.vessel || "-")}</strong></div>
+          <div><span>Operación</span><strong>${esc(item.operation || "-")}</strong></div>
+          <div><span>Banco / método</span><strong>${esc(item.payment_bank_account_name || item.payment_method || "-")}</strong></div>
+        </div>
+        ${item.notes ? `<p class="muted">${esc(item.notes)}</p>` : ""}
+        <div class="md-actions">
+          ${String(item.id || "").match(/^\\d+$/) ? `<button class="green" onclick="selectItpObligationFromCalendar(${Number(item.id)})">Seleccionar en ITP</button>` : ""}
+          <button onclick="openItpScheduleEdit('${key}', ${index})">${String(item.id || "").match(/^\\d+$/) ? "Modificar línea" : "Crear / modificar en ITP"}</button>
+          <button class="secondary" onclick="showItpScheduleDay('${key}')">Ver todo el día</button>
+        </div>`);
+    }
+    function openItpScheduleEdit(key, index) {
+      const day = window.itpScheduleDays?.[key];
+      const item = day?.items?.[index];
+      if (!item) return;
+      const isReal = !!String(item.id || "").match(/^\\d+$/);
+      openItpScheduleModal(`${isReal ? "Modificar obligación" : "Crear obligación ITP"} ${esc(item.id || "")}`, `
+        <div class="form-grid">
+          <label>Beneficiario<input id="itpCalEditPayee" value="${esc(item.payee_name || "")}" /></label>
+          <label>Tipo obligación<input id="itpCalEditType" value="${esc(item.obligation_type || item.payee_type || "")}" /></label>
+          <label>Referencia<input id="itpCalEditReference" value="${esc(item.referencia || item.reference || item.invoice_number || "")}" /></label>
+          <label>Fecha vencimiento<input id="itpCalEditDue" type="date" value="${esc(String(item.due_date || key).slice(0,10))}" /></label>
+          <label>Fecha pago planificada<input id="itpCalEditPlanned" type="date" value="${esc(String(item.planned_payment_date || item.schedule_date || key).slice(0,10))}" /></label>
+          <label>Moneda<select id="itpCalEditCurrency"><option value="USD"${String(item.currency || "").toUpperCase() === "USD" ? " selected" : ""}>USD</option><option value="CRC"${String(item.currency || "").toUpperCase() === "CRC" ? " selected" : ""}>CRC</option></select></label>
+          <label>Total<input id="itpCalEditTotal" type="number" step="0.01" value="${esc(item.total || item.balance || 0)}" /></label>
+          <label>Saldo<input id="itpCalEditBalance" type="number" step="0.01" value="${esc(item.balance || 0)}" /></label>
+          <label>Buque / servicio<input id="itpCalEditVessel" value="${esc(item.vessel || "")}" /></label>
+          <label>País<input id="itpCalEditCountry" value="${esc(item.country || "")}" /></label>
+          <label>Operación<input id="itpCalEditOperation" value="${esc(item.operation || "")}" /></label>
+          <label class="wide">Notas<textarea id="itpCalEditNotes">${esc(item.notes || "")}</textarea></label>
+        </div>
+        <div class="status">${isReal ? "Para cancelar/pagar una obligación use Aplicar pago; aquí solo se corrigen datos de la obligación pendiente." : "Esta línea es proyectada. Al guardar se creará como obligación ITP real y quedará disponible para pago y edición."}</div>
+        <div class="md-actions">
+          <button class="green" onclick="submitItpScheduleEdit('${esc(key)}', ${index})">${isReal ? "Guardar cambios" : "Crear obligación ITP"}</button>
+          <button class="secondary" onclick="showItpScheduleItem('${key}', ${index})">Cancelar</button>
+        </div>
+        <div id="itpCalEditMsg" class="status hidden"></div>`);
+    }
+    async function submitItpScheduleEdit(key, index) {
+      const day = window.itpScheduleDays?.[key];
+      const item = day?.items?.[index];
+      if (!item) return;
+      const isReal = !!String(item.id || "").match(/^\\d+$/);
+      const msg = $("itpCalEditMsg");
+      msg.className = "status";
+      msg.textContent = "Guardando cambios...";
+      try {
+        const total = Number(valueFrom("itpCalEditTotal") || 0);
+        const balance = Number(valueFrom("itpCalEditBalance") || 0);
+        if (total <= 0 || balance <= 0) throw new Error("Total y saldo deben ser mayores a cero. Para pagar use Aplicar pago.");
+        if (balance > total) throw new Error("El saldo no puede ser mayor que el total.");
+        const payload = {
+          projected_id:item.id || "",
+          payee_type:item.payee_type || item.obligation_type || "OTHER",
+          payee_name:valueFrom("itpCalEditPayee"),
+          obligation_type:valueFrom("itpCalEditType"),
+          reference:valueFrom("itpCalEditReference"),
+          due_date:valueFrom("itpCalEditDue"),
+          planned_payment_date:valueFrom("itpCalEditPlanned"),
+          currency:valueFrom("itpCalEditCurrency") || "USD",
+          total,
+          balance,
+          vessel:valueFrom("itpCalEditVessel"),
+          country:valueFrom("itpCalEditCountry"),
+          operation:valueFrom("itpCalEditOperation"),
+          origin:item.origin || "CALENDAR",
+          notes:valueFrom("itpCalEditNotes")
+        };
+        if (isReal) await sendJSON("PATCH", `/invoice-to-pay/${encodeURIComponent(item.id)}`, payload);
+        else await postJSON("/invoice-to-pay/calendar/materialize", payload);
+        closeModal();
+        await loadItp();
+        await refreshItpScheduleIfOpen();
+      } catch (err) {
+        msg.className = "status error";
+        msg.textContent = err.message;
+      }
+    }
+    function selectItpObligationFromCalendar(id) {
+      const idx = itpRows.findIndex(row => Number(row.id) === Number(id));
+      if (idx >= 0) {
+        selectedItpIndexes = new Set([idx]);
+        selectedItpIndex = idx;
+        renderItpTable();
+        $("itpTable")?.scrollIntoView({ behavior:"smooth", block:"start" });
+      } else {
+        alert("Busque la obligación en ITP para seleccionarla. Si es proyectada, aún no existe como obligación aplicada.");
+      }
+    }
+    function openItpManualForm() {
+      document.body.insertAdjacentHTML("beforeend", `
+        <div class="modal-backdrop" id="svcModal">
+          <div class="modal small">
+            <div class="modal-head"><h2>Registrar obligación manual</h2><button class="secondary" onclick="closeModal()">Cerrar</button></div>
+            <div class="form-grid">
+              <label>Beneficiario<input id="itpManualPayee" /></label>
+              <label>Tipo beneficiario<select id="itpManualPayeeType"><option>OTHER</option><option>SUPPLIER</option><option>SURVEYOR</option><option>TAX</option><option>CARD</option></select></label>
+              <label>Tipo obligación<input id="itpManualType" value="MANUAL" /></label>
+              <label>Moneda<select id="itpManualCurrency"><option>USD</option><option>CRC</option></select></label>
+              <label>Total<input id="itpManualTotal" type="number" step="0.01" /></label>
+              <label>Referencia<input id="itpManualReference" /></label>
+              <label class="wide">Notas<textarea id="itpManualNotes"></textarea></label>
+            </div>
+            <div class="md-actions"><button class="green" onclick="saveItpManual()">Guardar</button><button class="secondary" onclick="closeModal()">Cancelar</button></div>
+            <div id="itpManualMsg" class="status hidden"></div>
+          </div>
+        </div>`);
+    }
+    async function saveItpManual() {
+      const msg = $("itpManualMsg");
+      msg.className = "status";
+      msg.textContent = "Guardando...";
+      try {
+        const params = new URLSearchParams({
+          payee_name:valueFrom("itpManualPayee"),
+          payee_type:valueFrom("itpManualPayeeType") || "OTHER",
+          obligation_type:valueFrom("itpManualType") || "MANUAL",
+          total:String(Number(valueFrom("itpManualTotal") || 0)),
+          currency:valueFrom("itpManualCurrency") || "USD"
+        });
+        if (valueFrom("itpManualReference")) params.set("reference", valueFrom("itpManualReference"));
+        if (valueFrom("itpManualNotes")) params.set("notes", valueFrom("itpManualNotes"));
+        if (!valueFrom("itpManualPayee") || Number(valueFrom("itpManualTotal") || 0) <= 0) throw new Error("Beneficiario y total son requeridos.");
+        await postJSON(`/invoice-to-pay/manual?${params.toString()}`, {});
+        closeModal();
+        await loadItp();
+      } catch (err) {
+        msg.className = "status error";
+        msg.textContent = err.message;
+      }
+    }
+    function openItpUploadForm() {
+      document.body.insertAdjacentHTML("beforeend", `
+        <div class="modal-backdrop" id="svcModal">
+          <div class="modal small">
+            <div class="modal-head"><h2>Cargar factura PDF / XML</h2><button class="secondary" onclick="closeModal()">Cerrar</button></div>
+            <div class="form-grid">
+              <label>Tipo<select id="itpUploadType" onchange="toggleItpUploadType()"><option value="xml">XML</option><option value="pdf">PDF</option></select></label>
+              <label class="wide">Archivo<input id="itpUploadFile" type="file" accept=".xml,.pdf,application/pdf,text/xml,application/xml" /></label>
+              <label class="itpPdfOnly hidden">Referencia PDF<input id="itpPdfReference" /></label>
+              <label class="itpPdfOnly hidden">Fecha factura<input id="itpPdfIssue" type="date" /></label>
+              <label class="itpPdfOnly hidden">Fecha vencimiento<input id="itpPdfDue" type="date" /></label>
+            </div>
+            <div class="md-actions"><button onclick="submitItpUpload()">Cargar</button><button class="secondary" onclick="closeModal()">Cancelar</button></div>
+            <div id="itpUploadMsg" class="status hidden"></div>
+          </div>
+        </div>`);
+    }
+    function toggleItpUploadType() {
+      const isPdf = valueFrom("itpUploadType") === "pdf";
+      document.querySelectorAll(".itpPdfOnly").forEach(el => el.classList.toggle("hidden", !isPdf));
+    }
+    async function submitItpUpload() {
+      const msg = $("itpUploadMsg");
+      msg.className = "status";
+      msg.textContent = "Cargando...";
+      try {
+        const file = $("itpUploadFile")?.files?.[0];
+        if (!file) throw new Error("Seleccione un archivo.");
+        const fd = new FormData();
+        fd.append("file", file);
+        let path = "/invoice-to-pay/upload/xml";
+        if (valueFrom("itpUploadType") === "pdf") {
+          if (!valueFrom("itpPdfReference")) throw new Error("Referencia PDF requerida.");
+          fd.append("reference", valueFrom("itpPdfReference"));
+          if (valueFrom("itpPdfIssue")) fd.append("issue_date", valueFrom("itpPdfIssue"));
+          if (valueFrom("itpPdfDue")) fd.append("due_date", valueFrom("itpPdfDue"));
+          path = "/invoice-to-pay/upload/pdf";
+        }
+        await sendForm(path, fd);
+        closeModal();
+        await loadItp();
+      } catch (err) {
+        msg.className = "status error";
+        msg.textContent = err.message;
+      }
+    }
+    function openItpPlanPaymentForm() {
+      const row = requireItpRow();
+      if (!row) return;
+      if (String(row.status || "").toUpperCase() === "PAID" || Number(row.balance || 0) <= 0) return alert("La obligación ya está pagada.");
+      const current = String(row.planned_payment_date || row.due_date || new Date().toISOString().slice(0,10)).slice(0,10);
+      document.body.insertAdjacentHTML("beforeend", `
+        <div class="modal-backdrop" id="svcModal">
+          <div class="modal small">
+            <div class="modal-head"><h2>Planificar pago ITP</h2><button class="secondary" onclick="closeModal()">Cerrar</button></div>
+            <div class="status">${esc(row.payee_name)} · Saldo ${esc(row.currency)} ${Number(row.balance || 0).toLocaleString("en-US",{minimumFractionDigits:2, maximumFractionDigits:2})}</div>
+            <div class="form-grid">
+              <label>Fecha pago planificada<input id="itpPlanDate" type="date" value="${esc(current)}" /></label>
+              <label>Vencimiento<input type="date" value="${esc(String(row.due_date || "").slice(0,10))}" disabled /></label>
+              <label class="wide">Referencia<input value="${esc(row.referencia || "")}" disabled /></label>
+            </div>
+            <div class="md-actions"><button onclick="submitItpPlanPayment()">Guardar planificación</button><button class="secondary" onclick="closeModal()">Cancelar</button></div>
+            <div id="itpPlanMsg" class="status hidden"></div>
+          </div>
+        </div>`);
+    }
+    async function submitItpPlanPayment() {
+      const row = requireItpRow();
+      if (!row) return;
+      const msg = $("itpPlanMsg");
+      msg.className = "status";
+      msg.textContent = "Guardando fecha planificada...";
+      try {
+        const planned = valueFrom("itpPlanDate");
+        if (!planned) throw new Error("Seleccione la fecha de pago planificada.");
+        await sendJSON("PATCH", `/invoice-to-pay/${encodeURIComponent(row.id)}`, { planned_payment_date:planned });
+        closeModal();
+        await loadItp();
+      } catch (err) {
+        msg.className = "status error";
+        msg.textContent = err.message;
+      }
+    }
+    async function openItpPaymentForm() {
+      const row = requireItpRow();
+      if (!row) return;
+      if (String(row.status || "").toUpperCase() === "PAID" || Number(row.balance || 0) <= 0) return alert("La obligación ya está pagada.");
+      document.body.insertAdjacentHTML("beforeend", `
+        <div class="modal-backdrop" id="svcModal">
+          <div class="modal small">
+            <div class="modal-head"><h2>Aplicar pago ITP</h2><button class="secondary" onclick="closeModal()">Cerrar</button></div>
+            <div class="status">${esc(row.payee_name)} · Saldo ${esc(row.currency)} ${Number(row.balance || 0).toLocaleString("en-US",{minimumFractionDigits:2, maximumFractionDigits:2})}</div>
+            <div class="form-grid">
+              <label>Monto<input id="itpPayAmount" type="number" step="0.01" value="${esc(row.balance || "")}" /></label>
+              <label>Fecha pago<input id="itpPayDate" type="date" value="${new Date().toISOString().slice(0,10)}" /></label>
+              <label>Cuenta pago<select id="itpPayBank"><option value="">Cargando...</option></select></label>
+              <label>Método<select id="itpPayMethod"><option value="BANK">Banco</option><option value="CARD_3155">Tarjeta 3155</option><option value="HAZEL_CONTRIBUTION">Aporte Hazel</option></select></label>
+              <label>Comprobante<input id="itpPayReference" /></label>
+              <label>Últimos 4 tarjeta<input id="itpPayCardLast4" maxlength="4" /></label>
+            </div>
+            <div class="md-actions"><button class="green" onclick="submitItpPayment()">Aplicar</button><button class="secondary" onclick="closeModal()">Cancelar</button></div>
+            <div id="itpPayMsg" class="status hidden"></div>
+          </div>
+        </div>`);
+      await loadItpPaymentBanks();
+    }
+    async function loadItpPaymentBanks() {
+      const select = $("itpPayBank");
+      if (!select) return;
+      try {
+        const rows = rowsList(await getJSON("/accounting/bank-accounts"));
+        select.innerHTML = rows.map(row => {
+          const code = row.account_code || "";
+          const name = row.account_name || "";
+          return `<option value="${esc(code)}|${esc(name)}">${esc(code)} - ${esc(name)}</option>`;
+        }).join("") || '<option value="">Sin bancos disponibles</option>';
+      } catch {
+        select.innerHTML = '<option value="">Sin bancos disponibles</option>';
+      }
+    }
+    async function submitItpPayment() {
+      const row = requireItpRow();
+      if (!row) return;
+      const msg = $("itpPayMsg");
+      msg.className = "status";
+      msg.textContent = "Aplicando pago...";
+      try {
+        const [bankCode, bankName] = valueFrom("itpPayBank").split("|");
+        const amount = Number(valueFrom("itpPayAmount") || 0);
+        if (amount <= 0) throw new Error("Monto inválido.");
+        if (!valueFrom("itpPayReference")) throw new Error("Comprobante bancario requerido.");
+        const params = new URLSearchParams({
+          obligation_id:String(row.id),
+          amount:String(amount),
+          payment_date:valueFrom("itpPayDate") || new Date().toISOString().slice(0,10),
+          payment_reference:valueFrom("itpPayReference"),
+          payment_method:valueFrom("itpPayMethod") || "BANK"
+        });
+        if (bankCode) params.set("bank_account_code", bankCode);
+        if (bankName) {
+          params.set("bank_account_name", bankName);
+          params.set("bank_name", bankName);
+        }
+        if (valueFrom("itpPayCardLast4")) params.set("payment_card_last4", valueFrom("itpPayCardLast4"));
+        const result = await postJSON(`/invoice-to-pay/apply-payment?${params.toString()}`, {});
+        closeModal();
+        alert(`Pago aplicado. Nuevo saldo: ${Number(result.new_balance || 0).toLocaleString("en-US",{minimumFractionDigits:2, maximumFractionDigits:2})}${result.accounting_warning ? "\\nAdvertencia accounting: " + result.accounting_warning : ""}`);
+        await loadItp();
+      } catch (err) {
+        msg.className = "status error";
+        msg.textContent = err.message;
+      }
+    }
+    async function deleteSelectedItp() {
+      const row = requireItpRow();
+      if (!row) return;
+      if (!confirm(`¿Eliminar obligación ITP ${row.id} - ${row.referencia || row.payee_name}?`)) return;
+      try {
+        await sendJSON("DELETE", `/invoice-to-pay/${encodeURIComponent(row.id)}`);
+        await loadItp();
+      } catch (err) {
+        alert(err.message);
+      }
+    }
+    function downloadItpExcel() {
+      if (!itpRows.length) return alert("No hay datos para exportar.");
+      const cols = ["id","payee_name","obligation_type","referencia","planned_payment_date","due_date","currency","total","balance","status","origin","issue_date","last_payment_date","vessel","country","operation"];
+      downloadExcelFile(`itp_${new Date().toISOString().slice(0,10)}.xls`, itpRows, cols, "Invoice To Pay");
+    }
+    function openItpPaymentReport() {
+      document.body.insertAdjacentHTML("beforeend", `
+        <div class="modal-backdrop" id="svcModal">
+          <div class="modal small">
+            <div class="modal-head"><h2>Reporte pagos ITP / presupuesto</h2><button class="secondary" onclick="closeModal()">Cerrar</button></div>
+            <div class="form-grid">
+              <label>Periodo<input id="itpRptPeriod" value="${new Date().toISOString().slice(0,7)}" placeholder="YYYY-MM" /></label>
+              <label>Meses<select id="itpRptMonths"><option>1</option><option>3</option><option>6</option><option>12</option><option>24</option><option>36</option></select></label>
+              <label>Estado<select id="itpRptStatus"><option>ALL</option><option>PENDING</option><option>PARTIAL</option><option>PAID</option></select></label>
+              <label>Desde<input id="itpRptFrom" type="date" /></label>
+              <label>Hasta<input id="itpRptTo" type="date" /></label>
+              <label>Tipo obligación<input id="itpRptType" value="ALL" /></label>
+              <label>Tipo beneficiario<input id="itpRptPayeeType" value="ALL" /></label>
+            </div>
+            <div class="md-actions"><button onclick="downloadItpPaymentReport()">Exportar Excel</button><button class="secondary" onclick="closeModal()">Cancelar</button></div>
+          </div>
+        </div>`);
+    }
+    function downloadItpPaymentReport() {
+      const params = new URLSearchParams({
+        period:valueFrom("itpRptPeriod") || new Date().toISOString().slice(0,7),
+        months:valueFrom("itpRptMonths") || "1",
+        status:valueFrom("itpRptStatus") || "ALL",
+        obligation_type:valueFrom("itpRptType") || "ALL",
+        payee_type:valueFrom("itpRptPayeeType") || "ALL"
+      });
+      if (valueFrom("itpRptFrom")) params.set("date_from", valueFrom("itpRptFrom"));
+      if (valueFrom("itpRptTo")) params.set("date_to", valueFrom("itpRptTo"));
+      window.open(`/invoice-to-pay/reports/payment-report.xlsx?${params.toString()}`, "_blank");
+    }
+    function openItpBiweekly() {
+      const period = new Date().toISOString().slice(0,7);
+      const fortnight = new Date().getDate() <= 15 ? "1" : "2";
+      document.body.insertAdjacentHTML("beforeend", `
+        <div class="modal-backdrop" id="svcModal">
+          <div class="modal itp-biweekly-modal">
+            <div class="itp-bi-header">
+              <div>
+                <p class="itp-bi-eyebrow">Invoice to Pay</p>
+                <h2>Obligaciones quincenales</h2>
+                <p class="itp-bi-subtitle">Generación, borrador, pagos y asientos contables por quincena.</p>
+                <div id="itpBiCompany" class="itp-bi-company">Empresa: ${esc(selectedCompany())}</div>
+              </div>
+              <div id="itpBiTotals" class="itp-bi-totals"><strong>CRC 0.00</strong><strong>USD 0.00</strong><span>0 lineas</span></div>
+              <button class="itp-bi-close" onclick="closeModal()">Cerrar</button>
+            </div>
+            <div class="itp-bi-controls">
+              <label>Periodo <input class="period-input" id="itpBiPeriod" value="${period}" placeholder="YYYY-MM" /></label>
+              <label>Quincena <select class="fortnight-input" id="itpBiFortnight"><option value="1"${fortnight === "1" ? " selected" : ""}>1</option><option value="2"${fortnight === "2" ? " selected" : ""}>2</option></select></label>
+              <button onclick="loadItpBiweekly(true)">Generar automático</button>
+              <button onclick="saveItpBiweeklyDraft()">Guardar borrador</button>
+              <button onclick="exportItpBiweekly()">Exportar Excel</button>
+              <button class="green" onclick="applyItpBiweekly()">Aplicar pagos y crear asientos</button>
+              <button class="secondary" onclick="applySelectedItpBiweekly()">Aplicar seleccionadas</button>
+            </div>
+            <div class="itp-bi-body">
+              <section class="itp-bi-main">
+                <div class="itp-bi-tools">
+                  <div class="itp-bi-tools-title">Agregar / ajustar lineas</div>
+                  <button onclick="addItpBiweeklyLine('Planilla')">+ Planilla</button>
+                  <button onclick="addItpBiweeklyLine('CCSS')">+ CCSS</button>
+                  <button onclick="addItpBiweeklyLine('Surveyors')">+ Surveyors</button>
+                  <button onclick="addItpBiweeklyLine('Viáticos')">+ Viáticos</button>
+                  <button onclick="addItpBiweeklyLine('Telefonia')">+ Telefonia</button>
+                  <button onclick="addItpBiweeklyLine('Otros')">+ Otros</button>
+                  <button class="wide" onclick="editSelectedItpBiweeklyLine()">Editar seleccionada</button>
+                  <button class="wide" onclick="deleteSelectedItpBiweeklyLine()">Quitar seleccionada</button>
+                  <button class="wide" onclick="deleteCheckedItpBiweeklyLines()">Quitar marcadas</button>
+                </div>
+                <div id="itpBiMsg" class="status"></div>
+                <div id="itpBiTable" class="itp-bi-table"></div>
+                <div id="itpBiSummary" class="itp-bi-summary"></div>
+              </section>
+            </div>
+          </div>
+        </div>`);
+      itpBiweeklyRows = [];
+      selectedItpBiweeklyIndex = null;
+      itpBiweeklyChecked = new Set();
+      itpBiweeklySuppressed = new Set();
+      renderItpBiweeklyTable();
+    }
+    const ITP_BI_CATEGORIES = ["Planilla","CCSS","IVA","Surveyors","Viáticos","Tarjetas de credito","Alquiler","Internet","Telefonia","Proveedores","Otros"];
+    const ITP_BI_BANK_ACCOUNTS = [
+      ["1.1.02.02.01","Banco BAC San Jose CRC"],
+      ["1.1.02.02.02","Banco BAC San Jose USD"],
+      ["1.1.02.04.01","Banco de Costa Rica USD"],
+      ["2.1.02.10","Tarjeta corporativa BAC por pagar"],
+      ["3.1.99","Aportes de terceros - Hazel Barrantes"]
+    ];
+    const ITP_BI_PAYMENT_METHODS = [
+      ["BANK","Banco"],
+      ["CARD_BAC_3155","Tarjeta empresarial BAC 3155"],
+      ["THIRD_PARTY_HAZEL","Pagado por Hazel Barrantes"]
+    ];
+    function itpBiPaymentLabel(row) {
+      const method = String(row.payment_method || "").toUpperCase();
+      if (method === "CARD_BAC_3155" || String(row.payment_card_last4 || "") === "3155") return "Tarjeta empresarial BAC 3155";
+      if (method === "THIRD_PARTY_HAZEL") return "Pagado por Hazel Barrantes";
+      return "Banco";
+    }
+    function normalizeItpBiPaymentRow(row) {
+      if (String(row.category || "").trim().toLowerCase() === "viaticos") row.category = "Viáticos";
+      row.payment_method = String(row.payment_method || "BANK").toUpperCase();
+      if (row.payment_method === "CARD_3155") row.payment_method = "CARD_BAC_3155";
+      if (row.payment_method === "HAZEL_CONTRIBUTION") row.payment_method = "THIRD_PARTY_HAZEL";
+      if (row.payment_method === "CARD_BAC_3155") {
+        row.payment_card_last4 = "3155";
+        row.bank_accounting_code = "2.1.02.10";
+        row.bank_accounting_name = "Tarjeta corporativa BAC por pagar";
+        if (!row.bank_account) row.bank_account = "BAC";
+      } else if (row.payment_method === "THIRD_PARTY_HAZEL") {
+        row.payment_card_last4 = "";
+        row.bank_accounting_code = "3.1.99";
+        row.bank_accounting_name = "Aportes de terceros - Hazel Barrantes";
+        row.bank_account = "Hazel Barrantes";
+      } else {
+        row.payment_method = "BANK";
+        row.payment_card_last4 = "";
+      }
+      return row;
+    }
+    function itpBiReady(row) {
+      return Number(row.amount || 0) > 0
+        && String(row.bank_accounting_code || "").trim()
+        && String(row.bank_voucher || "").trim()
+        && String(row.due_date || "").trim();
+    }
+    function itpBiStatus(row) {
+      if (String(row.payment_status || "").trim()) return row.payment_status;
+      return itpBiReady(row) ? "Listo" : "Pendiente";
+    }
+    function itpBiRowKey(row) {
+      if (row && row.obligation_id) return `ITP|${row.obligation_id}`;
+      return [
+        "MANUAL",
+        String(row.category || "").trim().toUpperCase(),
+        String(row.name || "").trim().toUpperCase(),
+        String(row.currency || "CRC").trim().toUpperCase(),
+        String(Number(row.amount || 0).toFixed(2)),
+        String(row.reference || "").trim().toUpperCase()
+      ].join("|");
+    }
+    function mergeItpBiweeklyGenerated(generatedRows, currentRows) {
+      const merged = [];
+      const seen = new Set();
+      (currentRows || []).forEach(row => {
+        const normalized = normalizeItpBiPaymentRow({ ...row });
+        const key = itpBiRowKey(normalized);
+        if (seen.has(key)) return;
+        seen.add(key);
+        merged.push(normalized);
+      });
+      (generatedRows || []).forEach(row => {
+        const normalized = normalizeItpBiPaymentRow({ ...row });
+        const key = itpBiRowKey(normalized);
+        if (seen.has(key) || itpBiweeklySuppressed.has(key)) return;
+        seen.add(key);
+        merged.push(normalized);
+      });
+      return merged;
+    }
+    async function loadItpBiweekly(force=false) {
+      const msg = $("itpBiMsg");
+      const table = $("itpBiTable");
+      const company = selectedCompany();
+      const currentRows = force ? collectItpBiweeklyRows() : [];
+      if ($("itpBiCompany")) $("itpBiCompany").textContent = `Empresa: ${company}`;
+      msg.className = "status";
+      msg.style.display = "block";
+      msg.textContent = `Consultando obligaciones quincenales para ${company}...`;
+      try {
+        const params = new URLSearchParams({ period:valueFrom("itpBiPeriod"), fortnight:valueFrom("itpBiFortnight") || "1", force:String(!!force), company:company, _:String(Date.now()) });
+        const payload = await getJSON(`/invoice-to-pay/biweekly-obligations/preview?${params.toString()}`, { "Cache-Control":"no-cache" });
+        const generated = rowsList(payload.rows || payload).map(row => normalizeItpBiPaymentRow({ ...row }));
+        itpBiweeklyRows = force ? mergeItpBiweeklyGenerated(generated, currentRows) : generated;
+        itpBiweeklyChecked = new Set();
+        msg.className = "status";
+        msg.style.display = "none";
+        const loadedCompany = payload.company_code || company;
+        if ($("itpBiCompany")) $("itpBiCompany").textContent = `Empresa: ${loadedCompany}`;
+        msg.textContent = "";
+        renderItpBiweeklyTable();
+      } catch (err) {
+        itpBiweeklyRows = [];
+        table.innerHTML = "";
+        renderItpBiweeklySummary();
+        msg.className = "status error";
+        msg.style.display = "block";
+        msg.innerHTML = `<strong>No se pudo generar el preview.</strong><br>${esc(err.message || "Revise el periodo, la quincena o intente nuevamente.")}`;
+      }
+    }
+    function itpBiOptions(values, selected) {
+      return values.map(item => {
+        const value = Array.isArray(item) ? item[0] : item;
+        const label = Array.isArray(item) ? item[1] : item;
+        return `<option value="${esc(value)}"${String(value) === String(selected || "") ? " selected" : ""}>${esc(label)}</option>`;
+      }).join("");
+    }
+    function itpBiMoney(value) {
+      return Number(value || 0).toLocaleString("en-US", { minimumFractionDigits:2, maximumFractionDigits:2 });
+    }
+    function renderItpBiweeklySummary() {
+      const target = $("itpBiSummary");
+      if (!target) return;
+      const byCategory = {};
+      const byDestination = {};
+      let crc = 0, usd = 0, ready = 0, pending = 0;
+      itpBiweeklyRows.forEach(row => {
+        const amount = Number(row.amount || 0);
+        const currency = row.currency || "CRC";
+        const catKey = `${row.category || "Otros"}|${currency}`;
+        const destLabel = itpBiPaymentLabel(row) === "Banco" ? (row.bank_account || "Sin cuenta") : itpBiPaymentLabel(row);
+        const destKey = `${destLabel}|${currency}`;
+        byCategory[catKey] = (byCategory[catKey] || 0) + amount;
+        byDestination[destKey] = (byDestination[destKey] || 0) + amount;
+        if (currency === "USD") usd += amount; else crc += amount;
+        if (amount > 0 && itpBiReady(row)) ready += 1;
+        if (amount > 0 && !itpBiReady(row)) pending += 1;
+      });
+      const totals = $("itpBiTotals");
+      if (totals) {
+        totals.innerHTML = `<strong>CRC ${itpBiMoney(crc)}</strong><strong>USD ${itpBiMoney(usd)}</strong><span>${itpBiweeklyRows.length} lineas</span>`;
+      }
+      const summaryTable = (title, data) => `<div><h3>${esc(title)}</h3><div class="table-wrap"><table><thead><tr><th>Concepto</th><th>Moneda</th><th>Total</th></tr></thead><tbody>${Object.keys(data).sort().map(k => {
+        const [label, currency] = k.split("|");
+        return `<tr><td>${esc(label)}</td><td>${esc(currency)}</td><td style="text-align:right">${itpBiMoney(data[k])}</td></tr>`;
+      }).join("")}</tbody></table></div></div>`;
+      target.innerHTML = `${summaryTable("Resumen por rubro", byCategory)}${summaryTable("Resumen por cuenta / destino", byDestination)}`;
+    }
+    function renderItpBiweeklyTable() {
+      const table = $("itpBiTable");
+      renderItpBiweeklySummary();
+      if (!table) return;
+      const inputs = (idx,row) => {
+        const status = itpBiStatus(row);
+        const classes = [];
+        if (status === "Pagado") classes.push("ok-row");
+        if (status === "Pendiente") classes.push("warn-row");
+        if (idx === selectedItpBiweeklyIndex) classes.push("itp-bi-selected");
+        return `<tr class="${classes.join(" ")}" onclick="selectItpBiweeklyLine(${idx})">
+          <td><input type="checkbox" data-bi-check="${idx}" ${itpBiweeklyChecked.has(idx) ? "checked" : ""} onclick="event.stopPropagation(); toggleItpBiweeklyChecked(${idx}, this.checked)" /></td>
+          <td><select data-bi="${idx}" data-field="category" onclick="event.stopPropagation()" onfocus="selectedItpBiweeklyIndex=${idx}" onchange="syncItpBiweeklyField(${idx}, this)">${itpBiOptions(ITP_BI_CATEGORIES, row.category || "Otros")}</select></td>
+          <td><input data-bi="${idx}" data-field="name" value="${esc(row.name || "")}" onclick="event.stopPropagation()" onfocus="selectedItpBiweeklyIndex=${idx}" oninput="syncItpBiweeklyField(${idx}, this)" /></td>
+          <td><input data-bi="${idx}" data-field="amount" type="number" step="0.01" value="${esc(row.amount || 0)}" onclick="event.stopPropagation()" onfocus="selectedItpBiweeklyIndex=${idx}" oninput="syncItpBiweeklyField(${idx}, this)" /></td>
+          <td><select data-bi="${idx}" data-field="currency" onclick="event.stopPropagation()" onfocus="selectedItpBiweeklyIndex=${idx}" onchange="syncItpBiweeklyField(${idx}, this)"><option${row.currency === "CRC" ? " selected" : ""}>CRC</option><option${row.currency === "USD" ? " selected" : ""}>USD</option></select></td>
+          <td>${esc(status)}</td>
+          <td><select data-bi="${idx}" data-field="payment_method" onclick="event.stopPropagation()" onfocus="selectedItpBiweeklyIndex=${idx}" onchange="syncItpBiweeklyPaymentMethod(${idx})">${itpBiOptions(ITP_BI_PAYMENT_METHODS, row.payment_method || "BANK")}</select></td>
+          <td><input data-bi="${idx}" data-field="bank_account" value="${esc(row.bank_account || "")}" onclick="event.stopPropagation()" onfocus="selectedItpBiweeklyIndex=${idx}" oninput="syncItpBiweeklyField(${idx}, this)" /></td>
+          <td><select data-bi="${idx}" data-field="bank_accounting_code" onclick="event.stopPropagation()" onfocus="selectedItpBiweeklyIndex=${idx}" onchange="syncItpBiweeklyField(${idx}, this)">${itpBiOptions(ITP_BI_BANK_ACCOUNTS, row.bank_accounting_code || "1.1.02.02.01")}</select></td>
+          <td><input data-bi="${idx}" data-field="bank_voucher" value="${esc(row.bank_voucher || "")}" onclick="event.stopPropagation()" onfocus="selectedItpBiweeklyIndex=${idx}" oninput="syncItpBiweeklyField(${idx}, this)" /></td>
+          <td><input data-bi="${idx}" data-field="due_date" type="date" value="${esc(String(row.due_date || "").slice(0,10))}" onclick="event.stopPropagation()" onfocus="selectedItpBiweeklyIndex=${idx}" onchange="syncItpBiweeklyField(${idx}, this)" /></td>
+          <td>${esc(row.obligation_id || "")}</td>
+          <td><input data-bi="${idx}" data-field="reference" value="${esc(row.reference || "")}" onclick="event.stopPropagation()" onfocus="selectedItpBiweeklyIndex=${idx}" oninput="syncItpBiweeklyField(${idx}, this)" /></td>
+          <td style="text-align:right">${esc(row.obligation_id ? itpBiMoney(row.balance || row.amount || 0) : "")}</td>
+          <td>${esc(row.source || "")}${row.origin_company_code && row.origin_company_code !== selectedCompany() ? ` / ${esc(row.origin_company_code)}` : ""}</td>
+          <td><input data-bi="${idx}" data-field="notes" value="${esc(row.notes || "")}" onclick="event.stopPropagation()" onfocus="selectedItpBiweeklyIndex=${idx}" oninput="syncItpBiweeklyField(${idx}, this)" /></td>
+          <td><button class="brown" onclick="event.stopPropagation(); deleteItpBiweeklyLine(${idx})">Quitar</button></td>
+        </tr>`;
+      };
+      table.innerHTML = `<div class="table-wrap"><table><thead><tr><th><input type="checkbox" onclick="toggleAllItpBiweeklyChecked(this.checked)" /></th><th>Rubro</th><th>Nombre / beneficiario</th><th>Monto</th><th>Moneda</th><th>Estado</th><th>Tipo pago</th><th>Cuenta destino / IBAN</th><th>Cuenta contable pago</th><th>Comprobante</th><th>Fecha pago</th><th>ITP ID</th><th>Referencia</th><th>Saldo ITP</th><th>Fuente</th><th>Notas</th><th>Accion</th></tr></thead><tbody>${itpBiweeklyRows.map((row,idx) => inputs(idx,row)).join("")}</tbody></table></div>`;
+    }
+    function toggleItpBiweeklyChecked(idx, checked) {
+      if (checked) itpBiweeklyChecked.add(idx); else itpBiweeklyChecked.delete(idx);
+    }
+    function toggleAllItpBiweeklyChecked(checked) {
+      collectItpBiweeklyRows();
+      itpBiweeklyChecked = new Set();
+      if (checked) itpBiweeklyRows.forEach((_row, idx) => itpBiweeklyChecked.add(idx));
+      renderItpBiweeklyTable();
+    }
+    function selectItpBiweeklyLine(idx) {
+      if (idx < 0 || idx >= itpBiweeklyRows.length) return;
+      selectedItpBiweeklyIndex = idx;
+      renderItpBiweeklyTable();
+    }
+    function editSelectedItpBiweeklyLine() {
+      collectItpBiweeklyRows();
+      if (selectedItpBiweeklyIndex === null || !itpBiweeklyRows[selectedItpBiweeklyIndex]) return alert("Seleccione una linea primero.");
+      renderItpBiweeklyTable();
+      const input = document.querySelector(`[data-bi="${selectedItpBiweeklyIndex}"][data-field="name"]`);
+      if (input) input.focus();
+    }
+    function deleteSelectedItpBiweeklyLine() {
+      if (selectedItpBiweeklyIndex === null || !itpBiweeklyRows[selectedItpBiweeklyIndex]) return alert("Seleccione una linea primero.");
+      deleteItpBiweeklyLine(selectedItpBiweeklyIndex);
+    }
+    function checkedItpBiweeklyRows() {
+      collectItpBiweeklyRows();
+      return Array.from(itpBiweeklyChecked).sort((a,b) => a - b).filter(idx => itpBiweeklyRows[idx]);
+    }
+    function deleteCheckedItpBiweeklyLines() {
+      const indexes = checkedItpBiweeklyRows();
+      if (!indexes.length) return alert("Marque una o varias lineas primero.");
+      indexes.forEach(idx => itpBiweeklySuppressed.add(itpBiRowKey(itpBiweeklyRows[idx])));
+      itpBiweeklyRows = itpBiweeklyRows.filter((_row, idx) => !itpBiweeklyChecked.has(idx));
+      itpBiweeklyChecked = new Set();
+      selectedItpBiweeklyIndex = null;
+      renderItpBiweeklyTable();
+    }
+    function collectItpBiweeklyRows() {
+      const rows = itpBiweeklyRows.map(row => ({ ...row }));
+      document.querySelectorAll("[data-bi]").forEach(input => {
+        const idx = Number(input.dataset.bi);
+        const field = input.dataset.field;
+        if (!rows[idx]) return;
+        rows[idx][field] = ["amount","balance"].includes(field) ? Number(input.value || 0) : input.value;
+      });
+      itpBiweeklyRows = rows.map(row => normalizeItpBiPaymentRow(row));
+      return itpBiweeklyRows;
+    }
+    function syncItpBiweeklyField(idx, input) {
+      if (!itpBiweeklyRows[idx] || !input) return;
+      const field = input.dataset.field;
+      if (!field) return;
+      itpBiweeklyRows[idx][field] = ["amount","balance"].includes(field) ? Number(input.value || 0) : input.value;
+      normalizeItpBiPaymentRow(itpBiweeklyRows[idx]);
+      renderItpBiweeklySummary();
+    }
+    function syncItpBiweeklyPaymentMethod(idx) {
+      collectItpBiweeklyRows();
+      if (!itpBiweeklyRows[idx]) return;
+      normalizeItpBiPaymentRow(itpBiweeklyRows[idx]);
+      renderItpBiweeklyTable();
+    }
+    function addItpBiweeklyLine(category="Otros") {
+      const period = valueFrom("itpBiPeriod") || new Date().toISOString().slice(0,7);
+      const fortnight = Number(valueFrom("itpBiFortnight") || 1);
+      const [year, month] = period.split("-").map(Number);
+      const lastDay = new Date(year, month, 0).getDate();
+      const rawDue = `${period}-${String(fortnight === 1 ? 15 : Math.min(30, lastDay)).padStart(2, "0")}`;
+      const due = previousBusinessDayCR(rawDue);
+      itpBiweeklyRows.push(normalizeItpBiPaymentRow({
+        category, name:"", amount:0, currency:"CRC", bank_account:"", due_date:due,
+        source:"MANUAL", notes:"", obligation_id:null, reference:"", balance:0,
+        bank_accounting_code:"1.1.02.02.01", bank_accounting_name:"Banco BAC San Jose CRC",
+        bank_voucher:"", payment_method:"BANK", payment_card_last4:""
+      }));
+      renderItpBiweeklyTable();
+    }
+    function deleteItpBiweeklyLine(idx) {
+      collectItpBiweeklyRows();
+      if (itpBiweeklyRows[idx]) itpBiweeklySuppressed.add(itpBiRowKey(itpBiweeklyRows[idx]));
+      itpBiweeklyRows.splice(idx, 1);
+      itpBiweeklyChecked = new Set(Array.from(itpBiweeklyChecked).filter(i => i !== idx).map(i => i > idx ? i - 1 : i));
+      selectedItpBiweeklyIndex = itpBiweeklyRows.length ? Math.min(idx, itpBiweeklyRows.length - 1) : null;
+      renderItpBiweeklyTable();
+    }
+    async function saveItpBiweeklyDraft() {
+      const msg = $("itpBiMsg");
+      msg.className = "status";
+      msg.style.display = "block";
+      msg.textContent = "Guardando borrador...";
+      try {
+        const result = await postJSON("/invoice-to-pay/biweekly-obligations/save-draft", { period:valueFrom("itpBiPeriod"), fortnight:Number(valueFrom("itpBiFortnight") || 1), rows:collectItpBiweeklyRows() });
+        msg.textContent = `Borrador guardado. Líneas: ${result.rows || result.saved || itpBiweeklyRows.length}`;
+        await refreshItpScheduleIfOpen();
+      } catch (err) {
+        msg.className = "status error";
+        msg.textContent = err.message;
+      }
+    }
+    async function applyItpBiweekly() {
+      const rows = collectItpBiweeklyRows();
+      await applyItpBiweeklyRows(rows);
+    }
+    async function applySelectedItpBiweekly() {
+      const indexes = checkedItpBiweeklyRows();
+      if (!indexes.length) return alert("Marque una o varias lineas para aplicar.");
+      const keys = indexes.map(idx => itpBiRowKey(itpBiweeklyRows[idx]));
+      await applyItpBiweeklyRows(itpBiweeklyRows, keys);
+    }
+    async function applyItpBiweeklyRows(rows, applyKeys=null) {
+      const keySet = applyKeys ? new Set(applyKeys) : null;
+      const targetRows = keySet ? rows.filter(row => keySet.has(itpBiRowKey(row))) : rows;
+      const ready = targetRows.filter(itpBiReady);
+      const pending = targetRows.filter(row => Number(row.amount || 0) > 0 && !itpBiReady(row));
+      if (!ready.length) return alert("No hay líneas listas para aplicar. Complete comprobante, fecha y cuenta contable en al menos una línea.");
+      if (!confirm(`Se aplicarán solo las líneas listas y las demás quedarán en borrador.\\n\\nListas: ${ready.length}\\nPendientes: ${pending.length}\\n\\n¿Continuar?`)) return;
+      const msg = $("itpBiMsg");
+      msg.className = "status";
+      msg.style.display = "block";
+      msg.textContent = "Aplicando pagos quincenales...";
+      try {
+        const payload = { period:valueFrom("itpBiPeriod"), fortnight:Number(valueFrom("itpBiFortnight") || 1), rows };
+        if (applyKeys) payload.apply_keys = applyKeys;
+        const result = await postJSON("/invoice-to-pay/biweekly-obligations/apply", payload);
+        msg.textContent = `Aplicado. Asientos: ${result.posted || 0}. Pagos ITP: ${result.applied || 0}. Pendientes: ${result.pending || 0}.`;
+        const appliedKeys = new Set(ready.map(itpBiRowKey));
+        itpBiweeklyRows.forEach(row => {
+          if (appliedKeys.has(itpBiRowKey(row))) row.payment_status = "Pagado";
+          else if (Number(row.amount || 0) > 0 && !itpBiReady(row)) row.payment_status = "Pendiente";
+        });
+        itpBiweeklyChecked = new Set();
+        renderItpBiweeklyTable();
+        await loadItp();
+      } catch (err) {
+        msg.className = "status error";
+        msg.textContent = err.message;
+      }
+    }
+    async function exportItpBiweekly() {
+      try {
+        const payload = { period:valueFrom("itpBiPeriod"), fortnight:Number(valueFrom("itpBiFortnight") || 1), rows:collectItpBiweeklyRows() };
+        const ticket = await postJSON("/invoice-to-pay/biweekly-obligations/export-ticket", payload);
+        if (!ticket.ticket) throw new Error("No se pudo preparar exportación.");
+        window.open(`/invoice-to-pay/biweekly-obligations/export/${encodeURIComponent(ticket.ticket)}.xlsx`, "_blank");
+      } catch (err) {
+        alert(err.message);
+      }
+    }
+    function renderFinancePlanning(target) {
+      const period = new Date().toISOString().slice(0,7);
+      target.innerHTML = `
+        <div class="pln-shell">
+          <div class="pln-command">
+            <div class="pln-title">
+              <h2>PLN / Liquidez y presupuesto</h2>
+              <p>Bancos reales contra obligaciones por quincena, CxC pendiente y proyectos especiales.</p>
+            </div>
+            <div class="pln-controls">
+              <label>Periodo<div class="pln-period-nav"><button class="secondary" type="button" onclick="shiftPlanningPeriod(-1)" title="Periodo anterior">‹</button><input id="plnPeriod" value="${esc(period)}" placeholder="YYYY-MM" /><button class="secondary" type="button" onclick="shiftPlanningPeriod(1)" title="Periodo siguiente">›</button></div></label>
+              <label>Meses<select id="plnMonths"><option>1</option><option>2</option><option>3</option><option selected>4</option><option>6</option><option>12</option></select></label>
+              <button onclick="loadFinancePlanning()">Buscar</button>
+              <button class="green" onclick="openPlanningProjectForm()">Proyecto</button>
+              <button class="secondary" onclick="openPlanningBankAccountForm()">Cuenta bancaria</button>
+              <button class="secondary" onclick="renderFinancePlanning($('planningWorkspace') || $('itpWorkspace'))">Limpiar</button>
+            </div>
+          </div>
+          <details class="pln-scenario">
+            <summary>Comparador rápido de escenario</summary>
+            <div class="pln-scenario-body">
+              <div class="pln-scenario-grid">
+                <label>Ingreso %<input id="plnScenarioRevenue" type="number" step="1" value="0" /></label>
+                <label>Gasto %<input id="plnScenarioExpense" type="number" step="1" value="0" /></label>
+                <label>Ahorro extra<input id="plnScenarioSaving" type="number" step="0.01" value="0" /></label>
+              </div>
+              <button class="secondary" onclick="calculatePlanningScenario()">Comparar</button>
+              <div id="plnScenarioResult" class="pln-scenario-result">Cargue PLN para comparar contra el periodo.</div>
+            </div>
+          </details>
+        </div>
+        <div id="planningMsg" class="status">Presione Buscar para consultar PLN.</div>
+        <div id="planningResult" class="workspace"></div>`;
+      setTimeout(loadFinancePlanning, 0);
+    }
+    async function loadFinancePlanning() {
+      const msg = $("planningMsg");
+      const result = $("planningResult");
+      const period = valueFrom("plnPeriod") || new Date().toISOString().slice(0,7);
+      const months = valueFrom("plnMonths") || "4";
+      msg.className = "status";
+      msg.textContent = "Consultando planificación...";
+      result.innerHTML = "";
+      try {
+        const payload = await getJSON(`/finance/planning/summary?period=${encodeURIComponent(period)}&months=${encodeURIComponent(months)}`);
+        planningPayload = payload;
+        msg.className = "status hidden";
+        result.innerHTML = renderPlanningSummary(payload);
+      } catch (err) {
+        msg.className = "status error";
+        msg.textContent = err.message;
+      }
+    }
+    function shiftPlanningPeriod(delta) {
+      const input = $("plnPeriod");
+      if (!input) return;
+      const raw = valueFrom("plnPeriod") || new Date().toISOString().slice(0,7);
+      const match = String(raw).match(/^(\\d{4})-(\\d{2})$/);
+      const base = match ? new Date(Number(match[1]), Number(match[2]) - 1, 1) : new Date();
+      base.setMonth(base.getMonth() + Number(delta || 0));
+      input.value = `${base.getFullYear()}-${String(base.getMonth() + 1).padStart(2, "0")}`;
+      loadFinancePlanning();
+    }
+    function renderPlanningSummary(payload) {
+      const totals = payload.totals || {};
+      const pending = totals.pending_by_currency || {};
+      const bankAvailable = totals.bank_available_by_currency || {};
+      const requirements = totals.requirements_by_currency || pending;
+      const netCash = totals.net_cash_after_requirements_by_currency || {};
+      const collectionsOpen = totals.collections_open_by_currency || {};
+      const coverage = payload.cash_coverage_fortnight || [];
+      const missing = coverage.reduce((sum,row) => sum + Number(row.shortfall || 0), 0);
+      const okCount = coverage.filter(row => row.status === "CUBRE").length;
+      const badCount = coverage.filter(row => row.status === "FALTANTE").length;
+      const bankText = plnCurrencyText(bankAvailable);
+      const pendingText = plnCurrencyText(requirements);
+      const netText = plnCurrencyText(netCash);
+      const cxcText = plnCurrencyText(collectionsOpen);
+      const decisionTone = badCount ? "bad" : (missing > 0 ? "warn" : "good");
+      const decisionTitle = badCount ? `Hay ${badCount} quincena(s) con faltante` : "Caja suficiente en el horizonte";
+      const decisionCopy = coverage.length
+        ? `${okCount} quincena(s) cubiertas y ${badCount} con faltante. CxC se muestra como referencia, no como efectivo disponible.`
+        : "Sin obligaciones dentro del horizonte seleccionado.";
+      const profitability = payload.profitability || {};
+      const revenue = Number(profitability.revenue || 0);
+      const expenses = Number(profitability.expenses || 0);
+      const profit = Number(profitability.profit || 0);
+      const marginPct = Number(profitability.margin_pct || 0);
+      return `
+        <div id="plnScenarioBase" data-revenue="${esc(revenue)}" data-expenses="${esc(expenses)}" data-profit="${esc(profit)}" data-savings="${esc(totals.monthly_savings || 0)}"></div>
+        <div class="pln-board">
+          <div class="pln-exec">
+            <div class="pln-decision ${decisionTone}">
+              <span>Decisión de caja</span>
+              <strong>${esc(decisionTitle)}</strong>
+              <p>${esc(decisionCopy)}</p>
+            </div>
+            <div class="pln-mini-grid">
+              <button class="pln-mini" onclick="openPlanningDetail('Bancos disponibles', planningPayload?.bank_accounts || [], ['bank_name','currency_code','account_code','account_name','available_amount','last_movement_date'])"><span>Bancos</span><strong title="${esc(bankText)}">${plnUsdCardHtml(bankAvailable)}${plnRealCurrencyHtml(bankAvailable)}</strong><small>Saldo contable disponible.</small></button>
+              <button class="pln-mini" onclick="openPlanningDetail('Obligaciones pendientes', planningPayload?.cash_requirements || [], ['source','id','concept','category','due_date','currency_code','amount','status','origin'])"><span>Obligaciones</span><strong title="${esc(pendingText)}">${plnUsdCardHtml(requirements)}${plnRealCurrencyHtml(requirements)}</strong><small>ITP y compromisos pendientes.</small></button>
+              <button class="pln-mini" onclick="openPlanningDetail('Caja neta despues de pagar', planningNetRows(), ['currency_code','bank_available','required_amount','net_cash'])"><span>Caja neta</span><strong title="${esc(netText)}">${plnUsdCardHtml(netCash)}${plnRealCurrencyHtml(netCash)}</strong><small>Bancos menos obligaciones.</small></button>
+              <button class="pln-mini" onclick="openPlanningDetail('CxC abierta', planningPayload?.collections_open || [], ['currency_code','count','amount'])"><span>CxC abierta</span><strong title="${esc(cxcText)}">${plnUsdCardHtml(collectionsOpen)}${plnRealCurrencyHtml(collectionsOpen)}</strong><small>No suma a caja disponible.</small></button>
+              <button class="pln-mini" onclick="openPlanningDetail('Proyectos', planningPayload?.projects || [], ['id','name','client_name','status','currency_code','expected_revenue','expected_cost','expected_profit','monthly_savings'])"><span>Proyectos</span><strong>${esc(totals.projects || 0)}</strong><small>Utilidad esperada ${esc(plnMoney(totals.project_expected_profit || 0, 'USD'))}.</small></button>
+            </div>
+          </div>
+          <div class="pln-profit-strip">
+            <button class="pln-profit-card" onclick="openPlanningDetail('Ingresos Accounting', planningPayload?.revenue_lines || [], ['period','account_code','account_name','actual_amount'])"><span>Ingresos</span><strong>${money(revenue)}</strong><small>${esc(profitability.scope || "Periodo seleccionado")}</small></button>
+            <button class="pln-profit-card" onclick="openPlanningDetail('Gastos Accounting', planningPayload?.expenses || [], ['period','account_code','account_name','actual_amount'])"><span>Gastos</span><strong>${money(expenses)}</strong><small>Accounting posteado</small></button>
+            <button class="pln-profit-card" onclick="openPlanningDetail('Rentabilidad', planningProfitRows(), ['metric','value'])"><span>Utilidad</span><strong>${money(profit)}</strong><small>${profit >= 0 ? "Resultado positivo" : "Resultado negativo"}</small></button>
+            <button class="pln-profit-card" onclick="openPlanningDetail('Rentabilidad', planningProfitRows(), ['metric','value'])"><span>Margen</span><strong>${marginPct.toFixed(2)}%</strong><small>Ingresos contra gastos</small></button>
+          </div>
+          <div class="pln-liquidity-grid">
+            <div class="pln-panel">
+              <h3>Dinero disponible en bancos</h3>
+              ${renderPlanningBankCards(payload.bank_accounts || [])}
+            </div>
+            <div class="pln-panel">
+              <h3>Cobertura por quincena</h3>
+              ${renderPlanningCoverage(coverage)}
+            </div>
+          </div>
+        </div>
+        <div class="pln-sections">
+        <div class="pln-group-title">Cobertura y caja</div>
+        ${renderPlanningSection("Cobertura mensual", payload.cash_coverage_month || [], ["month","currency_code","bank_available","required_amount","remaining_if_paid","shortfall","coverage_pct","status"], "Presupuesto mensual: compara bancos actuales contra obligaciones del mes, sin sumar CxC.", true)}
+        ${renderPlanningSection("Obligaciones para cobertura", payload.cash_requirements || [], ["source","id","concept","category","due_date","currency_code","amount","status","origin"], "Compromisos que alimentan el cálculo secuencial de cobertura quincenal.", true)}
+        ${renderPlanningSection("Obligaciones", payload.obligations || [], ["id","payee_name","obligation_type","due_date","currency","balance","status","origin"], "Detalle de compromisos pendientes que caen dentro del horizonte de planificación.")}
+        <div class="pln-group-title">Obligaciones ITP</div>
+        ${renderPlanningSection("Calendario ITP", payload.obligation_buckets || [], ["currency","bucket","count","amount"], "Agrupación de obligaciones por moneda y vencimiento para priorizar caja.")}
+        ${renderPlanningSection("Obligaciones quincenales ITP", payload.biweekly_lines || [], ["period","fortnight","category","beneficiary","payment_date","currency","amount","bank_voucher","status","obligation_id","reference"], "Todas las líneas quincenales registradas en ITP dentro del horizonte, pagadas y pendientes.")}
+        <div class="pln-group-title">Cobros y alertas</div>
+        ${renderPlanningSection("CxC abierta", payload.collections_open || [], ["currency_code","count","amount"], "Pendiente de cobrar visible para decisión, pero separado del efectivo disponible.")}
+        ${renderPlanningSection("Aging CxC", payload.collections_aging || [], ["currency_code","bucket","count","amount"], "Riesgo de cobranza por moneda y antigüedad.")}
+        ${renderPlanningSection("Alertas", payload.alerts || [], ["severity","code","message"], "Riesgos que requieren acción antes de comprometer nuevos pagos.")}
+        <div class="pln-group-title">Rentabilidad y planificación</div>
+        ${renderPlanningSection("Ingresos Accounting", payload.revenue_lines || [], ["period","account_code","account_name","actual_amount"], "Ingresos contabilizados por cuenta para justificar la rentabilidad.")}
+        ${renderPlanningSection("Gastos Accounting", payload.expenses || [], ["period","account_code","account_name","actual_amount"], "Gastos contabilizados por cuenta para comparar ejecución contra presupuesto y metas.")}
+        ${renderPlanningSection("Pagos aplicados", payload.applied_payments || [], ["currency","count","amount"], "Pagos aplicados dentro del horizonte consultado.")}
+        ${renderPlanningSection("Metas / ahorros", payload.goals || [], ["id","period","purpose","name","account_code","currency_code","target_amount","progress_amount","progress_pct","target_date","status"], "Metas, ahorros y presupuestos activos con progreso acumulado.")}
+        ${renderPlanningSection("Proyectos", payload.projects || [], ["id","name","client_name","status","priority","target_date","currency_code","expected_revenue","expected_cost","expected_profit","expected_margin_pct","monthly_savings"], "Cartera de proyectos con ingreso, costo, utilidad esperada y ahorro mensual.")}
+        ${renderPlanningSection("Cronograma", payload.project_schedule || [], ["due_date","concept","direction","currency_code","amount","status","project_id"], "Fechas proyectadas de entradas, salidas y ahorros asociados a proyectos.")}
+        ${renderPlanningSection("Ahorro mensual", payload.monthly_plan || [], ["month","currency_code","planned_inflow","planned_outflow","planned_saving"], "Vista mensual de entradas, salidas y ahorro planificado.")}
+        </div>
+        <div class="status">${(payload.decision_notes || []).map(esc).join("<br>")}</div>`;
+    }
+    function plnFxRate() {
+      return Number(planningPayload?.totals?.exchange_rate_crc_per_usd || planningPayload?.exchange_rate_crc_per_usd || 1) || 1;
+    }
+    function plnMoney(value, currency) {
+      const cur = String(currency || "").toUpperCase() || "CRC";
+      return `${cur} ${moneyFmt.format(Number(value || 0))}`;
+    }
+    function plnCurrencyEntries(values) {
+      return Object.entries(values || {}).filter(([_cur,val]) => Number.isFinite(Number(val)));
+    }
+    function plnCurrencyText(values) {
+      const entries = plnCurrencyEntries(values);
+      return entries.length ? entries.map(([cur,val]) => plnMoney(val, cur)).join(" | ") : "0.00";
+    }
+    function plnCurrencyHtml(values) {
+      const entries = plnCurrencyEntries(values);
+      if (!entries.length) return "0.00";
+      return entries.map(([cur,val]) => `<span class="pln-currency-line">${esc(plnMoney(val, cur))}</span>`).join("");
+    }
+    function plnUsdTotal(values) {
+      const rate = plnFxRate();
+      return plnCurrencyEntries(values).reduce((sum, [cur,val]) => {
+        const code = String(cur || "").toUpperCase();
+        const amount = Number(val || 0);
+        if (code === "USD") return sum + amount;
+        if (code === "CRC" && rate > 1) return sum + amount / rate;
+        return sum;
+      }, 0);
+    }
+    function plnUsdTotalHtml(values) {
+      const total = plnUsdTotal(values);
+      return `<span class="pln-usd-line">Equiv. ${esc(plnMoney(total, "USD"))}</span>`;
+    }
+    function plnUsdCardHtml(values) {
+      return `<span class="pln-usd-line">${esc(plnMoney(plnUsdTotal(values), "USD"))}</span>`;
+    }
+    function plnRealCurrencyHtml(values) {
+      const entries = plnCurrencyEntries(values);
+      if (!entries.length) return "";
+      return `<span class="pln-real-line">Real: ${esc(entries.map(([cur,val]) => plnMoney(val, cur)).join(" | "))}</span>`;
+    }
+    function plnUsdEquivalent(value, currency) {
+      const cur = String(currency || "").toUpperCase();
+      if (cur !== "CRC") return "";
+      const rate = plnFxRate();
+      if (!rate || rate <= 1) return "";
+      return `≈ ${plnMoney(Number(value || 0) / rate, "USD")} TC ${moneyFmt.format(rate)}`;
+    }
+    function renderPlanningBankCards(rows) {
+      const expected = [
+        {bank:"BAC", currency_code:"CRC", label:"BAC Colones"},
+        {bank:"BAC", currency_code:"USD", label:"BAC Dólares"},
+        {bank:"BCR", currency_code:"CRC", label:"BCR Colones"},
+        {bank:"BCR", currency_code:"USD", label:"BCR Dólares"}
+      ];
+      const cards = expected.map(item => {
+        const row = rows.find(r => String(r.bank_name || "").toUpperCase() === item.bank && String(r.currency_code || "").toUpperCase() === item.currency_code);
+        return row || {bank_name:item.bank, currency_code:item.currency_code, account_name:item.label, account_code:"-", available_amount:0, last_movement_date:"Sin movimiento"};
+      });
+      rows.forEach(row => {
+        const exists = cards.some(card => card.account_code === row.account_code);
+        if (!exists) cards.push(row);
+      });
+      return `<div class="pln-bank-grid">${cards.map(row => {
+        const amount = Number(row.available_amount || 0);
+        const tone = amount < 0 ? "bad" : "good";
+        const canAdjust = row.account_code && row.account_code !== "-";
+        const domId = planningBankDomId(row.account_code || `${row.bank_name}-${row.currency_code}`);
+        const encoded = encodeURIComponent(JSON.stringify(row));
+        return `<div class="pln-bank-card ${tone}">
+          <span>${esc(row.bank_name || "Banco")} · ${esc(row.currency_code || "-")}</span>
+          <strong>${plnMoney(amount, row.currency_code)}</strong>
+          ${plnUsdEquivalent(amount, row.currency_code) ? `<small>${esc(plnUsdEquivalent(amount, row.currency_code))}</small>` : ""}
+          <small title="${esc(row.account_name || "")}">${esc(row.account_code || "-")} · ${esc(row.account_name || "")}</small>
+          <small>Último movimiento: ${esc(row.last_movement_date || "-")}</small>
+          ${canAdjust
+            ? `<div class="pln-bank-editor">
+                <label>Saldo real<input id="plnReal_${domId}" type="number" step="0.01" value="${esc(amount)}" /></label>
+                <button class="green" type="button" onclick="savePlanningBankAdjustmentFromCard(decodeURIComponent('${encoded}'), '${domId}')">Actualizar</button>
+              </div>
+              <div id="plnBankMsg_${domId}" class="pln-bank-msg">Digite el saldo real según banco.</div>`
+            : `<button class="secondary" onclick="openPlanningBankAccountForm()">Crear cuenta</button>`}
+        </div>`;
+      }).join("")}</div>`;
+    }
+    function planningBankDomId(value) {
+      return String(value || "bank").replace(/[^a-zA-Z0-9_-]/g, "_");
+    }
+    function renderPlanningCoverage(rows) {
+      if (!rows.length) return '<div class="status">Sin obligaciones en el horizonte seleccionado.</div>';
+      return `<div class="pln-coverage-list">${rows.slice(0,8).map(row => {
+        const good = row.status === "CUBRE";
+        const goodWithCxc = (row.status_with_collections || row.status) === "CUBRE";
+        const encoded = encodeURIComponent(JSON.stringify(row));
+        const title = encodeURIComponent(row.label || row.bucket || "Cobertura");
+        return `<div class="pln-coverage-row" onclick="openPlanningDetail(decodeURIComponent('${title}'), planningCoverageSourceRows(JSON.parse(decodeURIComponent('${encoded}'))), planningCoverageCols())">
+          <div><strong>${esc(row.label || row.bucket)}</strong><br><span>${esc(row.currency_code)} · ${esc(row.count || 0)} líneas</span></div>
+          <div><span>Bancos</span><br><strong>${plnMoney(row.available_before, row.currency_code)}</strong></div>
+          <div><span>CxC ref.</span><br><strong>${plnMoney(row.collections_reference || 0, row.currency_code)}</strong></div>
+          <div><span>Obligaciones</span><br><strong>${plnMoney(row.required_amount, row.currency_code)}</strong></div>
+          <div><span>Queda bancos</span><br><strong>${plnMoney(row.remaining_after, row.currency_code)}</strong></div>
+          <div><span class="pln-pill ${goodWithCxc ? "good" : "bad"}">${goodWithCxc ? "Cubre c/CxC" : "Falta c/CxC " + plnMoney(row.shortfall_with_collections ?? row.shortfall, row.currency_code)}</span></div>
+        </div>`;
+      }).join("")}</div>`;
+    }
+    function renderPlanningSection(title, rows, cols, note="", open=false) {
+      const bodyStart = `<div class="pln-section-body">${note ? `<p class="pln-section-note">${esc(note)}</p>` : ""}`;
+      const opened = open ? " open" : "";
+      const wide = ["Cobertura mensual","Obligaciones para cobertura","Obligaciones","Obligaciones quincenales ITP"].includes(title) ? " wide" : "";
+      const summaryActions = rows.length
+        ? `<span class="pln-section-actions"><button class="secondary" type="button" onclick="event.stopPropagation(); openPlanningDetail('${esc(title)}', planningSectionRows('${esc(title)}'), planningSectionCols('${esc(title)}', ${JSON.stringify(cols).replace(/"/g, "&quot;")}))">Detalle</button><button class="secondary" type="button" onclick="event.stopPropagation(); exportPlanningRows('${esc(title)}', planningSectionRows('${esc(title)}'), planningSectionCols('${esc(title)}', ${JSON.stringify(cols).replace(/"/g, "&quot;")}))">Excel</button></span>`
+        : "";
+      if (!rows.length) return `<details class="pln-section${wide}"${opened}><summary><span>${esc(title)} · 0 líneas</span></summary>${bodyStart}<div class="status">Sin datos para esta consulta.</div></div></details>`;
+      const hasActions = title === "Proyectos";
+      return `<details class="pln-section${wide}"${opened}><summary><span>${esc(title)} · ${rows.length} líneas</span>${summaryActions}</summary>${bodyStart}<div class="table-wrap"><table><thead><tr>${cols.map(c => `<th>${esc(planningColumnLabel(c))}</th>`).join("")}${hasActions ? "<th>Acción</th>" : ""}</tr></thead><tbody>${rows.slice(0,120).map((row,idx) => `<tr>${cols.map(c => `<td>${esc(planningCell(row, c))}</td>`).join("")}${hasActions ? `<td><button onclick='openPlanningProjectForm(${JSON.stringify(row).replace(/'/g, "&#39;")})'>Editar</button><button class="brown" onclick="deletePlanningProject(${Number(row.id || 0)})">Eliminar</button></td>` : ""}</tr>`).join("")}</tbody></table></div></div></details>`;
+    }
+    function planningSectionRows(title) {
+      const p = planningPayload || {};
+      const map = {
+        "Cobertura mensual": planningCoverageSourceRows(),
+        "Obligaciones para cobertura": p.cash_requirements || [],
+        "CxC abierta": p.collections_detail || [],
+        "Aging CxC": p.collections_detail || [],
+        "Alertas": p.alerts || [],
+        "Calendario ITP": p.cash_requirements || [],
+        "Obligaciones": p.obligations || [],
+        "Obligaciones quincenales ITP": p.biweekly_lines || [],
+        "Ingresos Accounting": p.revenue_lines || [],
+        "Gastos Accounting": p.expenses || [],
+        "Pagos aplicados": p.applied_payments || [],
+        "Metas / ahorros": p.goals || [],
+        "Proyectos": p.projects || [],
+        "Cronograma": p.project_schedule || [],
+        "Ahorro mensual": p.monthly_plan || []
+      };
+      return map[title] || [];
+    }
+    function planningCoverageSourceRows(row={}) {
+      if (Array.isArray(row?.source_rows) && row.source_rows.length) return row.source_rows;
+      const rows = planningPayload?.cash_requirements || [];
+      const month = String(row.month || row.period || row.label || "").slice(0, 7);
+      const currency = String(row.currency_code || row.currency || "").toUpperCase();
+      if (!month && !currency) return rows;
+      const matched = rows.filter(item => {
+        const dueMonth = String(item.due_date || item.fecha || "").slice(0, 7);
+        const itemCurrency = String(item.currency_code || item.currency || item.moneda || "").toUpperCase();
+        const sameMonth = month ? dueMonth === month : true;
+        const sameCurrency = currency ? itemCurrency === currency : true;
+        return sameMonth && sameCurrency;
+      });
+      if (matched.length) return matched;
+      if (row.required_amount || row.amount) {
+        return [{
+          source:"RESUMEN",
+          id:"",
+          concept:row.label || row.month || row.bucket || "Cobertura",
+          category:"Consolidado",
+          due_date:row.month || row.period || "",
+          currency_code:row.currency_code || row.currency || "",
+          amount:row.required_amount || row.amount || 0,
+          status:row.status || "",
+          origin:"PLN"
+        }];
+      }
+      return [];
+    }
+    function planningCoverageCols() {
+      return ["source","id","concept","category","due_date","currency_code","amount","status","origin"];
+    }
+    function planningSectionCols(title, fallback=[]) {
+      const map = {
+        "Cobertura mensual":planningCoverageCols(),
+        "Calendario ITP":planningCoverageCols(),
+        "CxC abierta":["id","numero_documento","nombre_cliente","fecha_vencimiento","currency_code","total","amount","aging_dias","bucket_aging","num_informe","buque_contenedor","estado_factura"],
+        "Aging CxC":["id","numero_documento","nombre_cliente","fecha_vencimiento","currency_code","total","amount","aging_dias","bucket_aging","num_informe","buque_contenedor","estado_factura"]
+      };
+      return map[title] || fallback;
+    }
+    function planningNetRows() {
+      const totals = planningPayload?.totals || {};
+      const bank = totals.bank_available_by_currency || {};
+      const req = totals.requirements_by_currency || {};
+      const net = totals.net_cash_after_requirements_by_currency || {};
+      return Array.from(new Set([...Object.keys(bank), ...Object.keys(req), ...Object.keys(net)])).sort().map(currency_code => ({
+        currency_code,
+        bank_available:bank[currency_code] || 0,
+        required_amount:req[currency_code] || 0,
+        net_cash:net[currency_code] || 0
+      }));
+    }
+    function planningProfitRows() {
+      const p = planningPayload?.profitability || {};
+      return [
+        {metric:"Alcance", value:p.scope || "Periodo seleccionado"},
+        {metric:"Ingresos", value:money(p.revenue || 0)},
+        {metric:"Gastos", value:money(p.expenses || 0)},
+        {metric:"Utilidad", value:money(p.profit || 0)},
+        {metric:"Margen %", value:`${Number(p.margin_pct || 0).toFixed(2)}%`}
+      ];
+    }
+    function openPlanningDetail(title, rows=[], cols=[]) {
+      rows = Array.isArray(rows) ? rows : [];
+      cols = cols && cols.length ? cols : Array.from(new Set(rows.flatMap(row => Object.keys(row || {}))));
+      cols = planningDetailCols(cols);
+      const totals = {};
+      rows.forEach(row => {
+        const cur = row.currency_code || row.currency || row.moneda;
+        const amount = Number(row.amount ?? row.balance ?? row.actual_amount ?? row.required_amount ?? 0);
+        if (cur && Number.isFinite(amount)) totals[cur] = (totals[cur] || 0) + amount;
+      });
+      const totalText = Object.keys(totals).length
+        ? `${plnCurrencyText(totals)} | Equiv. ${plnMoney(plnUsdTotal(totals), "USD")}`
+        : `${rows.length} líneas`;
+      document.body.insertAdjacentHTML("beforeend", `
+        <div class="modal-backdrop" id="svcModal">
+          <div class="modal wide">
+            <div class="modal-head"><h2>${esc(title)}</h2><button class="secondary" onclick="closeModal()">Cerrar</button></div>
+            <div class="status"><strong>Consolidado:</strong> ${esc(totalText)}</div>
+            <div class="md-actions"><button class="secondary" onclick='exportPlanningRows(${JSON.stringify(title)}, planningDetailRows, planningDetailCols)'>Exportar Excel</button></div>
+            <div class="table-wrap">${planningDetailTable(rows, cols)}</div>
+          </div>
+        </div>`);
+      window.planningDetailRows = rows;
+      window.planningDetailCols = cols;
+    }
+    function planningDetailTable(rows, cols) {
+      if (!rows.length) return '<div class="status">Sin líneas para justificar este monto.</div>';
+      return `<table><thead><tr>${cols.map(c => `<th>${esc(planningColumnLabel(c))}</th>`).join("")}</tr></thead><tbody>${rows.map(row => `<tr>${cols.map(c => `<td>${esc(planningCell(row, c))}</td>`).join("")}</tr>`).join("")}</tbody></table>`;
+    }
+    function exportPlanningRows(title, rows=[], cols=[]) {
+      rows = Array.isArray(rows) ? rows : [];
+      cols = cols && cols.length ? cols : Array.from(new Set(rows.flatMap(row => Object.keys(row || {}))));
+      cols = planningDetailCols(cols);
+      if (!rows.length) return alert("No hay líneas para exportar.");
+      const exportRows = rows.map(row => Object.fromEntries(cols.map(c => [planningColumnLabel(c), planningCell(row, c)])));
+      const exportCols = cols.map(planningColumnLabel);
+      downloadExcelFile(`${String(title || "pln_detalle").replace(/[^a-z0-9_-]+/gi, "_")}.xls`, exportRows, exportCols, title || "PLN detalle");
+    }
+    function planningColumnLabel(key) {
+      const labels = {
+        month:"Mes", currency_code:"Moneda", bank_available:"Disponible banco", required_amount:"Obligaciones",
+        remaining_if_paid:"Queda si se paga", shortfall:"Faltante", coverage_pct:"Cobertura %", status:"Estado",
+        source:"Origen", id:"ID", concept:"Concepto", category:"Rubro", due_date:"Fecha", amount:"Monto",
+        amount_original:"Monto original", amount_usd:"Equiv. USD", amount_crc:"Equiv. CRC",
+        count:"Líneas", bucket:"Bloque", payee_name:"Beneficiario", obligation_type:"Tipo",
+        origin:"Fuente", metric:"Métrica", value:"Valor", severity:"Severidad", code:"Código", message:"Mensaje"
+      };
+      return labels[key] || String(key || "").replace(/_/g, " ");
+    }
+    function planningDetailCols(cols=[]) {
+      const moneySourceCols = new Set(["amount","balance","total","actual_amount","available_amount","target_amount","progress_amount","expected_revenue","expected_cost","expected_profit","monthly_savings","planned_inflow","planned_outflow","planned_saving"]);
+      const out = [];
+      (cols || []).forEach(col => {
+        if (moneySourceCols.has(col)) {
+          ["amount_original","amount_usd","amount_crc"].forEach(extra => { if (!out.includes(extra)) out.push(extra); });
+        } else if (!out.includes(col)) out.push(col);
+      });
+      return out;
+    }
+    function planningRawAmount(row, key) {
+      if (key === "amount_original" || key === "amount_usd" || key === "amount_crc") {
+        return Number(row.amount ?? row.balance ?? row.total ?? row.actual_amount ?? row.available_amount ?? row.target_amount ?? row.progress_amount ?? row.expected_revenue ?? row.expected_cost ?? row.expected_profit ?? row.monthly_savings ?? row.planned_inflow ?? row.planned_outflow ?? row.planned_saving ?? 0);
+      }
+      return Number(row[key] || 0);
+    }
+    function planningRowCurrency(row) {
+      return row.currency_code || row.currency || row.moneda || (String(row.account_name || "").toUpperCase().includes("USD") ? "USD" : "CRC");
+    }
+    function plnToUsd(value, currency) {
+      const cur = String(currency || "").toUpperCase();
+      const amount = Number(value || 0);
+      if (cur === "USD") return amount;
+      if (cur === "CRC") return amount / plnFxRate();
+      return amount;
+    }
+    function plnToCrc(value, currency) {
+      const cur = String(currency || "").toUpperCase();
+      const amount = Number(value || 0);
+      if (cur === "CRC") return amount;
+      if (cur === "USD") return amount * plnFxRate();
+      return amount;
+    }
+    function planningCell(row, key) {
+      const moneyCols = new Set(["amount","balance","total","target_amount","progress_amount","actual_amount","available_amount","total_honorarios","total_gastos","precio","utilidad","expected_revenue","expected_cost","expected_profit","monthly_savings","planned_inflow","planned_outflow","planned_saving","bank_available","required_amount","remaining_if_paid","remaining_after","available_before","collections_reference","available_with_collections_before","remaining_with_collections_after","shortfall","shortfall_with_collections","net_cash"]);
+      if (String(key || "").endsWith("_pct")) return `${Number(row[key] || 0).toFixed(2)}%`;
+      if (key === "amount_original") return plnMoney(planningRawAmount(row, key), planningRowCurrency(row));
+      if (key === "amount_usd") return plnMoney(plnToUsd(planningRawAmount(row, key), planningRowCurrency(row)), "USD");
+      if (key === "amount_crc") return plnMoney(plnToCrc(planningRawAmount(row, key), planningRowCurrency(row)), "CRC");
+      if (moneyCols.has(key)) {
+        const cur = planningRowCurrency(row);
+        return plnMoney(row[key], cur);
+      }
+      return row[key] ?? "";
+    }
+    function calculatePlanningScenario() {
+      const base = $("plnScenarioBase");
+      const out = $("plnScenarioResult");
+      if (!base || !out) return;
+      const revenue = Number(base.dataset.revenue || 0);
+      const expenses = Number(base.dataset.expenses || 0);
+      const savings = Number(base.dataset.savings || 0);
+      const revenuePct = Number(valueFrom("plnScenarioRevenue") || 0) / 100;
+      const expensePct = Number(valueFrom("plnScenarioExpense") || 0) / 100;
+      const extraSaving = Number(valueFrom("plnScenarioSaving") || 0);
+      const scenarioRevenue = revenue * (1 + revenuePct);
+      const scenarioExpenses = expenses * (1 + expensePct);
+      const scenarioProfit = scenarioRevenue - scenarioExpenses;
+      const margin = scenarioRevenue ? (scenarioProfit / scenarioRevenue * 100) : 0;
+      out.innerHTML = `<strong>Escenario:</strong> utilidad ${money(scenarioProfit)} · margen ${margin.toFixed(2)}% · ahorro mensual ${money(savings + extraSaving)}`;
+    }
+    function openPlanningProjectForm(project={}) {
+      document.body.insertAdjacentHTML("beforeend", `
+        <div class="modal-backdrop" id="svcModal">
+          <div class="modal small">
+            <div class="modal-head"><h2>${project.id ? "Modificar proyecto PLN" : "Agregar proyecto PLN"}</h2><button class="secondary" onclick="closeModal()">Cerrar</button></div>
+            <div class="form-grid">
+              <label>Nombre<input id="plnProjName" value="${esc(project.name || "")}" required /></label>
+              <label>Cliente<input id="plnProjClient" value="${esc(project.client_name || "")}" /></label>
+              <label>Responsable<input id="plnProjOwner" value="${esc(project.owner || "")}" /></label>
+              <label>Fecha objetivo<input id="plnProjTarget" value="${esc(project.target_date || new Date().toISOString().slice(0,10))}" /></label>
+              <label>Moneda<select id="plnProjCurrency"><option>USD</option><option>CRC</option></select></label>
+              <label>Ingreso esperado<input id="plnProjRevenue" type="number" step="0.01" value="${esc(project.expected_revenue || 0)}" /></label>
+              <label>Costo esperado<input id="plnProjCost" type="number" step="0.01" value="${esc(project.expected_cost || 0)}" /></label>
+              <label>Ahorro mensual<input id="plnProjSaving" type="number" step="0.01" value="${esc(project.monthly_savings || 0)}" /></label>
+              <label>Probabilidad %<input id="plnProjProb" type="number" step="0.01" value="${esc(project.probability_pct || 100)}" /></label>
+              <label>Estado<select id="plnProjStatus"><option>PLANNED</option><option>ACTIVE</option><option>PAUSED</option><option>DONE</option><option>CANCELLED</option></select></label>
+              <label>Prioridad<select id="plnProjPriority"><option>LOW</option><option>MEDIUM</option><option>HIGH</option><option>CRITICAL</option></select></label>
+              <label class="wide">Notas<textarea id="plnProjNotes">${esc(project.notes || "")}</textarea></label>
+            </div>
+            <div class="md-actions"><button class="green" onclick="savePlanningProject(${project.id || 0})">Guardar</button><button class="secondary" onclick="closeModal()">Cancelar</button></div>
+            <div id="plnProjectMsg" class="status hidden"></div>
+          </div>
+        </div>`);
+      $("plnProjCurrency").value = project.currency_code || "USD";
+      $("plnProjStatus").value = project.status || "PLANNED";
+      $("plnProjPriority").value = project.priority || "MEDIUM";
+    }
+    async function savePlanningProject(id=0) {
+      const msg = $("plnProjectMsg");
+      msg.className = "status";
+      msg.textContent = "Guardando proyecto...";
+      const payload = {
+        name:valueFrom("plnProjName"),
+        client_name:valueFrom("plnProjClient"),
+        owner:valueFrom("plnProjOwner"),
+        target_date:valueFrom("plnProjTarget"),
+        currency_code:valueFrom("plnProjCurrency") || "USD",
+        expected_revenue:Number(valueFrom("plnProjRevenue") || 0),
+        expected_cost:Number(valueFrom("plnProjCost") || 0),
+        monthly_savings:Number(valueFrom("plnProjSaving") || 0),
+        probability_pct:Number(valueFrom("plnProjProb") || 100),
+        status:valueFrom("plnProjStatus") || "PLANNED",
+        priority:valueFrom("plnProjPriority") || "MEDIUM",
+        notes:valueFrom("plnProjNotes")
+      };
+      if (!payload.name) {
+        msg.className = "status error";
+        msg.textContent = "Nombre requerido.";
+        return;
+      }
+      try {
+        if (id) await sendJSON("PUT", `/finance/planning/projects/${id}`, payload);
+        else await postJSON("/finance/planning/projects", payload);
+        closeModal();
+        await loadFinancePlanning();
+      } catch (err) {
+        msg.className = "status error";
+        msg.textContent = err.message;
+      }
+    }
+    async function deletePlanningProject(id) {
+      if (!id || !confirm("Eliminar proyecto PLN?")) return;
+      try {
+        await sendJSON("DELETE", `/finance/planning/projects/${id}`, null);
+        await loadFinancePlanning();
+      } catch (err) {
+        alert(err.message);
+      }
+    }
+    function openPlanningBankAccountForm() {
+      document.body.insertAdjacentHTML("beforeend", `
+        <div class="modal-backdrop" id="svcModal">
+          <div class="modal small">
+            <div class="modal-head"><h2>Nueva cuenta bancaria contable</h2><button class="secondary" onclick="closeModal()">Cerrar</button></div>
+            <div class="form-grid">
+              <label>Banco<select id="plnBankName"><option>BAC</option><option>BCR</option><option>OTRO</option></select></label>
+              <label>Moneda<select id="plnBankCurrency"><option>CRC</option><option>USD</option></select></label>
+              <label>Código contable<input id="plnBankCode" placeholder="1.1.02.04.02" /></label>
+              <label>Nombre contable<input id="plnBankAccountName" placeholder="Banco BCR CRC ..." /></label>
+              <label class="wide">IBAN / referencia<input id="plnBankIban" placeholder="Opcional para identificar la cuenta" /></label>
+            </div>
+            <div class="status">La cuenta se crea en Accounting como activo bancario posteable bajo 1.1.02. El saldo se alimenta con asientos contables.</div>
+            <div class="md-actions"><button class="green" onclick="savePlanningBankAccount()">Crear cuenta</button><button class="secondary" onclick="closeModal()">Cancelar</button></div>
+            <div id="plnBankMsg" class="status hidden"></div>
+          </div>
+        </div>`);
+    }
+    function openPlanningBankAdjustment(rowInput={}) {
+      const row = typeof rowInput === "string" ? JSON.parse(rowInput) : (rowInput || {});
+      const account = row.account_code || "";
+      const current = Number(row.available_amount || 0);
+      const currency = row.currency_code || "CRC";
+      document.body.insertAdjacentHTML("beforeend", `
+        <div class="modal-backdrop" id="svcModal">
+          <div class="modal small">
+            <div class="modal-head"><h2>Ajustar saldo real de banco</h2><button class="secondary" onclick="closeModal()">Cerrar</button></div>
+            <div class="form-grid">
+              <label>Cuenta contable<input id="plnAdjAccount" value="${esc(account)}" readonly /></label>
+              <label>Moneda<input id="plnAdjCurrency" value="${esc(currency)}" readonly /></label>
+              <label>Saldo contable<input id="plnAdjCurrent" value="${esc(current)}" readonly /></label>
+              <label>Saldo real en banco<input id="plnAdjReal" type="number" step="0.01" value="${esc(current)}" /></label>
+              <label>Fecha del ajuste<input id="plnAdjDate" type="date" value="${new Date().toISOString().slice(0,10)}" /></label>
+              <label class="wide">Motivo<textarea id="plnAdjReason" placeholder="Ej. saldo real consultado en BAC/BCR al cierre del día"></textarea></label>
+            </div>
+            <div class="status">Se posteará en Accounting solo la diferencia entre el saldo contable y el saldo real, contra diferencias bancarias por conciliar.</div>
+            <div class="md-actions"><button class="green" onclick="savePlanningBankAdjustment()">Registrar ajuste</button><button class="secondary" onclick="closeModal()">Cancelar</button></div>
+            <div id="plnAdjMsg" class="status hidden"></div>
+          </div>
+        </div>`);
+      setTimeout(() => $("plnAdjReal")?.focus(), 0);
+    }
+    async function savePlanningBankAdjustment() {
+      const msg = $("plnAdjMsg");
+      const payload = {
+        account_code:valueFrom("plnAdjAccount"),
+        real_amount:Number(valueFrom("plnAdjReal") || 0),
+        adjustment_date:valueFrom("plnAdjDate"),
+        reason:valueFrom("plnAdjReason")
+      };
+      if (!payload.account_code || !payload.adjustment_date) {
+        msg.className = "status error";
+        msg.textContent = "Cuenta y fecha son obligatorias.";
+        return;
+      }
+      msg.className = "status";
+      msg.textContent = "Registrando ajuste contable...";
+      try {
+        const saved = await postJSON("/finance/planning/bank-adjustment", payload);
+        closeModal();
+        await loadFinancePlanning();
+        const out = $("planningMsg");
+        if (out) {
+          out.className = "status";
+          out.textContent = saved.status === "no_change"
+            ? "El saldo real coincide con Accounting; no se creó asiento."
+            : `Ajuste posteado en Accounting. Asiento #${saved.entry_id}.`;
+        }
+      } catch (err) {
+        msg.className = "status error";
+        msg.textContent = err.message;
+      }
+    }
+    async function savePlanningBankAdjustmentFromCard(rowInput, domId) {
+      const row = typeof rowInput === "string" ? JSON.parse(rowInput) : (rowInput || {});
+      const msg = $(`plnBankMsg_${domId}`);
+      const input = $(`plnReal_${domId}`);
+      if (!row.account_code || !input) return;
+      const payload = {
+        account_code:row.account_code,
+        real_amount:Number(input.value || 0),
+        adjustment_date:new Date().toISOString().slice(0,10),
+        reason:`Ajuste PLN saldo real ${row.bank_name || "Banco"} ${row.currency_code || ""}`.trim()
+      };
+      if (msg) {
+        msg.className = "pln-bank-msg";
+        msg.textContent = "Registrando ajuste contable...";
+      }
+      try {
+        const saved = await postJSON("/finance/planning/bank-adjustment", payload);
+        if (msg) {
+          msg.className = saved.status === "no_change" ? "pln-bank-msg ok" : "pln-bank-msg ok";
+          msg.textContent = saved.status === "no_change"
+            ? "Sin diferencia contra Accounting."
+            : `Asiento #${saved.entry_id} creado por diferencia ${money(saved.difference)}.`;
+        }
+        await loadFinancePlanning();
+        const out = $("planningMsg");
+        if (out) {
+          out.className = "status";
+          out.textContent = saved.status === "no_change"
+            ? "El saldo real coincide con Accounting; no se creó asiento."
+            : `Saldo real actualizado. Asiento contable #${saved.entry_id} por diferencia ${money(saved.difference)}.`;
+        }
+      } catch (err) {
+        if (msg) {
+          msg.className = "pln-bank-msg error";
+          msg.textContent = err.message;
+        } else {
+          alert(err.message);
+        }
+      }
+    }
+    async function savePlanningBankAccount() {
+      const msg = $("plnBankMsg");
+      const bank = valueFrom("plnBankName") || "OTRO";
+      const currency = valueFrom("plnBankCurrency") || "CRC";
+      const code = valueFrom("plnBankCode");
+      const iban = valueFrom("plnBankIban");
+      const defaultName = `${bank === "OTRO" ? "Banco" : "Banco " + bank} ${currency}${iban ? " " + iban : ""}`;
+      const name = valueFrom("plnBankAccountName") || defaultName;
+      if (!code || !name) {
+        msg.className = "status error";
+        msg.textContent = "Código contable y nombre son obligatorios.";
+        return;
+      }
+      msg.className = "status";
+      msg.textContent = "Creando cuenta bancaria en Accounting...";
+      try {
+        await postJSON("/accounting/accounts", {
+          account_code:code,
+          account_name:name,
+          account_type:"ASSET",
+          normal_balance:"DEBIT",
+          account_level:String(code).split(".").length,
+          parent_account:"1.1.02",
+          accepts_posting:true,
+          currency_code:currency,
+          financial_statement_line:"Cash and banks",
+          tax_mapping:"BANK",
+          active:true,
+          created_by:session?.usuario || "WEB"
+        });
+        closeModal();
+        await loadFinancePlanning();
+      } catch (err) {
+        msg.className = "status error";
+        msg.textContent = err.message;
+      }
+    }
+    function switchFinanceTab(tab) {
+      financeTab = tab;
+      if (tab === "billing") renderBillingWeb(orderCashWorkspace());
+      else if (tab === "credit") renderCreditHoldWeb(orderCashWorkspace());
+      else if (tab === "collections") renderCollectionsWeb(orderCashWorkspace());
+      else if (tab === "bank") renderBankWeb(orderCashWorkspace());
+      else if (tab === "disputes") renderDisputesWeb(orderCashWorkspace());
+    }
+    function renderCollectionsWeb(target=orderCashWorkspace()) {
+      target.innerHTML = `
+        <div class="panel-head">
+          <h2>Collections — Accounts Receivable</h2>
+          <span class="muted">Use filtros y presione Buscar</span>
+        </div>
+        <div class="finance-filter-row">
+          <label>Cliente<select id="collectionsCliente" onpointerdown="loadCollectionsClientes()" onfocus="loadCollectionsClientes()"><option value="ALL">ALL</option></select></label>
+          <label>Aging<select id="collectionsBucket"><option value="">Todos</option><option>CURRENT</option><option>1-30</option><option>31-60</option><option>61-90</option><option>90+</option></select></label>
+          <label>Estado<select id="collectionsEstado"><option value="">Todos</option><option>EMITIDA</option><option>PENDIENTE_PAGO</option><option>PAGADA</option><option>DISPUTADA</option><option>WRITE_OFF</option></select></label>
+          <label>Disputada<select id="collectionsDisputada"><option value="">Todos</option><option value="true">True</option><option value="false">False</option></select></label>
+          <button onclick="loadCollections(1)">Buscar</button>
+          <button class="secondary" onclick="clearCollections()">Limpiar</button>
+        </div>
+        <div class="finance-toolbar">
+          <button class="secondary" onclick="showCollectionsTable()">Tabla</button>
+          <button class="secondary" onclick="showCollectionsCalendar()">Calendario vencimientos</button>
+          <button class="secondary" onclick="syncCollectionsFromInvoicing()">Sincronizar facturas</button>
+          <button onclick="viewSelectedCollectionInvoice()">Ver factura</button>
+          <button class="brown" onclick="openCollectionDisputeForm()">Disputar</button>
+          <button class="green" onclick="openCollectionPaymentForm()">Aplicar pago / NC</button>
+          <button class="secondary" onclick="downloadCollectionsExcel()">Exportar Excel</button>
+          <button class="secondary" onclick="downloadCollectionsStatementWord()">Estado de cuenta Word</button>
+        </div>
+        <div id="collectionsKpis" class="grid kpis hidden"></div>
+        <div id="collectionsMsg" class="status hidden"></div>
+        <div id="collectionsTable" class="workspace"><div class="status">Use los filtros y presione Buscar para cargar Collections.</div></div>`;
+    }
+    async function loadCollectionsClientes() {
+      if (collectionClientesLoaded) return;
+      const select = $("collectionsCliente");
+      if (!select) return;
+      select.innerHTML = '<option value="ALL">Cargando...</option>';
+      try {
+        const names = new Set();
+        let page = 1;
+        const pageSize = 200;
+        while (page <= 20) {
+          const payload = await getJSON(`/collections/search?page=${page}&page_size=${pageSize}`);
+          rowsList(payload).forEach(row => {
+            const name = row.nombre_cliente || row.codigo_cliente;
+            if (name) names.add(String(name));
+          });
+          const total = Number(payload.total || 0);
+          if (!rowsList(payload).length || page * pageSize >= total) break;
+          page += 1;
+        }
+        collectionClientes = ["ALL", ...Array.from(names).sort((a,b) => a.localeCompare(b))];
+        select.innerHTML = collectionClientes.map(c => `<option value="${esc(c)}">${esc(c)}</option>`).join("");
+        collectionClientesLoaded = true;
+      } catch (err) {
+        select.innerHTML = '<option value="ALL">ALL</option>';
+        alert(`No se pudieron cargar clientes de Collections: ${err.message}`);
+      }
+    }
+    function collectionParams(page=1, pageSize=50) {
+      const params = new URLSearchParams({ page:String(page), page_size:String(pageSize) });
+      const map = {
+        collectionsCliente:"cliente",
+        collectionsBucket:"bucket_aging",
+        collectionsEstado:"estado_factura",
+        collectionsDisputada:"disputada"
+      };
+      Object.entries(map).forEach(([id, key]) => {
+        const val = valueFrom(id);
+        if (val && val !== "ALL") params.set(key, val);
+      });
+      return params.toString();
+    }
+    async function loadCollections(page=1) {
+      collectionViewMode = "table";
+      collectionPage = page;
+      selectedCollectionIndex = null;
+      selectedCollectionIndexes = new Set();
+      const msg = $("collectionsMsg");
+      const table = $("collectionsTable");
+      msg.className = "status";
+      msg.textContent = "Consultando Collections...";
+      try {
+        const payload = await getJSON(`/collections/search?${collectionParams(page)}`);
+        collectionRows = rowsList(payload).sort((a,b) => Number(b.aging_dias || 0) - Number(a.aging_dias || 0));
+        collectionTotal = Number(payload.total || collectionRows.length || 0);
+        msg.classList.add("hidden");
+        renderCollectionsKpis();
+        renderCollectionsTable();
+      } catch (err) {
+        table.innerHTML = "";
+        msg.className = "status error";
+        msg.textContent = err.message;
+      }
+    }
+    function clearCollections() {
+      ["collectionsCliente","collectionsBucket","collectionsEstado","collectionsDisputada"].forEach(id => { if ($(id)) $(id).value = id === "collectionsCliente" ? "ALL" : ""; });
+      collectionRows = [];
+      collectionCalendarRows = [];
+      selectedCollectionIndex = null;
+      selectedCollectionIndexes = new Set();
+      collectionPage = 1;
+      collectionTotal = 0;
+      $("collectionsKpis")?.classList.add("hidden");
+      $("collectionsMsg")?.classList.add("hidden");
+      if ($("collectionsTable")) $("collectionsTable").innerHTML = '<div class="status">Use los filtros y presione Buscar para cargar Collections.</div>';
+    }
+    function collectionMonthKey(date=new Date()) {
+      return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`;
+    }
+    function collectionMoney(row, key="saldo_pendiente") {
+      return `${row.moneda || ""} ${Number(row[key] || 0).toLocaleString("en-US",{minimumFractionDigits:2, maximumFractionDigits:2})}`.trim();
+    }
+    function collectionDateKey(value) {
+      return String(value || "").slice(0, 10);
+    }
+    function showCollectionsTable() {
+      collectionViewMode = "table";
+      if (collectionRows.length) renderCollectionsTable();
+      else if ($("collectionsTable")) $("collectionsTable").innerHTML = '<div class="status">Use los filtros y presione Buscar para cargar Collections.</div>';
+    }
+    async function showCollectionsCalendar() {
+      collectionViewMode = "calendar";
+      if (!collectionCalendarMonth) collectionCalendarMonth = collectionMonthKey();
+      await loadCollectionsCalendar();
+    }
+    async function shiftCollectionsCalendar(months) {
+      const [year, month] = String(collectionCalendarMonth || collectionMonthKey()).split("-").map(Number);
+      const base = new Date(year, month - 1 + Number(months || 0), 1);
+      collectionCalendarMonth = collectionMonthKey(base);
+      await loadCollectionsCalendar();
+    }
+    async function setCollectionsCalendarMonth(value) {
+      if (value) collectionCalendarMonth = value;
+      await loadCollectionsCalendar();
+    }
+    async function loadCollectionsCalendar() {
+      const msg = $("collectionsMsg");
+      const table = $("collectionsTable");
+      if (!table) return;
+      msg.className = "status";
+      msg.textContent = "Cargando calendario de vencimientos...";
+      try {
+        const rows = [];
+        let page = 1;
+        const pageSize = 200;
+        while (page <= 50) {
+          const payload = await getJSON(`/collections/search?${collectionParams(page, pageSize)}`);
+          const chunk = rowsList(payload);
+          rows.push(...chunk);
+          const total = Number(payload.total || rows.length || 0);
+          if (!chunk.length || page * pageSize >= total) break;
+          page += 1;
+        }
+        const month = collectionCalendarMonth || collectionMonthKey();
+        collectionCalendarRows = rows.filter(row => collectionDateKey(row.fecha_vencimiento).slice(0, 7) === month);
+        collectionCalendarRows.sort((a,b) => collectionDateKey(a.fecha_vencimiento).localeCompare(collectionDateKey(b.fecha_vencimiento)) || String(a.nombre_cliente || "").localeCompare(String(b.nombre_cliente || "")));
+        msg.classList.add("hidden");
+        renderCollectionsCalendar();
+      } catch (err) {
+        table.innerHTML = "";
+        msg.className = "status error";
+        msg.textContent = err.message;
+      }
+    }
+    function renderCollectionsCalendar() {
+      const table = $("collectionsTable");
+      if (!table) return;
+      const month = collectionCalendarMonth || collectionMonthKey();
+      const [year, monthNum] = month.split("-").map(Number);
+      const start = new Date(year, monthNum - 1, 1);
+      const end = new Date(year, monthNum, 0);
+      const todayKey = new Date().toISOString().slice(0, 10);
+      const byDay = new Map();
+      collectionCalendarRows.forEach(row => {
+        const key = collectionDateKey(row.fecha_vencimiento);
+        if (!key) return;
+        const item = byDay.get(key) || [];
+        item.push(row);
+        byDay.set(key, item);
+      });
+      const totals = collectionCalendarRows.reduce((acc,row) => {
+        const saldo = Number(row.saldo_pendiente || 0);
+        acc.count += 1;
+        acc.total += saldo;
+        if (collectionDateKey(row.fecha_vencimiento) < todayKey) acc.overdue += saldo;
+        return acc;
+      }, {count:0,total:0,overdue:0});
+      const firstCell = new Date(start);
+      firstCell.setDate(firstCell.getDate() - firstCell.getDay());
+      const cells = [];
+      for (let i = 0; i < 42; i += 1) {
+        const day = new Date(firstCell);
+        day.setDate(firstCell.getDate() + i);
+        const key = day.toISOString().slice(0, 10);
+        const items = byDay.get(key) || [];
+        const outside = day.getMonth() !== start.getMonth();
+        const hasItems = items.length > 0;
+        const amount = items.reduce((sum,row) => sum + Number(row.saldo_pendiente || 0), 0);
+        cells.push(`<div class="itp-calendar-day collections-calendar-day ${hasItems ? "has-items" : ""} ${outside ? "muted-day" : ""} ${key === todayKey ? "today" : ""}" ${hasItems ? `role="button" tabindex="0" onclick="showCollectionCalendarDay('${key}')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();showCollectionCalendarDay('${key}');}"` : ""}>
+          <strong><span>${day.getDate()}</span>${hasItems ? `<span>${items.length}</span>` : ""}</strong>
+          ${hasItems ? `<span class="itp-calendar-total collections-calendar-total">${Number(amount).toLocaleString("en-US",{maximumFractionDigits:2})}</span>` : ""}
+          ${items.slice(0,3).map((row, idx) => {
+            const cls = key < todayKey ? "overdue" : (key === todayKey ? "today-due" : "");
+            return `<button class="itp-calendar-pill collections-calendar-pill ${cls}" onclick="event.stopPropagation(); showCollectionCalendarItem('${key}', ${idx})" title="${esc(row.nombre_cliente || row.numero_documento || "Factura")}">${esc(row.nombre_cliente || "-")} · ${esc(row.moneda || "")} ${Number(row.saldo_pendiente || 0).toLocaleString("en-US",{maximumFractionDigits:2})}</button>`;
+          }).join("")}
+          ${items.length > 3 ? `<button class="itp-calendar-more" onclick="event.stopPropagation(); showCollectionCalendarDay('${key}')">+${items.length - 3} más</button>` : ""}
+        </div>`);
+      }
+      const monthTitle = start.toLocaleDateString("es-CR", {month:"long", year:"numeric"});
+      table.innerHTML = `
+        <div class="itp-calendar-head">
+          <div>
+            <h2>Calendario de vencimientos</h2>
+            <span class="muted">${esc(monthTitle)} · ${intFmt.format(totals.count)} facturas</span>
+          </div>
+          <div class="itp-calendar-nav">
+            <button class="secondary" onclick="shiftCollectionsCalendar(-1)">‹</button>
+            <input type="month" value="${esc(month)}" onchange="setCollectionsCalendarMonth(this.value)" />
+            <button class="secondary" onclick="shiftCollectionsCalendar(1)">›</button>
+            <button onclick="loadCollectionsCalendar()">Actualizar</button>
+          </div>
+        </div>
+        <div class="collections-calendar-summary">
+          <div class="card"><span>Facturas</span><strong>${intFmt.format(totals.count)}</strong></div>
+          <div class="card"><span>Saldo del mes</span><strong>${Number(totals.total).toLocaleString("en-US",{minimumFractionDigits:2, maximumFractionDigits:2})}</strong></div>
+          <div class="card"><span>Vencido</span><strong>${Number(totals.overdue).toLocaleString("en-US",{minimumFractionDigits:2, maximumFractionDigits:2})}</strong></div>
+          <div class="card"><span>Cliente</span><strong>${esc(valueFrom("collectionsCliente") || "ALL")}</strong></div>
+        </div>
+        <div class="table-wrap">
+          <div class="itp-calendar-week"><span>Dom</span><span>Lun</span><span>Mar</span><span>Mié</span><span>Jue</span><span>Vie</span><span>Sáb</span></div>
+          <div class="itp-calendar">${cells.join("")}</div>
+        </div>`;
+    }
+    function collectionCalendarRowsForDay(key) {
+      return collectionCalendarRows.filter(row => collectionDateKey(row.fecha_vencimiento) === key);
+    }
+    function showCollectionCalendarDay(key) {
+      const rows = collectionCalendarRowsForDay(key);
+      if (!rows.length) return;
+      const cols = ["codigo_cliente","nombre_cliente","numero_documento","fecha_emision","fecha_vencimiento","aging_dias","moneda","total","saldo_pendiente","estado_factura","disputada","num_informe","buque_contenedor","operacion"];
+      const total = rows.reduce((sum,row) => sum + Number(row.saldo_pendiente || 0), 0);
+      document.body.insertAdjacentHTML("beforeend", `
+        <div class="modal-backdrop" id="svcModal">
+          <div class="modal wide">
+            <div class="modal-head"><h2>Vencimientos ${esc(key)}</h2><button class="secondary" onclick="closeModal()">Cerrar</button></div>
+            <div class="status"><strong>${rows.length} factura(s)</strong> · Saldo ${Number(total).toLocaleString("en-US",{minimumFractionDigits:2, maximumFractionDigits:2})}</div>
+            <div class="md-actions"><button class="secondary" onclick='downloadExcelFile("collections_vencimientos_${esc(key)}.xls", collectionCalendarDetailRows, ${JSON.stringify(cols)}, "Collections vencimientos ${esc(key)}")'>Exportar Excel</button></div>
+            <div class="table-wrap"><table><thead><tr>${cols.map(c => `<th>${esc(c.replace(/_/g," "))}</th>`).join("")}</tr></thead><tbody>${rows.map(row => `<tr>${cols.map(c => `<td>${esc(["total","saldo_pendiente"].includes(c) ? Number(row[c] || 0).toLocaleString("en-US",{minimumFractionDigits:2, maximumFractionDigits:2}) : row[c])}</td>`).join("")}</tr>`).join("")}</tbody></table></div>
+          </div>
+        </div>`);
+      window.collectionCalendarDetailRows = rows;
+    }
+    function showCollectionCalendarItem(key, idx) {
+      const row = collectionCalendarRowsForDay(key)[idx];
+      if (!row) return;
+      showCollectionCalendarDay(key);
+    }
+    function renderCollectionsKpis() {
+      const totals = collectionRows.reduce((acc, row) => {
+        const saldo = Number(row.saldo_pendiente || 0);
+        const aging = Number(row.aging_dias || 0);
+        acc.total += saldo;
+        if (aging < 1) acc.current += saldo;
+        else acc.overdue += saldo;
+        if (aging > 90) acc.over90 += saldo;
+        return acc;
+      }, { total:0, current:0, overdue:0, over90:0 });
+      const kpis = $("collectionsKpis");
+      if (!kpis) return;
+      kpis.classList.remove("hidden");
+      kpis.innerHTML = [
+        ["Total AR (Saldo)", totals.total],
+        ["Current (Saldo)", totals.current],
+        ["Overdue (Saldo)", totals.overdue],
+        ["Over 90 (Saldo)", totals.over90],
+      ].map(([label,value]) => `<div class="card kpi"><span>${esc(label)}</span><strong>${Number(value).toLocaleString("en-US",{minimumFractionDigits:2, maximumFractionDigits:2})}</strong></div>`).join("");
+    }
+    function collectionRow() {
+      if (selectedCollectionIndex === null) selectedCollectionIndex = firstFromSet(selectedCollectionIndexes);
+      return selectedCollectionIndex === null ? null : collectionRows[selectedCollectionIndex];
+    }
+    function toggleCollectionRow(idx, checked=null) {
+      const next = checked === null ? !selectedCollectionIndexes.has(idx) : checked;
+      selectedCollectionIndex = setIndexSelection(selectedCollectionIndexes, idx, next);
+      renderCollectionsTable();
+    }
+    function requireCollectionRow() {
+      const row = collectionRow();
+      if (!row) alert("Seleccione primero una factura de Collections.");
+      return row;
+    }
+    function renderCollectionsTable() {
+      const table = $("collectionsTable");
+      const cols = ["codigo_cliente","nombre_cliente","tipo_factura","tipo_documento","numero_documento","fecha_emision","dias_credito","fecha_vencimiento","aging_dias","moneda","total","saldo_pendiente","num_informe","buque_contenedor","operacion","periodo_operacion","estado_factura","disputada"];
+      if (!collectionRows.length) {
+        table.innerHTML = '<div class="status">Sin registros para los filtros seleccionados.</div>';
+        return;
+      }
+      const totalPages = Math.max(1, Math.ceil(collectionTotal / 50));
+      table.innerHTML = `
+        <div class="table-wrap"><table><thead><tr><th class="pick-col"></th>${cols.map(c => `<th>${esc(c.replace(/_/g," "))}</th>`).join("")}</tr></thead>
+        <tbody>${collectionRows.map((row, idx) => {
+          const overdue = Number(row.aging_dias || 0) > 1 ? "service-warning" : "";
+          const selected = selectedCollectionIndexes.has(idx);
+          return `<tr class="${selected ? "service-selected" : overdue}" onclick="toggleCollectionRow(${idx})"><td class="pick-col"><input class="row-pick" type="checkbox" ${selected ? "checked" : ""} onclick="event.stopPropagation(); toggleCollectionRow(${idx}, this.checked)" /></td>${cols.map(c => `<td>${esc(["total","saldo_pendiente"].includes(c) ? Number(row[c] || 0).toLocaleString("en-US",{minimumFractionDigits:2, maximumFractionDigits:2}) : row[c])}</td>`).join("")}</tr>`;
+        }).join("")}</tbody></table></div>
+        <div class="pager">
+          <button class="secondary" onclick="loadCollections(Math.max(1, collectionPage-1))" ${collectionPage <= 1 ? "disabled" : ""}>Anterior</button>
+          <span class="muted">Página ${collectionPage} de ${totalPages} · ${collectionRows.length} visibles de ${intFmt.format(collectionTotal)}</span>
+          <button class="secondary" onclick="loadCollections(collectionPage+1)" ${collectionPage >= totalPages ? "disabled" : ""}>Siguiente</button>
+        </div>`;
+    }
+    async function syncCollectionsFromInvoicing() {
+      if (!confirm("Esto sincronizará facturas emitidas hacia Collections. ¿Desea continuar?")) return;
+      try {
+        const result = await postJSON("/collections/sync-from-invoicing", {});
+        alert(`Sincronización completada. Facturas nuevas: ${result.inserted || 0}`);
+        if (collectionRows.length) await loadCollections(collectionPage);
+      } catch (err) {
+        alert(err.message);
+      }
+    }
+    function viewSelectedCollectionInvoice() {
+      const row = requireCollectionRow();
+      if (!row) return;
+      if (row.tipo_documento !== "FACTURA") return alert("Solo es posible visualizar Facturas.");
+      if (row.tipo_factura === "ELECTRONICA") return alert("Para ver la factura electrónica debe dirigirse a GTI.");
+      window.open(`/billing/pdf/${encodeURIComponent(row.numero_documento)}`, "_blank");
+    }
+    const EXCEL_TEXT_COLUMNS = new Set(["numero_documento","codigo_cliente","num_informe","referencia","factura_numero","nota_credito_numero","comprobante"]);
+    function excelCell(row, col) {
+      const raw = row[col] ?? "";
+      const value = String(raw);
+      const forceText = EXCEL_TEXT_COLUMNS.has(col) || /^0\\d+$/.test(value) || /^\\d{11,}$/.test(value);
+      if (forceText) return `<td class="text-cell" style="mso-number-format:'\\@';" x:str>${esc(value)}</td>`;
+      return `<td>${esc(raw)}</td>`;
+    }
+    function downloadExcelFile(filename, rows, cols, title="Detalle") {
+      const table = `<table><thead><tr>${cols.map(c => `<th>${esc(c)}</th>`).join("")}</tr></thead><tbody>${rows.map(row => `<tr>${cols.map(c => excelCell(row, c)).join("")}</tr>`).join("")}</tbody></table>`;
+      const html = `<!doctype html><html><head><meta charset="utf-8" /><style>.text-cell{mso-number-format:"\\@";}</style></head><body><h3>${esc(title)}</h3>${table}</body></html>`;
+      downloadText(filename, html, "application/vnd.ms-excel;charset=utf-8");
+    }
+    function downloadWordFile(filename, htmlBody) {
+      const html = `<!doctype html><html><head><meta charset="utf-8" /><style>body{font-family:Arial,sans-serif} table{border-collapse:collapse;width:100%} th,td{border:1px solid #999;padding:6px;font-size:10pt} th{background:#e9eef5}</style></head><body>${htmlBody}</body></html>`;
+      downloadText(filename, html, "application/msword;charset=utf-8");
+    }
+    function downloadCollectionsExcel() {
+      if (!collectionRows.length) return alert("No hay datos para exportar.");
+      const cols = ["codigo_cliente","nombre_cliente","tipo_factura","tipo_documento","numero_documento","fecha_emision","dias_credito","fecha_vencimiento","aging_dias","moneda","total","saldo_pendiente","num_informe","buque_contenedor","operacion","periodo_operacion","estado_factura","disputada"];
+      downloadExcelFile(`collections_${new Date().toISOString().slice(0,10)}.xls`, collectionRows, cols, "Collections - detalle de facturas");
+    }
+    function downloadCollectionsStatementWord() {
+      if (!collectionRows.length) return alert("No hay información cargada para generar estado de cuenta.");
+      const cliente = collectionRows[0]?.nombre_cliente || "Cliente";
+      const today = new Date().toISOString().slice(0,10);
+      const total = collectionRows.reduce((sum,row) => sum + Number(row.saldo_pendiente || 0), 0);
+      const overdue = collectionRows.reduce((sum,row) => sum + (Number(row.aging_dias || 0) > 0 ? Number(row.saldo_pendiente || 0) : 0), 0);
+      const cols = ["numero_documento","fecha_emision","fecha_vencimiento","aging_dias","moneda","total","saldo_pendiente","buque_contenedor","operacion","num_informe"];
+      const rows = collectionRows.map(row => `<tr>${cols.map(c => `<td>${esc(["total","saldo_pendiente"].includes(c) ? Number(row[c] || 0).toLocaleString("en-US",{minimumFractionDigits:2, maximumFractionDigits:2}) : row[c])}</td>`).join("")}</tr>`).join("");
+      const body = `
+        <h2>Estado de cuenta</h2>
+        <p><strong>Cliente:</strong> ${esc(cliente)}</p>
+        <p><strong>Fecha:</strong> ${esc(today)}</p>
+        <p><strong>Total pendiente:</strong> ${Number(total).toLocaleString("en-US",{minimumFractionDigits:2, maximumFractionDigits:2})}</p>
+        <p><strong>Overdue:</strong> ${Number(overdue).toLocaleString("en-US",{minimumFractionDigits:2, maximumFractionDigits:2})}</p>
+        <table><thead><tr>${cols.map(c => `<th>${esc(c.replace(/_/g," "))}</th>`).join("")}</tr></thead><tbody>${rows}</tbody></table>`;
+      downloadWordFile(`estado_cuenta_${String(cliente).replace(/[^a-z0-9]+/gi,"_")}_${today}.doc`, body);
+    }
+    function openCollectionDisputeForm() {
+      const row = requireCollectionRow();
+      if (!row) return;
+      if (row.tipo_documento !== "FACTURA") return alert("Solo se pueden disputar Facturas.");
+      document.body.insertAdjacentHTML("beforeend", `
+        <div class="modal-backdrop" id="svcModal">
+          <div class="modal small">
+            <div class="modal-head"><h2>Crear Disputa</h2><button class="secondary" onclick="closeModal()">Cerrar</button></div>
+            <div class="status">Factura ${esc(row.numero_documento)} · ${esc(row.nombre_cliente)} · ${esc(row.moneda)} ${Number(row.total || 0).toLocaleString("en-US",{minimumFractionDigits:2, maximumFractionDigits:2})}</div>
+            <div class="form-grid">
+              <label>Motivo<select id="colDisputaMotivo"><option value="">Seleccione</option><option>PRECIO</option><option>DESCUENTO</option><option>CALIDAD</option><option>WRITE_OFF</option><option>CLIENTE_INCORRECTO</option></select></label>
+              <label class="wide">Comentario<textarea id="colDisputaComentario"></textarea></label>
+            </div>
+            <div class="md-actions"><button class="brown" onclick="saveCollectionDispute()">Confirmar Disputa</button><button class="secondary" onclick="closeModal()">Cancelar</button></div>
+            <div id="colDisputaMsg" class="status hidden"></div>
+          </div>
+        </div>`);
+    }
+    async function saveCollectionDispute() {
+      const row = requireCollectionRow();
+      const msg = $("colDisputaMsg");
+      const motivo = valueFrom("colDisputaMotivo");
+      const comentario = valueFrom("colDisputaComentario");
+      if (!motivo || !comentario) return alert("Seleccione motivo e ingrese comentario.");
+      msg.className = "status";
+      msg.textContent = "Registrando disputa...";
+      try {
+        await postJSON("/collections/disputa", {
+          numero_documento:row.numero_documento,
+          codigo_cliente:row.codigo_cliente,
+          nombre_cliente:row.nombre_cliente,
+          fecha_factura:String(row.fecha_emision || "").slice(0,10),
+          fecha_vencimiento:String(row.fecha_vencimiento || "").slice(0,10),
+          monto:row.total,
+          motivo,
+          comentario,
+          buque_contenedor:row.buque_contenedor,
+          operacion:row.operacion,
+          periodo_operacion:row.periodo_operacion,
+          descripcion_servicio:row.descripcion_servicio || null
+        });
+        closeModal();
+        await loadCollections(collectionPage);
+      } catch (err) {
+        msg.className = "status error";
+        msg.textContent = err.message;
+      }
+    }
+    async function openCollectionPaymentForm() {
+      const row = requireCollectionRow();
+      if (!row) return;
+      if (row.tipo_documento !== "FACTURA") return alert("Solo se puede aplicar pago a Facturas.");
+      if (!["PENDIENTE","VENCIDA","PENDIENTE_PAGO"].includes(String(row.estado_factura || ""))) return alert("La factura no tiene saldo pendiente.");
+      document.body.insertAdjacentHTML("beforeend", `
+        <div class="modal-backdrop" id="svcModal">
+          <div class="modal small">
+            <div class="modal-head"><h2>Aplicar Pago / Nota de Crédito</h2><button class="secondary" onclick="closeModal()">Cerrar</button></div>
+            <div class="status">Factura ${esc(row.numero_documento)} · Saldo ${esc(row.moneda)} ${Number(row.saldo_pendiente || row.total || 0).toLocaleString("en-US",{minimumFractionDigits:2, maximumFractionDigits:2})}</div>
+            <div class="form-grid">
+              <label>Tipo de aplicación<select id="colPayTipo" onchange="toggleCollectionPaymentMode()"><option>PAGO</option><option>NOTA_CREDITO</option></select></label>
+              <label class="colPayField">Banco / cuenta<select id="colPayBanco"><option value="">Cargando...</option></select></label>
+              <label class="colPayField">Fecha de pago<input id="colPayFecha" type="date" value="${new Date().toISOString().slice(0,10)}" /></label>
+              <label class="colPayField">Comisión<input id="colPayComision" type="number" step="0.01" value="0" /></label>
+              <label class="colPayField">Referencia<input id="colPayReferencia" /></label>
+              <label class="colPayField">Monto a aplicar<input id="colPayMonto" type="number" step="0.01" /></label>
+              <label class="colNcField hidden wide">Nota de Crédito disponible<select id="colPayNc"><option value="">Cargando...</option></select></label>
+            </div>
+            <div class="md-actions"><button class="green" onclick="saveCollectionPayment()">Aplicar</button><button class="secondary" onclick="closeModal()">Cancelar</button></div>
+            <div id="colPayMsg" class="status hidden"></div>
+          </div>
+        </div>`);
+      await loadCollectionPaymentBanks();
+    }
+    function toggleCollectionPaymentMode() {
+      const nc = valueFrom("colPayTipo") === "NOTA_CREDITO";
+      document.querySelectorAll(".colPayField").forEach(el => el.classList.toggle("hidden", nc));
+      document.querySelectorAll(".colNcField").forEach(el => el.classList.toggle("hidden", !nc));
+      if (nc) loadCollectionCreditNotes().catch(err => alert(err.message));
+    }
+    async function loadCollectionPaymentBanks() {
+      const select = $("colPayBanco");
+      if (!select) return;
+      try {
+        const rows = rowsList(await getJSON("/accounting/bank-accounts"));
+        select.innerHTML = rows.map(row => {
+          const code = row.account_code || "";
+          const name = row.account_name || "";
+          return `<option value="${esc(code)}|${esc(name)}">${esc(code)} - ${esc(name)}</option>`;
+        }).join("") || '<option value="">Sin bancos disponibles</option>';
+      } catch {
+        select.innerHTML = '<option value="">Sin bancos disponibles</option>';
+      }
+    }
+    async function loadCollectionCreditNotes() {
+      const row = requireCollectionRow();
+      const select = $("colPayNc");
+      if (!row || !select) return;
+      const payload = await getJSON(`/collections/search?cliente=${encodeURIComponent(row.codigo_cliente)}&estado_factura=PENDIENTE_PAGO&page=1&page_size=200`);
+      const notes = rowsList(payload).filter(item => item.tipo_documento === "NOTA_CREDITO");
+      select.innerHTML = notes.map(item => `<option value="${esc(item.numero_documento)}">${esc(item.numero_documento)} | ${Number(item.total || 0).toLocaleString("en-US",{minimumFractionDigits:2, maximumFractionDigits:2})}</option>`).join("") || '<option value="">Sin notas disponibles</option>';
+    }
+    async function saveCollectionPayment() {
+      const row = requireCollectionRow();
+      const msg = $("colPayMsg");
+      msg.className = "status";
+      msg.textContent = "Aplicando...";
+      try {
+        if (valueFrom("colPayTipo") === "NOTA_CREDITO") {
+          const nc = valueFrom("colPayNc");
+          if (!nc) throw new Error("Seleccione una Nota de Crédito.");
+          await postJSON("/collections/aplicar-nota-credito", {
+            factura_numero:row.numero_documento,
+            nota_credito_numero:nc,
+            codigo_cliente:row.codigo_cliente,
+            nombre_cliente:row.nombre_cliente
+          });
+        } else {
+          const [bankCode, bankName] = valueFrom("colPayBanco").split("|");
+          const monto = Number(valueFrom("colPayMonto") || 0);
+          if (!bankCode) throw new Error("Seleccione banco / cuenta contable.");
+          if (monto <= 0) throw new Error("Monto inválido.");
+          await postJSON("/collections/pago", {
+            numero_documento:row.numero_documento,
+            codigo_cliente:row.codigo_cliente,
+            nombre_cliente:row.nombre_cliente,
+            banco:valueFrom("colPayBanco"),
+            bank_account_code:bankCode,
+            bank_account_name:bankName,
+            fecha_pago:valueFrom("colPayFecha"),
+            comision:Number(valueFrom("colPayComision") || 0),
+            referencia:valueFrom("colPayReferencia"),
+            monto_pagado:monto,
+            tipo_aplicacion:"PAGO"
+          });
+        }
+        closeModal();
+        await loadCollections(collectionPage);
+      } catch (err) {
+        msg.className = "status error";
+        msg.textContent = err.message;
+      }
+    }
+    function renderBankWeb(target=orderCashWorkspace()) {
+      target.innerHTML = `
+        <div class="panel-head">
+          <h2>Bank Reconciliation</h2>
+          <span class="muted">Pagos, extractos, matching y cierre bancario</span>
+        </div>
+        <div class="subtabs">
+          <button id="bankTabPayments" class="active" onclick="switchBankPane('payments')">Pagos</button>
+          <button id="bankTabStatements" onclick="switchBankPane('statements')">Conciliación profesional</button>
+          <button id="bankTabPaid" onclick="switchBankPane('paid')">Paid Invoices Report</button>
+        </div>
+        <div id="bankPane"></div>`;
+      switchBankPane("payments");
+    }
+    function switchBankPane(pane) {
+      ["Payments","Statements","Paid"].forEach(name => $("bankTab" + name)?.classList.remove("active"));
+      const map = { payments:"Payments", statements:"Statements", paid:"Paid" };
+      $("bankTab" + map[pane])?.classList.add("active");
+      if (pane === "statements") renderBankStatementsPane();
+      else if (pane === "paid") renderPaidInvoicesPane();
+      else renderBankPaymentsPane();
+    }
+    async function loadBankClienteOptions() {
+      await ensureFinanceClientes();
+      ["bankCliente"].forEach(id => {
+        const el = $(id);
+        if (!el || el.options.length > 1) return;
+        el.innerHTML = '<option value="">Todos</option>' + financeClienteRows.map(row => {
+          const name = financeClientName(row);
+          const code = financeClientId(row);
+          return `<option value="${esc(code)}">${esc(code)} | ${esc(name)}</option>`;
+        }).join("");
+      });
+    }
+    async function loadBankAccountOptions() {
+      const select = $("bankStatementAccount");
+      if (!select || select.options.length > 1) return;
+      try {
+        const rows = rowsList(await getJSON("/accounting/bank-accounts"));
+        select.innerHTML = '<option value="">Todas</option>' + rows.map(row => {
+          const code = row.account_code || "";
+          const name = row.account_name || "";
+          return `<option value="${esc(code)}" data-name="${esc(name)}">${esc(code)} | ${esc(name)}</option>`;
+        }).join("");
+      } catch {
+        select.innerHTML = '<option value="">Todas</option>';
+      }
+    }
+    function renderBankPaymentsPane() {
+      $("bankPane").innerHTML = `
+        <div class="finance-filter-row compact">
+          <label>Cliente<select id="bankCliente" onfocus="loadBankClienteOptions()" onpointerdown="loadBankClienteOptions()"><option value="">Todos</option></select></label>
+          <label>Referencia / comprobante<input id="bankReferencia" placeholder="Referencia bancaria" /></label>
+          <label>Ver todos<select id="bankVerTodos"><option value="false">No</option><option value="true">Sí</option></select></label>
+          <button onclick="loadBankPayments(1)">Buscar</button>
+          <button class="secondary" onclick="clearBankPayments()">Limpiar</button>
+        </div>
+        <div class="finance-toolbar">
+          <button class="green" onclick="openManualBankPaymentForm()">Registrar Pago Manual</button>
+          <button onclick="viewBankPaymentDetail()">Ver detalle del pago</button>
+          <button class="brown" onclick="reverseSelectedBankPayment()">Reversar pago</button>
+          <button class="secondary" onclick="downloadBankPaymentsExcel()">Exportar Excel</button>
+        </div>
+        <div id="bankPaymentsKpis" class="grid kpis hidden"></div>
+        <div id="bankPaymentsMsg" class="status hidden"></div>
+        <div id="bankPaymentsTable" class="workspace"><div class="status">Use filtros y presione Buscar para consultar pagos bancarios.</div></div>`;
+    }
+    function bankPaymentParams(page=1) {
+      const params = new URLSearchParams({ page:String(page), page_size:"100" });
+      const cliente = valueFrom("bankCliente");
+      const ref = valueFrom("bankReferencia");
+      const verTodos = valueFrom("bankVerTodos") === "true";
+      if (cliente) params.set("codigo_cliente", cliente);
+      if (ref) params.set("referencia", ref);
+      if (verTodos) params.set("ver_todos", "true");
+      return params.toString();
+    }
+    async function loadBankPayments(page=1) {
+      const msg = $("bankPaymentsMsg");
+      const table = $("bankPaymentsTable");
+      selectedBankIndex = null;
+      selectedBankIndexes = new Set();
+      msg.className = "status";
+      msg.textContent = "Consultando pagos bancarios...";
+      table.innerHTML = "";
+      try {
+        const payload = await getJSON(`/bank-reconciliation?${bankPaymentParams(page)}`);
+        bankRowsWeb = rowsList(payload);
+        renderBankPaymentKpis();
+        renderBankPaymentsTable();
+        msg.className = "status hidden";
+      } catch (err) {
+        msg.className = "status error";
+        msg.textContent = err.message;
+      }
+    }
+    function clearBankPayments() {
+      bankRowsWeb = [];
+      selectedBankIndex = null;
+      selectedBankIndexes = new Set();
+      if ($("bankCliente")) $("bankCliente").value = "";
+      if ($("bankReferencia")) $("bankReferencia").value = "";
+      if ($("bankVerTodos")) $("bankVerTodos").value = "false";
+      $("bankPaymentsKpis")?.classList.add("hidden");
+      if ($("bankPaymentsMsg")) $("bankPaymentsMsg").className = "status hidden";
+      if ($("bankPaymentsTable")) $("bankPaymentsTable").innerHTML = '<div class="status">Use filtros y presione Buscar para consultar pagos bancarios.</div>';
+    }
+    function renderBankPaymentKpis() {
+      const kpis = $("bankPaymentsKpis");
+      if (!kpis) return;
+      const total = bankRowsWeb.reduce((sum,row) => sum + Number(row.monto_pagado || 0), 0);
+      const applied = bankRowsWeb.filter(row => String(row.estado || "").toUpperCase().includes("APLIC")).length;
+      const incoming = bankRowsWeb.filter(row => String(row.id || "").startsWith("incoming_")).length;
+      kpis.classList.remove("hidden");
+      kpis.innerHTML = [
+        ["Pagos", bankRowsWeb.length, "Registros cargados"],
+        ["Monto", money(total), "Monto pagado"],
+        ["Aplicados", applied, "Estado aplicado"],
+        ["Incoming", incoming, "Pagos no cash_app"]
+      ].map(([label,value,hint]) => `<div class="card"><span>${label}</span><strong>${value}</strong><small>${hint}</small></div>`).join("");
+    }
+    function bankFmt(value) {
+      return Number(value || 0).toLocaleString("en-US", {minimumFractionDigits:2, maximumFractionDigits:2});
+    }
+    function renderBankPaymentsTable() {
+      const table = $("bankPaymentsTable");
+      if (!table) return;
+      if (!bankRowsWeb.length) {
+        table.innerHTML = '<div class="status">Sin pagos bancarios para esta consulta.</div>';
+        return;
+      }
+      const cols = ["banco","fecha_pago","nombre_cliente","numero_documento","referencia","tipo_aplicacion","monto_pagado","monto_aplicado","saldo","estado"];
+      table.innerHTML = `<div class="table-wrap"><table><thead><tr><th class="pick-col"></th>${cols.map(c => `<th>${esc(c.replace(/_/g," "))}</th>`).join("")}</tr></thead><tbody>${bankRowsWeb.map((row, idx) => {
+        const selected = selectedBankIndexes.has(idx);
+        return `<tr class="${selected ? "service-selected" : ""}" onclick="toggleBankPaymentRow(${idx})"><td class="pick-col"><input class="row-pick" type="checkbox" ${selected ? "checked" : ""} onclick="event.stopPropagation(); toggleBankPaymentRow(${idx}, this.checked)" /></td>${cols.map(c => `<td>${esc(["monto_pagado","monto_aplicado","saldo"].includes(c) ? bankFmt(row[c]) : row[c])}</td>`).join("")}</tr>`;
+      }).join("")}</tbody></table></div>`;
+    }
+    function toggleBankPaymentRow(idx, checked=null) {
+      const next = checked === null ? !selectedBankIndexes.has(idx) : checked;
+      selectedBankIndex = setIndexSelection(selectedBankIndexes, idx, next);
+      renderBankPaymentsTable();
+    }
+    function selectedBankPayment() {
+      if (selectedBankIndex === null) selectedBankIndex = firstFromSet(selectedBankIndexes);
+      return selectedBankIndex === null ? null : bankRowsWeb[selectedBankIndex];
+    }
+    async function openManualBankPaymentForm() {
+      await ensureFinanceClientes();
+      $("app").insertAdjacentHTML("beforeend", `
+        <div class="modal-backdrop" id="svcModal">
+          <div class="modal small">
+            <div class="modal-head"><h2>Registrar Pago Manual</h2><button class="secondary" onclick="closeModal()">Cerrar</button></div>
+            <div class="form-grid">
+              <label>Cliente<select id="bankManualCliente">${financeClienteRows.map(row => {
+                const code = financeClientId(row);
+                const name = financeClientName(row);
+                return `<option value="${esc(code)}" data-name="${esc(name)}">${esc(code)} | ${esc(name)}</option>`;
+              }).join("")}</select></label>
+              <label>Banco<input id="bankManualBanco" /></label>
+              <label>Referencia<input id="bankManualReferencia" /></label>
+              <label>Fecha pago<input id="bankManualFecha" type="date" value="${new Date().toISOString().slice(0,10)}" /></label>
+              <label>Documento<input id="bankManualDocumento" placeholder="Opcional" /></label>
+              <label>Monto<input id="bankManualMonto" type="number" step="0.01" /></label>
+            </div>
+            <div class="md-actions"><button class="green" onclick="submitManualBankPayment()">Registrar pago</button></div>
+            <div id="bankManualMsg" class="status hidden"></div>
+          </div>
+        </div>`);
+    }
+    async function submitManualBankPayment() {
+      const msg = $("bankManualMsg");
+      msg.className = "status";
+      msg.textContent = "Registrando...";
+      try {
+        const select = $("bankManualCliente");
+        const amount = Number(valueFrom("bankManualMonto") || 0);
+        if (!valueFrom("bankManualCliente")) throw new Error("Seleccione cliente.");
+        if (!valueFrom("bankManualBanco")) throw new Error("Ingrese banco.");
+        if (!valueFrom("bankManualReferencia")) throw new Error("Ingrese referencia.");
+        if (!valueFrom("bankManualFecha")) throw new Error("Ingrese fecha de pago.");
+        if (amount <= 0) throw new Error("Monto inválido.");
+        await postJSON("/incoming-payments", {
+          origen:"MANUAL",
+          codigo_cliente:valueFrom("bankManualCliente"),
+          nombre_cliente:select?.selectedOptions?.[0]?.dataset?.name || "",
+          banco:valueFrom("bankManualBanco"),
+          numero_referencia:valueFrom("bankManualReferencia"),
+          fecha_pago:valueFrom("bankManualFecha"),
+          documento:valueFrom("bankManualDocumento") || null,
+          monto:amount
+        });
+        closeModal();
+        await loadBankPayments(1);
+      } catch (err) {
+        msg.className = "status error";
+        msg.textContent = err.message;
+      }
+    }
+    function viewBankPaymentDetail() {
+      const row = selectedBankPayment();
+      if (!row) return alert("Seleccione un pago.");
+      $("app").insertAdjacentHTML("beforeend", `
+        <div class="modal-backdrop" id="svcModal">
+          <div class="modal">
+            <div class="modal-head"><h2>Detalle de Pago</h2><button class="secondary" onclick="closeModal()">Cerrar</button></div>
+            <div class="table-wrap"><table><tbody>${Object.keys(row).filter(k => !String(k).toLowerCase().includes("hash")).map(k => `<tr><th>${esc(k)}</th><td>${esc(row[k])}</td></tr>`).join("")}</tbody></table></div>
+          </div>
+        </div>`);
+    }
+    async function reverseSelectedBankPayment() {
+      const row = selectedBankPayment();
+      if (!row) return alert("Seleccione un pago.");
+      const rawId = String(row.id || "");
+      const id = rawId.startsWith("incoming_") ? rawId.replace("incoming_", "") : rawId;
+      const reason = prompt("Motivo de reversa", "WRONG_PAYMENT");
+      if (!reason) return;
+      const comment = prompt("Comentario / soporte de reversa", "");
+      if (!comment) return alert("Comentario requerido.");
+      if (!confirm(`¿Reversar pago ${rawId}? Esta acción elimina el registro de pago.`)) return;
+      try {
+        await postJSON(`/bank-reconciliation/${encodeURIComponent(id)}/reverse`, { reason, comment });
+        await loadBankPayments(1);
+      } catch (err) {
+        alert(err.message);
+      }
+    }
+    function downloadBankPaymentsExcel() {
+      if (!bankRowsWeb.length) return alert("No hay datos para exportar.");
+      const cols = ["id","banco","fecha_pago","codigo_cliente","nombre_cliente","numero_documento","referencia","tipo_aplicacion","monto_pagado","monto_aplicado","saldo","estado"];
+      downloadExcelFile(`bank_reconciliation_${new Date().toISOString().slice(0,10)}.xls`, bankRowsWeb, cols, "Bank Reconciliation - pagos");
+    }
+    function renderPaidInvoicesPane() {
+      $("bankPane").innerHTML = `
+        <div class="finance-filter-row">
+          <label>Año<input id="paidYear" value="${esc($("year")?.value || new Date().getFullYear())}" /></label>
+          <label>Mes<select id="paidMonth"><option value="">Todos</option>${Array.from({length:12},(_,i)=>`<option value="${i+1}">${String(i+1).padStart(2,"0")}</option>`).join("")}</select></label>
+          <label>Desde<input id="paidFrom" type="date" /></label>
+          <label>Hasta<input id="paidTo" type="date" /></label>
+          <label>Cliente<input id="paidCliente" placeholder="Cliente o código" /></label>
+          <button onclick="loadPaidInvoicesReport()">Buscar</button>
+          <button class="secondary" onclick="clearPaidInvoicesReport()">Limpiar</button>
+        </div>
+        <div class="finance-toolbar"><button class="secondary" onclick="downloadPaidInvoicesExcel()">Exportar Excel</button></div>
+        <div id="paidInvoicesKpis" class="grid kpis hidden"></div>
+        <div id="paidInvoicesTable" class="workspace"><div class="status">Configure filtros y presione Buscar.</div></div>`;
+    }
+    let paidInvoiceRows = [];
+    function paidInvoiceParams() {
+      const params = new URLSearchParams({ page:"1", page_size:"1000" });
+      [["paidYear","year"],["paidMonth","month"],["paidFrom","date_from"],["paidTo","date_to"],["paidCliente","cliente"]].forEach(([id,key]) => {
+        const value = valueFrom(id);
+        if (value) params.set(key, value);
+      });
+      return params.toString();
+    }
+    async function loadPaidInvoicesReport() {
+      const table = $("paidInvoicesTable");
+      selectedPaidInvoiceIndexes = new Set();
+      table.innerHTML = '<div class="status">Consultando facturas pagadas...</div>';
+      try {
+        const payload = await getJSON(`/bank-reconciliation/paid-invoices-report?${paidInvoiceParams()}`);
+        paidInvoiceRows = rowsList(payload);
+        const summary = payload.summary || {};
+        const kpis = $("paidInvoicesKpis");
+        kpis.classList.remove("hidden");
+        kpis.innerHTML = [
+          ["Facturas", summary.total_facturas || 0, "Documentos pagados"],
+          ["Clientes", summary.total_clientes || 0, "Clientes únicos"],
+          ["Pagado", money(summary.total_pagado || 0), "Monto pagado"],
+          ["Comisiones", money(summary.total_comision || 0), "Comisiones"]
+        ].map(([label,value,hint]) => `<div class="card"><span>${label}</span><strong>${value}</strong><small>${hint}</small></div>`).join("");
+        renderPaidInvoicesTable();
+      } catch (err) {
+        table.innerHTML = `<div class="status error">${esc(err.message)}</div>`;
+      }
+    }
+    function renderPaidInvoicesTable() {
+      const table = $("paidInvoicesTable");
+      if (!paidInvoiceRows.length) {
+        table.innerHTML = '<div class="status">Sin facturas pagadas para esta consulta.</div>';
+        return;
+      }
+      const cols = ["numero_documento","nombre_cliente","fecha_pago","monto_pagado","comision","banco","referencia","estado_factura","source"];
+      table.innerHTML = `<div class="table-wrap"><table><thead><tr><th class="pick-col"></th>${cols.map(c => `<th>${esc(c.replace(/_/g," "))}</th>`).join("")}</tr></thead><tbody>${paidInvoiceRows.map((row, idx) => {
+        const selected = selectedPaidInvoiceIndexes.has(idx);
+        return `<tr class="${selected ? "service-selected" : ""}" onclick="togglePaidInvoiceRow(${idx})"><td class="pick-col"><input class="row-pick" type="checkbox" ${selected ? "checked" : ""} onclick="event.stopPropagation(); togglePaidInvoiceRow(${idx}, this.checked)" /></td>${cols.map(c => `<td>${esc(["monto_pagado","comision"].includes(c) ? bankFmt(row[c]) : row[c])}</td>`).join("")}</tr>`;
+      }).join("")}</tbody></table></div>`;
+    }
+    function togglePaidInvoiceRow(idx, checked=null) {
+      const next = checked === null ? !selectedPaidInvoiceIndexes.has(idx) : checked;
+      setIndexSelection(selectedPaidInvoiceIndexes, idx, next);
+      renderPaidInvoicesTable();
+    }
+    function clearPaidInvoicesReport() {
+      paidInvoiceRows = [];
+      selectedPaidInvoiceIndexes = new Set();
+      ["paidYear","paidMonth","paidFrom","paidTo","paidCliente"].forEach(id => { if ($(id)) $(id).value = id === "paidYear" ? ($("year")?.value || "") : ""; });
+      $("paidInvoicesKpis")?.classList.add("hidden");
+      if ($("paidInvoicesTable")) $("paidInvoicesTable").innerHTML = '<div class="status">Configure filtros y presione Buscar.</div>';
+    }
+    function downloadPaidInvoicesExcel() {
+      if (!paidInvoiceRows.length) return alert("No hay datos para exportar.");
+      const cols = ["source","payment_id","numero_documento","codigo_cliente","nombre_cliente","banco","fecha_pago","comision","referencia","monto_pagado","tipo_aplicacion","estado_factura","total_factura","saldo_pendiente"];
+      downloadExcelFile(`paid_invoices_${new Date().toISOString().slice(0,10)}.xls`, paidInvoiceRows, cols, "Paid Invoices Report");
+    }
+    function renderBankStatementsPane() {
+      $("bankPane").innerHTML = `
+        <div class="finance-filter-row">
+          <label>Cuenta contable<select id="bankStatementAccount" onfocus="loadBankAccountOptions()" onpointerdown="loadBankAccountOptions()"><option value="">Todas</option></select></label>
+          <label>Moneda<select id="bankStatementCurrency"><option value="">Todas</option><option>CRC</option><option>USD</option></select></label>
+          <label>Periodo<input id="bankStatementPeriod" value="${new Date().toISOString().slice(0,7)}" placeholder="YYYY-MM" /></label>
+          <label>Status<select id="bankStatementStatus"><option value="">Todos</option><option>OPEN</option><option>MATCHED</option><option>CLOSED</option><option>REOPENED</option></select></label>
+          <button onclick="loadBankStatements()">Buscar extractos</button>
+          <button class="secondary" onclick="clearBankStatements()">Limpiar</button>
+        </div>
+        <div class="finance-toolbar">
+          <button id="bankBtnLines" onclick="loadBankStatementLines()" disabled>Ver líneas</button>
+          <button id="bankBtnMatch" class="green" onclick="autoMatchSelectedStatement()" disabled>Matching automático</button>
+          <button id="bankBtnFee" class="brown" onclick="markSelectedBankLineFee()" disabled>Cargo bancario</button>
+          <button id="bankBtnClose" onclick="closeSelectedBankStatement()" disabled>Cerrar conciliación</button>
+          <button class="secondary" onclick="openBankImportCsv()">Importar CSV</button>
+          <button id="bankBtnExportLines" class="secondary" onclick="downloadBankStatementLinesExcel()" disabled>Exportar líneas Excel</button>
+        </div>
+        <div id="bankStatementMsg" class="status hidden"></div>
+        <div id="bankStatementsTable" class="workspace"><div class="status">Presione Buscar extractos para cargar conciliaciones.</div></div>
+        <div id="bankStatementLinesTable" class="workspace hidden"></div>`;
+      syncBankStatementActions();
+    }
+    function bankStatementParams() {
+      const params = new URLSearchParams();
+      const account = valueFrom("bankStatementAccount");
+      const currency = valueFrom("bankStatementCurrency");
+      const period = valueFrom("bankStatementPeriod");
+      const status = valueFrom("bankStatementStatus");
+      if (account) params.set("bank_account_code", account);
+      if (currency) params.set("currency_code", currency);
+      if (period) params.set("period", period);
+      if (status) params.set("status", status);
+      return params.toString();
+    }
+    function showBankStatementMsg(message, isError=false) {
+      const msg = $("bankStatementMsg");
+      if (!msg) return;
+      msg.className = isError ? "status error" : "status";
+      msg.textContent = message;
+    }
+    function clearBankStatementMsg() {
+      const msg = $("bankStatementMsg");
+      if (!msg) return;
+      msg.className = "status hidden";
+      msg.textContent = "";
+    }
+    function syncBankStatementActions() {
+      const hasStatement = !!(selectedBankStatementId || firstFromSet(selectedBankStatementIds));
+      const hasLine = selectedBankLineIndex !== null || firstFromSet(selectedBankLineIndexes) !== null;
+      ["bankBtnLines","bankBtnMatch","bankBtnClose"].forEach(id => { if ($(id)) $(id).disabled = !hasStatement; });
+      if ($("bankBtnFee")) $("bankBtnFee").disabled = !hasLine;
+      if ($("bankBtnExportLines")) $("bankBtnExportLines").disabled = !bankStatementLineRows.length;
+    }
+    async function loadBankStatements() {
+      const msg = $("bankStatementMsg");
+      msg.className = "status";
+      msg.textContent = "Consultando extractos...";
+      selectedBankStatementId = null;
+      selectedBankStatementIds = new Set();
+      bankStatementLineRows = [];
+      selectedBankLineIndex = null;
+      selectedBankLineIndexes = new Set();
+      try {
+        const payload = await getJSON(`/bank-reconciliation/statements?${bankStatementParams()}`);
+        bankStatementRows = rowsList(payload);
+        renderBankStatementsTable();
+        if (!bankStatementRows.length) {
+          clearBankStatementMsg();
+          $("bankStatementLinesTable").classList.add("hidden");
+          $("bankStatementLinesTable").innerHTML = "";
+        } else {
+          clearBankStatementMsg();
+          $("bankStatementLinesTable").classList.remove("hidden");
+          $("bankStatementLinesTable").innerHTML = '<div class="status">Seleccione un extracto y presione Ver líneas.</div>';
+        }
+        syncBankStatementActions();
+      } catch (err) {
+        msg.className = "status error";
+        msg.textContent = err.message;
+        syncBankStatementActions();
+      }
+    }
+    function renderBankStatementsTable() {
+      const table = $("bankStatementsTable");
+      if (!bankStatementRows.length) {
+        table.innerHTML = '<div class="status">Sin extractos para esta consulta. Cambie filtros o importe un CSV.</div>';
+        return;
+      }
+      const cols = ["id","bank_name","bank_account_code","currency_code","statement_period","status","line_count","open_count","statement_total","matched_total","open_total"];
+      table.innerHTML = `<div class="table-wrap"><table><thead><tr><th class="pick-col"></th>${cols.map(c => `<th>${esc(c.replace(/_/g," "))}</th>`).join("")}</tr></thead><tbody>${bankStatementRows.map(row => {
+        const id = Number(row.id);
+        const selected = selectedBankStatementIds.has(id);
+        return `<tr class="${selected ? "service-selected" : ""}" onclick="toggleBankStatementRow(${id})"><td class="pick-col"><input class="row-pick" type="checkbox" ${selected ? "checked" : ""} onclick="event.stopPropagation(); toggleBankStatementRow(${id}, this.checked)" /></td>${cols.map(c => `<td>${esc(["statement_total","matched_total","open_total"].includes(c) ? bankFmt(row[c]) : row[c])}</td>`).join("")}</tr>`;
+      }).join("")}</tbody></table></div>`;
+    }
+    function toggleBankStatementRow(id, checked=null) {
+      const next = checked === null ? !selectedBankStatementIds.has(id) : checked;
+      selectedBankStatementId = setIndexSelection(selectedBankStatementIds, id, next);
+      clearBankStatementMsg();
+      renderBankStatementsTable();
+      syncBankStatementActions();
+    }
+    async function loadBankStatementLines() {
+      if (!selectedBankStatementId) selectedBankStatementId = firstFromSet(selectedBankStatementIds);
+      if (!selectedBankStatementId) {
+        showBankStatementMsg("Seleccione un extracto de la tabla antes de ver líneas.", true);
+        syncBankStatementActions();
+        return;
+      }
+      const table = $("bankStatementLinesTable");
+      table.classList.remove("hidden");
+      table.innerHTML = '<div class="status">Consultando líneas...</div>';
+      selectedBankLineIndex = null;
+      selectedBankLineIndexes = new Set();
+      try {
+        const payload = await getJSON(`/bank-reconciliation/statements/${encodeURIComponent(selectedBankStatementId)}/lines`);
+        bankStatementLineRows = rowsList(payload);
+        renderBankStatementLinesTable();
+        clearBankStatementMsg();
+        syncBankStatementActions();
+      } catch (err) {
+        table.innerHTML = `<div class="status error">${esc(err.message)}</div>`;
+        showBankStatementMsg(err.message, true);
+        syncBankStatementActions();
+      }
+    }
+    function renderBankStatementLinesTable() {
+      const table = $("bankStatementLinesTable");
+      if (!bankStatementLineRows.length) {
+        table.innerHTML = '<div class="status">Sin líneas para este extracto.</div>';
+        return;
+      }
+      const cols = ["id","line_date","reference","description","debit","credit","amount","match_status","matched_source","matched_id","difference"];
+      table.innerHTML = `<div class="table-wrap"><table><thead><tr><th class="pick-col"></th>${cols.map(c => `<th>${esc(c.replace(/_/g," "))}</th>`).join("")}</tr></thead><tbody>${bankStatementLineRows.map((row,idx) => {
+        const selected = selectedBankLineIndexes.has(idx);
+        return `<tr class="${selected ? "service-selected" : ""}" onclick="toggleBankStatementLineRow(${idx})"><td class="pick-col"><input class="row-pick" type="checkbox" ${selected ? "checked" : ""} onclick="event.stopPropagation(); toggleBankStatementLineRow(${idx}, this.checked)" /></td>${cols.map(c => `<td>${esc(["debit","credit","amount","difference"].includes(c) ? bankFmt(row[c]) : row[c])}</td>`).join("")}</tr>`;
+      }).join("")}</tbody></table></div>`;
+    }
+    function toggleBankStatementLineRow(idx, checked=null) {
+      const next = checked === null ? !selectedBankLineIndexes.has(idx) : checked;
+      selectedBankLineIndex = setIndexSelection(selectedBankLineIndexes, idx, next);
+      renderBankStatementLinesTable();
+      syncBankStatementActions();
+    }
+    async function autoMatchSelectedStatement() {
+      if (!selectedBankStatementId) selectedBankStatementId = firstFromSet(selectedBankStatementIds);
+      if (!selectedBankStatementId) {
+        showBankStatementMsg("Seleccione un extracto de la tabla antes de ejecutar matching automático.", true);
+        syncBankStatementActions();
+        return;
+      }
+      const tolerance = prompt("Tolerancia de matching", "1.00");
+      if (tolerance === null) return;
+      try {
+        const statementId = selectedBankStatementId;
+        const result = await postJSON(`/bank-reconciliation/statements/${encodeURIComponent(selectedBankStatementId)}/auto-match`, { tolerance:Number(tolerance || 0) });
+        await loadBankStatements();
+        selectedBankStatementId = statementId;
+        selectedBankStatementIds = new Set([statementId]);
+        renderBankStatementsTable();
+        await loadBankStatementLines();
+        showBankStatementMsg(`Matching terminado. Matcheadas: ${result.matched || 0}. Diferencias: ${result.differences || 0}.`, false);
+        syncBankStatementActions();
+      } catch (err) {
+        showBankStatementMsg(err.message, true);
+        syncBankStatementActions();
+      }
+    }
+    async function markSelectedBankLineFee() {
+      if (selectedBankLineIndex === null) selectedBankLineIndex = firstFromSet(selectedBankLineIndexes);
+      const row = selectedBankLineIndex === null ? null : bankStatementLineRows[selectedBankLineIndex];
+      if (!row) {
+        showBankStatementMsg("Seleccione una línea del extracto antes de marcar cargo bancario.", true);
+        syncBankStatementActions();
+        return;
+      }
+      const note = prompt("Nota del cargo bancario", "Cargo bancario identificado");
+      if (note === null) return;
+      try {
+        await postJSON(`/bank-reconciliation/lines/${encodeURIComponent(row.id)}/bank-fee`, { note });
+        await loadBankStatementLines();
+        showBankStatementMsg("Cargo bancario marcado correctamente.", false);
+      } catch (err) {
+        showBankStatementMsg(err.message, true);
+        syncBankStatementActions();
+      }
+    }
+    async function closeSelectedBankStatement() {
+      if (!selectedBankStatementId) selectedBankStatementId = firstFromSet(selectedBankStatementIds);
+      if (!selectedBankStatementId) {
+        showBankStatementMsg("Seleccione un extracto de la tabla antes de cerrar conciliación.", true);
+        syncBankStatementActions();
+        return;
+      }
+      const note = prompt("Nota de cierre", "");
+      if (note === null) return;
+      const force = confirm("Si quedan partidas abiertas, ¿forzar cierre documentado?");
+      try {
+        await postJSON(`/bank-reconciliation/statements/${encodeURIComponent(selectedBankStatementId)}/close`, { note, force_close:force });
+        await loadBankStatements();
+        $("bankStatementLinesTable").classList.add("hidden");
+        $("bankStatementLinesTable").innerHTML = "";
+        showBankStatementMsg("Conciliación cerrada correctamente.", false);
+        syncBankStatementActions();
+      } catch (err) {
+        showBankStatementMsg(err.message, true);
+        syncBankStatementActions();
+      }
+    }
+    function clearBankStatements() {
+      bankStatementRows = [];
+      bankStatementLineRows = [];
+      selectedBankStatementId = null;
+      selectedBankStatementIds = new Set();
+      selectedBankLineIndex = null;
+      selectedBankLineIndexes = new Set();
+      ["bankStatementAccount","bankStatementCurrency","bankStatementStatus"].forEach(id => { if ($(id)) $(id).value = ""; });
+      if ($("bankStatementPeriod")) $("bankStatementPeriod").value = new Date().toISOString().slice(0,7);
+      if ($("bankStatementsTable")) $("bankStatementsTable").innerHTML = '<div class="status">Presione Buscar extractos para cargar conciliaciones.</div>';
+      if ($("bankStatementLinesTable")) {
+        $("bankStatementLinesTable").classList.add("hidden");
+        $("bankStatementLinesTable").innerHTML = "";
+      }
+      if ($("bankStatementMsg")) $("bankStatementMsg").className = "status hidden";
+      syncBankStatementActions();
+    }
+    function downloadBankStatementLinesExcel() {
+      if (!bankStatementLineRows.length) return alert("No hay líneas para exportar.");
+      const cols = ["id","line_date","reference","description","debit","credit","amount","currency_code","match_status","matched_source","matched_id","matched_entry_id","difference"];
+      downloadExcelFile(`bank_statement_lines_${selectedBankStatementId || "all"}_${new Date().toISOString().slice(0,10)}.xls`, bankStatementLineRows, cols, "Bank Statement Lines");
+    }
+    function parseBankCsv(text) {
+      const lines = text.split(/\\r?\\n/).filter(line => line.trim());
+      if (lines.length < 2) return [];
+      const split = line => line.split(",").map(cell => cell.trim().replace(/^"|"$/g, ""));
+      const headers = split(lines[0]).map(h => h.toLowerCase());
+      return lines.slice(1).map(line => {
+        const values = split(line);
+        const row = Object.fromEntries(headers.map((h,i) => [h, values[i] || ""]));
+        const pick = (...names) => names.map(n => row[n]).find(v => v !== undefined && v !== "");
+        return {
+          line_date:String(pick("fecha","date","line_date","fecha pago","fecha_pago") || "").slice(0,10),
+          description:pick("descripcion","description","detalle","concepto") || "",
+          reference:pick("referencia","reference","comprobante","numero","documento") || "",
+          debit:Number(String(pick("debito","debit","retiro","withdrawal") || 0).replace(/,/g,"")) || 0,
+          credit:Number(String(pick("credito","credit","deposito","deposit") || 0).replace(/,/g,"")) || 0,
+          amount:Number(String(pick("monto","amount","importe") || 0).replace(/,/g,"")) || 0,
+          currency_code:valueFrom("bankStatementCurrency") || "CRC"
+        };
+      }).filter(row => row.line_date);
+    }
+    function openBankImportCsv() {
+      $("app").insertAdjacentHTML("beforeend", `
+        <div class="modal-backdrop" id="svcModal">
+          <div class="modal small">
+            <div class="modal-head"><h2>Importar extracto CSV</h2><button class="secondary" onclick="closeModal()">Cerrar</button></div>
+            <div class="form-grid">
+              <label>Banco<input id="bankImportName" placeholder="Banco" /></label>
+              <label>Periodo<input id="bankImportPeriod" value="${esc(valueFrom("bankStatementPeriod") || new Date().toISOString().slice(0,7))}" /></label>
+              <label>Moneda<select id="bankImportCurrency"><option${valueFrom("bankStatementCurrency") === "CRC" ? " selected" : ""}>CRC</option><option${valueFrom("bankStatementCurrency") === "USD" ? " selected" : ""}>USD</option></select></label>
+              <label class="wide">CSV<input id="bankImportFile" type="file" accept=".csv,text/csv" /></label>
+            </div>
+            <div class="md-actions"><button onclick="submitBankImportCsv()">Importar</button></div>
+            <div id="bankImportMsg" class="status hidden"></div>
+          </div>
+        </div>`);
+    }
+    async function submitBankImportCsv() {
+      const msg = $("bankImportMsg");
+      msg.className = "status";
+      msg.textContent = "Importando...";
+      try {
+        const file = $("bankImportFile")?.files?.[0];
+        if (!file) throw new Error("Seleccione un CSV.");
+        const text = await file.text();
+        const rows = parseBankCsv(text);
+        if (!rows.length) throw new Error("CSV sin líneas válidas.");
+        const account = $("bankStatementAccount")?.selectedOptions?.[0];
+        const result = await postJSON("/bank-reconciliation/statements/import", {
+          bank_name:valueFrom("bankImportName") || account?.dataset?.name || "Banco",
+          bank_account_code:valueFrom("bankStatementAccount") || null,
+          bank_account_name:account?.dataset?.name || null,
+          currency_code:valueFrom("bankImportCurrency") || "CRC",
+          statement_period:valueFrom("bankImportPeriod"),
+          statement_date:new Date().toISOString().slice(0,10),
+          source_filename:file.name,
+          rows
+        });
+        closeModal();
+        alert(`Extracto importado. Líneas: ${result.inserted || 0}. Omitidas: ${result.skipped || 0}.`);
+        await loadBankStatements();
+      } catch (err) {
+        msg.className = "status error";
+        msg.textContent = err.message;
+      }
+    }
+    function renderDisputesWeb(target=orderCashWorkspace()) {
+      target.innerHTML = `
+        <div class="panel-head">
+          <h2>Disputes</h2>
+          <span class="muted">Gestión de disputas de facturación y cobro</span>
+        </div>
+        <div class="finance-filter-row compact">
+          <label>Cliente<select id="disputeCliente" onpointerdown="loadFinanceClientCombos()" onfocus="loadFinanceClientCombos()"><option value="">Todos</option></select></label>
+          <label>Status<select id="disputeStatus"><option value="">Todos</option>${DISPUTE_STATUSES.map(s => `<option>${esc(s)}</option>`).join("")}</select></label>
+          <button onclick="loadDisputes()">Buscar</button>
+          <button class="secondary" onclick="clearDisputes()">Limpiar</button>
+        </div>
+        <div class="finance-toolbar">
+          <button onclick="openSelectedDisputeManagement()">Gestionar Disputa</button>
+          <button class="secondary" onclick="openSelectedDisputeHistory()">Ver historial</button>
+          <button class="secondary" onclick="downloadDisputesExcel()">Exportar Excel</button>
+        </div>
+        <div id="disputesKpis" class="grid kpis hidden"></div>
+        <div id="disputesMsg" class="status hidden"></div>
+        <div id="disputesTable" class="workspace"><div class="status">Seleccione filtros y presione Buscar para consultar Disputes.</div></div>`;
+    }
+    function disputeParams() {
+      const params = new URLSearchParams({ page:"1", page_size:"100" });
+      const cliente = valueFrom("disputeCliente");
+      if (cliente) params.set("cliente", cliente);
+      return params.toString();
+    }
+    async function loadDisputes() {
+      const msg = $("disputesMsg");
+      const table = $("disputesTable");
+      selectedDisputeIndex = null;
+      selectedDisputeIndexes = new Set();
+      disputeHistoryRows = [];
+      msg.className = "status";
+      msg.textContent = "Consultando Disputes...";
+      try {
+        await loadFinanceClientCombos();
+        const [payload, kpis] = await Promise.all([
+          getJSON(`/dispute-management?${disputeParams()}`),
+          getJSON("/dispute-management/kpis/summary").catch(() => null)
+        ]);
+        const status = valueFrom("disputeStatus");
+        disputeRows = rowsList(payload).filter(row => !status || String(row.status || "New") === status);
+        msg.classList.add("hidden");
+        renderDisputesKpis(kpis);
+        renderDisputesTable();
+      } catch (err) {
+        disputeRows = [];
+        table.innerHTML = "";
+        msg.className = "status error";
+        msg.textContent = err.message;
+      }
+    }
+    function clearDisputes() {
+      ["disputeCliente","disputeStatus"].forEach(id => { if ($(id)) $(id).value = ""; });
+      disputeRows = [];
+      disputeHistoryRows = [];
+      selectedDisputeIndex = null;
+      selectedDisputeIndexes = new Set();
+      $("disputesKpis")?.classList.add("hidden");
+      $("disputesMsg")?.classList.add("hidden");
+      if ($("disputesTable")) $("disputesTable").innerHTML = '<div class="status">Seleccione filtros y presione Buscar para consultar Disputes.</div>';
+    }
+    function renderDisputesKpis(kpis) {
+      const host = $("disputesKpis");
+      if (!host) return;
+      const totals = kpis || {};
+      host.classList.remove("hidden");
+      host.innerHTML = [
+        ["ADO", totals.ADO ?? 0, "Días promedio abiertos"],
+        ["DDO", totals.DDO ?? 0, "Días promedio resueltos"],
+        ["Incoming", totals.IncomingVolume ?? 0, "Disputas del mes"],
+        ["Disputed", Number(totals.DisputedAmount || 0).toLocaleString("en-US", { minimumFractionDigits:2, maximumFractionDigits:2 }), "Monto disputado abierto"]
+      ].map(([label,value,hint]) => `<div class="card kpi"><span>${esc(label)}</span><strong>${esc(value)}</strong><small>${esc(hint)}</small></div>`).join("");
+    }
+    function disputeRow() {
+      if (selectedDisputeIndex === null) selectedDisputeIndex = firstFromSet(selectedDisputeIndexes);
+      return selectedDisputeIndex === null ? null : disputeRows[selectedDisputeIndex];
+    }
+    function requireDisputeRow() {
+      const row = disputeRow();
+      if (!row) alert("Seleccione primero una disputa.");
+      return row;
+    }
+    function disputeStatusBadge(status) {
+      const text = status || "New";
+      const cls = text === "Resolved" ? "closed" : (text === "Written Off" ? "cancel" : "open");
+      return `<span class="badge ${cls}">${esc(text)}</span>`;
+    }
+    function renderDisputesTable() {
+      const table = $("disputesTable");
+      const cols = ["dispute_case","numero_documento","codigo_cliente","nombre_cliente","fecha_factura","fecha_vencimiento","monto","status","motivo","comentario","buque_contenedor","operacion","periodo_operacion","descripcion_servicio","created_at"];
+      if (!disputeRows.length) {
+        table.innerHTML = '<div class="status">Sin disputas para los filtros seleccionados.</div>';
+        return;
+      }
+      table.innerHTML = `
+        <div class="table-wrap"><table><thead><tr><th class="pick-col"></th>${cols.map(c => `<th>${esc(c.replace(/_/g," "))}</th>`).join("")}</tr></thead>
+        <tbody>${disputeRows.map((row, idx) => {
+          const selected = selectedDisputeIndexes.has(idx);
+          return `<tr class="${selected ? "service-selected" : ""}" onclick="toggleDisputeRow(${idx})">
+            <td class="pick-col"><input class="row-pick" type="checkbox" ${selected ? "checked" : ""} onclick="event.stopPropagation(); toggleDisputeRow(${idx}, this.checked)" /></td>
+            ${cols.map(c => `<td>${c === "status" ? disputeStatusBadge(row[c]) : esc(c === "monto" ? Number(row[c] || 0).toLocaleString("en-US", { minimumFractionDigits:2, maximumFractionDigits:2 }) : row[c])}</td>`).join("")}
+          </tr>`;
+        }).join("")}</tbody></table></div>`;
+    }
+    function toggleDisputeRow(idx, checked=null) {
+      const next = checked === null ? !selectedDisputeIndexes.has(idx) : checked;
+      selectedDisputeIndex = setIndexSelection(selectedDisputeIndexes, idx, next);
+      renderDisputesTable();
+    }
+    async function ensureDisputeManagement(row) {
+      const info = await postJSON(`/dispute-management/from-dispute/${encodeURIComponent(row.dispute_id)}`, {});
+      row.management_id = info.management_id;
+      row.status = info.status || row.status || "New";
+      return info;
+    }
+    async function loadDisputeHistory(managementId) {
+      disputeHistoryRows = rowsList(await getJSON(`/dispute-management/${encodeURIComponent(managementId)}/history`));
+      return disputeHistoryRows;
+    }
+    function renderDisputeHistoryRows(rows) {
+      if (!rows.length) return '<div class="status">Sin historial registrado.</div>';
+      return `<div class="table-wrap"><table><thead><tr><th>Fecha</th><th>Usuario</th><th>Comentario</th></tr></thead><tbody>${rows.map(row => `<tr><td>${esc(row.created_at)}</td><td>${esc(row.created_by)}</td><td>${esc(row.comentario)}</td></tr>`).join("")}</tbody></table></div>`;
+    }
+    async function openSelectedDisputeManagement() {
+      const row = requireDisputeRow();
+      if (!row) return;
+      try {
+        const info = await ensureDisputeManagement(row);
+        const history = await loadDisputeHistory(info.management_id);
+        document.body.insertAdjacentHTML("beforeend", `
+          <div class="modal-backdrop" id="svcModal">
+            <div class="modal">
+              <div class="modal-head"><h2>Dispute Management</h2><button class="secondary" onclick="closeModal()">Cerrar</button></div>
+              <div class="status">Dispute ${esc(row.dispute_case || row.dispute_id)} · Management ID ${esc(info.management_id)} · ${esc(row.nombre_cliente || "")} · ${Number(row.monto || 0).toLocaleString("en-US", { minimumFractionDigits:2, maximumFractionDigits:2 })}</div>
+              <div class="form-grid">
+                <label>Status<select id="disputeMgmtStatus">${DISPUTE_STATUSES.map(s => `<option${s === (info.status || row.status) ? " selected" : ""}>${esc(s)}</option>`).join("")}</select></label>
+                <label class="wide">Nuevo comentario<textarea id="disputeMgmtComment"></textarea></label>
+              </div>
+              <h3>Historial</h3>
+              <div id="disputeHistoryTable">${renderDisputeHistoryRows(history)}</div>
+              <div class="md-actions"><button class="green" onclick="saveDisputeStatus(${Number(info.management_id)})">Guardar cambios</button><button class="secondary" onclick="closeModal()">Cancelar</button></div>
+              <div id="disputeMgmtMsg" class="status hidden"></div>
+            </div>
+          </div>`);
+      } catch (err) {
+        alert(err.message);
+      }
+    }
+    async function saveDisputeStatus(managementId) {
+      const msg = $("disputeMgmtMsg");
+      msg.className = "status";
+      msg.textContent = "Guardando status...";
+      try {
+        await postJSON(`/dispute-management/${encodeURIComponent(managementId)}/status`, {
+          status:valueFrom("disputeMgmtStatus"),
+          comentario:valueFrom("disputeMgmtComment"),
+          user:session?.usuario || "SOM-WEB"
+        });
+        closeModal();
+        await loadDisputes();
+      } catch (err) {
+        msg.className = "status error";
+        msg.textContent = err.message;
+      }
+    }
+    async function openSelectedDisputeHistory() {
+      const row = requireDisputeRow();
+      if (!row) return;
+      try {
+        const info = await ensureDisputeManagement(row);
+        const history = await loadDisputeHistory(info.management_id);
+        document.body.insertAdjacentHTML("beforeend", `
+          <div class="modal-backdrop" id="svcModal">
+            <div class="modal">
+              <div class="modal-head"><h2>Historial de disputa</h2><button class="secondary" onclick="closeModal()">Cerrar</button></div>
+              <div class="status">Dispute ${esc(row.dispute_case || row.dispute_id)} · ${esc(row.numero_documento || "")}</div>
+              ${renderDisputeHistoryRows(history)}
+            </div>
+          </div>`);
+      } catch (err) {
+        alert(err.message);
+      }
+    }
+    function downloadDisputesExcel() {
+      if (!disputeRows.length) return alert("No hay datos para exportar.");
+      const cols = ["management_id","dispute_id","dispute_case","numero_documento","codigo_cliente","nombre_cliente","fecha_factura","fecha_vencimiento","monto","status","motivo","comentario","buque_contenedor","operacion","periodo_operacion","descripcion_servicio","ultimo_comentario","created_at"];
+      downloadExcelFile(`disputes_${new Date().toISOString().slice(0,10)}.xls`, disputeRows, cols, "Disputes - detalle");
+    }
+    async function ensureFinanceClientes() {
+      if (financeClientes.length) return financeClientes;
+      const payload = await getJSON("/clientes?page=1&page_size=500").catch(() => ({ data:[] }));
+      financeClienteRows = rowsList(payload);
+      financeClientes = financeClienteRows.map(c => c.nombrecomercial || c.NombreComercial || c.nombrejuridico || c.NombreJuridico || c.codigo || c.Codigo).filter(Boolean);
+      return financeClientes;
+    }
+    function financeClientName(row) {
+      return row?.nombrecomercial || row?.NombreComercial || row?.nombrejuridico || row?.NombreJuridico || row?.cliente || "";
+    }
+    function financeClientId(row) {
+      return row?.codigo || row?.Codigo || row?.codigo_cliente || "";
+    }
+    function financeClientCode(name) {
+      const row = financeClienteRows.find(c => [c.nombrecomercial, c.NombreComercial, c.nombrejuridico, c.NombreJuridico, c.codigo, c.Codigo].filter(Boolean).includes(name));
+      return row?.codigo || row?.Codigo || "";
+    }
+    async function loadFinanceClientCombos() {
+      await ensureFinanceClientes();
+      ["billableCliente","billingCliente"].forEach(id => {
+        const el = $(id);
+        if (el && el.tagName === "SELECT" && el.options.length <= 1) {
+          el.innerHTML = '<option value="">Todos</option>' + financeClienteRows.map(row => {
+            const name = financeClientName(row);
+            return `<option value="${esc(name)}">${esc(financeClientId(row))} | ${esc(name)}</option>`;
+          }).join("");
+          if (!financeClienteRows.length) el.innerHTML = '<option value="">Sin clientes disponibles</option>';
+        }
+      });
+      const credit = $("creditCliente");
+      if (credit && credit.options.length <= 1) {
+        credit.innerHTML = '<option value="">Todos</option>' + financeClienteRows.map(row => {
+          const code = financeClientId(row);
+          const name = financeClientName(row);
+          return `<option value="${esc(code)}">${esc(code)} | ${esc(name)}</option>`;
+        }).join("");
+        if (!financeClienteRows.length) credit.innerHTML = '<option value="">Sin clientes disponibles</option>';
+      }
+      const dispute = $("disputeCliente");
+      if (dispute && dispute.options.length <= 1) {
+        dispute.innerHTML = '<option value="">Todos</option>' + financeClienteRows.map(row => {
+          const code = financeClientId(row);
+          const name = financeClientName(row);
+          return `<option value="${esc(code)}">${esc(code)} | ${esc(name)}</option>`;
+        }).join("");
+        if (!financeClienteRows.length) dispute.innerHTML = '<option value="">Sin clientes disponibles</option>';
+      }
+    }
+    async function renderBillingWeb(target=orderCashWorkspace()) {
+      target.innerHTML = `
+          <div class="panel-head">
+            <h2>Invoicing and Billing</h2>
+            <span class="muted">Facturación desde servicios y documentos emitidos</span>
+          </div>
+          <div class="subtabs">
+            <button id="billablesTab" onclick="switchBillingPane('billables')">Billing</button>
+            <button id="invoicesTab" onclick="switchBillingPane('invoices')">Invoicing</button>
+          </div>
+          <div id="billingPaneHost" class="billing-pane"></div>
+        `;
+      renderBillingPane();
+      loadFinanceClientCombos().catch(() => null);
+    }
+    function switchBillingPane(pane) {
+      billingPane = pane;
+      renderBillingPane();
+      loadFinanceClientCombos().catch(() => null);
+    }
+    function renderBillingPane() {
+      const host = $("billingPaneHost");
+      if (!host) return;
+      $("billablesTab")?.classList.toggle("active", billingPane === "billables");
+      $("invoicesTab")?.classList.toggle("active", billingPane === "invoices");
+      if (billingPane === "billables") {
+        host.innerHTML = `
+            <section class="billing-pane">
+              <div class="section-head">
+                <h3>Billing</h3>
+                <span id="billableCount" class="muted">Servicios pendientes</span>
+              </div>
+              <div class="finance-filter-row compact">
+                <label>Cliente<select id="billableCliente"><option value="">Seleccione cliente</option></select></label>
+                <button onclick="loadBillables()">Buscar</button>
+                <button class="secondary" onclick="clearBillableFilters()">Limpiar</button>
+              </div>
+              <div class="finance-toolbar">
+                <button onclick="openManualInvoiceForm()">Factura Manual</button>
+                <button class="secondary" onclick="openXmlInvoiceForm()">Factura XML</button>
+                <button class="gray" onclick="openAdvanceInvoiceForm()">Facturación Anticipada</button>
+                <button class="brown" onclick="openCreditNoteForm()">Nota Crédito</button>
+                <button class="secondary" onclick="viewSelectedBillable()">Ver servicio</button>
+              </div>
+              <div id="billableMsg" class="status hidden"></div>
+              <div id="billableTable" class="workspace"></div>
+            </section>`;
+        $("billableTable").innerHTML = billableRows.length ? "" : '<div class="status">Ingrese cliente y presione Buscar.</div>';
+        if (billableRows.length) renderBillableTable();
+        return;
+      }
+      host.innerHTML = `
+            <section class="billing-pane">
+              <div class="section-head">
+                <h3>Invoicing</h3>
+                <span id="billingCount" class="muted">Facturas emitidas</span>
+              </div>
+              <div class="finance-filter-row">
+                <label>Cliente<select id="billingCliente"><option value="">Todos</option></select></label>
+                <label>Desde<input id="billingDesde" type="date" /></label>
+                <label>Hasta<input id="billingHasta" type="date" /></label>
+                <label>Tipo factura<select id="billingTipoFactura"><option value="">Todos</option><option>MANUAL</option><option>ELECTRONICA</option></select></label>
+                <label>Documento<select id="billingTipoDocumento"><option value="">Todos</option><option>FACTURA</option><option>NOTA_CREDITO</option></select></label>
+                <button onclick="loadBillingRows()">Buscar</button>
+                <button class="secondary" onclick="clearBillingFilters()">Limpiar</button>
+              </div>
+              <div class="finance-toolbar">
+                <button onclick="viewSelectedInvoice()">Ver Factura</button>
+                <button class="gray" onclick="openBillingEditForm()">Editar</button>
+                <button class="brown" onclick="deleteSelectedInvoice()">Eliminar / anular</button>
+                <button class="secondary" onclick="downloadBillingExcel()">Exportar Excel</button>
+              </div>
+              <div id="billingMsg" class="status hidden"></div>
+              <div id="billingTable" class="workspace"></div>
+            </section>`;
+      $("billingTable").innerHTML = billingRows.length ? "" : '<div class="status">Configure filtros y presione Buscar.</div>';
+      if (billingRows.length) renderBillingTable();
+    }
+    function clearBillableFilters() {
+      if ($("billableCliente")) $("billableCliente").value = "";
+      billableRows = [];
+      selectedBillableIndex = null;
+      selectedBillableIndexes = new Set();
+      if ($("billableCount")) $("billableCount").textContent = "Servicios finalizados pendientes de factura";
+      if ($("billableMsg")) $("billableMsg").classList.add("hidden");
+      if ($("billableTable")) $("billableTable").innerHTML = '<div class="status">Ingrese cliente y presione Buscar.</div>';
+    }
+    async function loadBillables() {
+      selectedBillableIndex = null;
+      selectedBillableIndexes = new Set();
+      await loadFinanceClientCombos();
+      const cliente = valueFrom("billableCliente");
+      const msg = $("billableMsg");
+      const table = $("billableTable");
+      if (!cliente) {
+        billableRows = [];
+        $("billableCount").textContent = "Seleccione un cliente";
+        table.innerHTML = '<div class="status">Seleccione cliente y presione Buscar.</div>';
+        msg.classList.add("hidden");
+        return;
+      }
+      msg.className = "status";
+      msg.textContent = "Consultando servicios facturables...";
+      try {
+        const payload = await getJSON(`/invoicing/facturables?cliente=${encodeURIComponent(cliente)}`);
+        billableRows = rowsList(payload);
+        $("billableCount").textContent = `${billableRows.length} servicios listos para facturar`;
+        msg.classList.add("hidden");
+        renderBillableTable();
+      } catch (err) {
+        msg.className = "status error";
+        msg.textContent = err.message;
+      }
+    }
+    function billableRow() {
+      if (selectedBillableIndex === null) selectedBillableIndex = firstFromSet(selectedBillableIndexes);
+      return selectedBillableIndex === null ? null : billableRows[selectedBillableIndex];
+    }
+    function toggleBillableRow(idx, checked=null) {
+      const next = checked === null ? !selectedBillableIndexes.has(idx) : checked;
+      selectedBillableIndex = setIndexSelection(selectedBillableIndexes, idx, next);
+      renderBillableTable();
+    }
+    function requireBillable() {
+      const row = billableRow();
+      if (!row) alert("Seleccione primero un servicio facturable.");
+      return row;
+    }
+    function renderBillableTable() {
+      const cols = ["consec","tipo","buque_contenedor","num_informe","detalle","cliente","pais","puerto","operacion","fecha_inicio","fecha_fin","demoras","duracion"];
+      if (!billableRows.length) {
+        $("billableTable").innerHTML = '<div class="status">Sin servicios pendientes por facturar para este cliente.</div>';
+        return;
+      }
+      $("billableTable").innerHTML = `<div class="table-wrap"><table><thead><tr><th class="pick-col"></th>${cols.map(c => `<th>${esc(c)}</th>`).join("")}</tr></thead><tbody>${billableRows.map((row, idx) => {
+        const selected = selectedBillableIndexes.has(idx);
+        return `<tr class="${selected ? "service-selected" : ""}" onclick="toggleBillableRow(${idx})"><td class="pick-col"><input class="row-pick" type="checkbox" ${selected ? "checked" : ""} onclick="event.stopPropagation(); toggleBillableRow(${idx}, this.checked)" /></td>${cols.map(c => `<td>${esc(row[c])}</td>`).join("")}</tr>`;
+      }).join("")}</tbody></table></div>`;
+    }
+    async function viewSelectedBillable() {
+      const row = requireBillable();
+      if (!row) return;
+      const full = await getJSON(`/servicios/${encodeURIComponent(row.consec)}`).catch(() => row);
+      document.body.insertAdjacentHTML("beforeend", `
+        <div class="modal-backdrop" id="svcModal">
+          <div class="modal">
+            <div class="modal-head"><h2>Servicio ${esc(full.consec)}</h2><button class="secondary" onclick="closeModal()">Cerrar</button></div>
+            <div class="table-wrap"><table><tbody>${Object.keys(full).filter(k => !String(k).toLowerCase().includes("hash")).map(k => `<tr><th>${esc(k)}</th><td>${esc(full[k])}</td></tr>`).join("")}</tbody></table></div>
+          </div>
+        </div>`);
+    }
+    function defaultInvoiceDescription(row) {
+      return [row?.operacion, row?.detalle].filter(Boolean).join(" - ");
+    }
+    function billablePlace(row) {
+      return [row?.puerto, row?.pais].filter(Boolean).join(", ");
+    }
+    async function invoiceTerms(cliente) {
+      try {
+        const data = await getJSON(`/factura/termino-pago?nombre_cliente=${encodeURIComponent(cliente)}`);
+        return data.termino_pago ?? 0;
+      } catch {
+        return 0;
+      }
+    }
+    async function openManualInvoiceForm() {
+      const row = requireBillable();
+      if (!row) return;
+      const terms = await invoiceTerms(row.cliente);
+      const today = new Date().toISOString().slice(0,10);
+      document.body.insertAdjacentHTML("beforeend", `
+        <div class="modal-backdrop" id="svcModal">
+          <div class="modal small">
+            <div class="modal-head"><h2>Factura Manual</h2><button class="secondary" onclick="closeModal()">Cerrar</button></div>
+            <div class="form-grid">
+              <label>Servicio<input value="${esc(row.consec)}" readonly /></label>
+              <label>Fecha emisión<input id="inv_fecha" type="date" value="${today}" /></label>
+              <label>Moneda<select id="inv_moneda"><option>USD</option><option>CRC</option></select></label>
+              <label>Término pago<input id="inv_termino" type="number" value="${esc(terms)}" readonly /></label>
+              <label>Total<input id="inv_total" type="number" step="0.01" value="${esc(row.valor_factura || "")}" /></label>
+              <label class="wide">Place<input id="inv_place" value="${esc(billablePlace(row))}" placeholder="Lugar de emisión / dirección para la factura" /></label>
+              <label class="wide">Descripción<textarea id="inv_desc">${esc(defaultInvoiceDescription(row))}</textarea></label>
+            </div>
+            <div class="md-actions"><button class="green" onclick="saveManualInvoice()">Facturar</button><button class="secondary" onclick="closeModal()">Cancelar</button></div>
+            <div id="invMsg" class="status hidden"></div>
+          </div>
+        </div>`);
+    }
+    async function saveManualInvoice() {
+      const row = requireBillable();
+      const msg = $("invMsg");
+      msg.className = "status";
+      msg.textContent = "Creando factura...";
+      try {
+        const payload = {
+          servicio_id:Number(row.consec),
+          descripcion:valueFrom("inv_desc"),
+          fecha_factura:valueFrom("inv_fecha"),
+          moneda:valueFrom("inv_moneda") || "USD",
+          termino_pago:Number(valueFrom("inv_termino") || 0),
+          place:valueFrom("inv_place"),
+          total:Number(valueFrom("inv_total") || 0)
+        };
+        if (!payload.total || payload.total <= 0) throw new Error("Total requerido.");
+        const data = await postJSON("/factura/manual", payload);
+        await postJSON("/collections/sync-from-invoicing", {}).catch(() => null);
+        closeModal();
+        await loadBillables();
+        await loadBillingRows();
+        alert(`Factura manual creada: ${data.numero_factura || data.numero_documento}`);
+      } catch (err) {
+        msg.className = "status error";
+        msg.textContent = err.message;
+      }
+    }
+    function openXmlInvoiceForm() {
+      const row = requireBillable();
+      if (!row) return;
+      document.body.insertAdjacentHTML("beforeend", `
+        <div class="modal-backdrop" id="svcModal">
+          <div class="modal small">
+            <div class="modal-head"><h2>Factura XML</h2><button class="secondary" onclick="closeModal()">Cerrar</button></div>
+            <div class="form-grid">
+              <label class="wide">XML<input id="xmlFile" type="file" accept=".xml,application/xml,text/xml" /></label>
+            </div>
+            <div class="md-actions"><button class="green" onclick="saveXmlInvoice()">Registrar XML</button><button class="secondary" onclick="closeModal()">Cancelar</button></div>
+            <div id="xmlMsg" class="status hidden"></div>
+          </div>
+        </div>`);
+    }
+    async function saveXmlInvoice() {
+      const row = requireBillable();
+      const file = $("xmlFile")?.files?.[0];
+      if (!file) return alert("Seleccione el XML.");
+      const msg = $("xmlMsg");
+      msg.className = "status";
+      msg.textContent = "Registrando XML...";
+      try {
+        const form = new FormData();
+        form.append("servicio_id", row.consec);
+        form.append("file", file, file.name);
+        const data = await sendForm("/factura/electronica", form);
+        await postJSON("/collections/sync-from-invoicing", {}).catch(() => null);
+        closeModal();
+        await loadBillables();
+        await loadBillingRows();
+        alert(`Factura XML registrada: ${data.numero_documento}`);
+      } catch (err) {
+        msg.className = "status error";
+        msg.textContent = err.message;
+      }
+    }
+    async function renderInvoicingWeb(target=orderCashWorkspace()) {
+      await renderBillingWeb(target);
+    }
+    function billingParams() {
+      const params = new URLSearchParams({ page:"1", page_size:"100" });
+      const map = {
+        cliente:valueFrom("billingCliente"),
+        fecha_desde:valueFrom("billingDesde"),
+        fecha_hasta:valueFrom("billingHasta"),
+        tipo_factura:valueFrom("billingTipoFactura"),
+        tipo_documento:valueFrom("billingTipoDocumento")
+      };
+      Object.entries(map).forEach(([k,v]) => { if (v) params.set(k, v); });
+      return params.toString();
+    }
+    function clearBillingFilters() {
+      ["billingCliente","billingDesde","billingHasta","billingTipoFactura","billingTipoDocumento"].forEach(id => { if ($(id)) $(id).value = ""; });
+      billingRows = [];
+      selectedBillingIndex = null;
+      selectedBillingIndexes = new Set();
+      if ($("billingCount")) $("billingCount").textContent = "Facturas emitidas";
+      if ($("billingMsg")) $("billingMsg").classList.add("hidden");
+      if ($("billingTable")) $("billingTable").innerHTML = '<div class="status">Configure filtros y presione Buscar.</div>';
+    }
+    async function loadBillingRows() {
+      if (!$("billingTable")) return;
+      selectedBillingIndex = null;
+      selectedBillingIndexes = new Set();
+      await loadFinanceClientCombos();
+      const msg = $("billingMsg");
+      msg.className = "status";
+      msg.textContent = "Consultando facturas...";
+      try {
+        const payload = await getJSON(`/billing/search?${billingParams()}`);
+        billingRows = rowsList(payload);
+        $("billingCount").textContent = `${payload.total ?? billingRows.length} documentos`;
+        msg.classList.add("hidden");
+        renderBillingTable();
+      } catch (err) {
+        msg.className = "status error";
+        msg.textContent = err.message;
+      }
+    }
+    function billingRow() {
+      if (selectedBillingIndex === null) selectedBillingIndex = firstFromSet(selectedBillingIndexes);
+      return selectedBillingIndex === null ? null : billingRows[selectedBillingIndex];
+    }
+    function toggleBillingRow(idx, checked=null) {
+      const next = checked === null ? !selectedBillingIndexes.has(idx) : checked;
+      selectedBillingIndex = setIndexSelection(selectedBillingIndexes, idx, next);
+      renderBillingTable();
+    }
+    function requireBillingRow() {
+      const row = billingRow();
+      if (!row) alert("Seleccione primero una factura.");
+      return row;
+    }
+    function renderBillingTable() {
+      const cols = ["id","tipo_factura","tipo_documento","numero_documento","nombre_cliente","fecha_emision","moneda","total","estado"];
+      if (!billingRows.length) {
+        $("billingTable").innerHTML = '<div class="status">Sin facturas para esta consulta.</div>';
+        return;
+      }
+      $("billingTable").innerHTML = `<div class="table-wrap"><table><thead><tr><th class="pick-col"></th>${cols.map(c => `<th>${esc(c)}</th>`).join("")}</tr></thead><tbody>${billingRows.map((row, idx) => {
+        const selected = selectedBillingIndexes.has(idx);
+        return `<tr class="${selected ? "service-selected" : ""}" onclick="toggleBillingRow(${idx})"><td class="pick-col"><input class="row-pick" type="checkbox" ${selected ? "checked" : ""} onclick="event.stopPropagation(); toggleBillingRow(${idx}, this.checked)" /></td>${cols.map(c => `<td>${esc(c === "total" ? Number(row[c] || 0).toLocaleString("en-US", {minimumFractionDigits:2, maximumFractionDigits:2}) : row[c])}</td>`).join("")}</tr>`;
+      }).join("")}</tbody></table></div>`;
+    }
+    async function viewSelectedInvoice() {
+      const row = requireBillingRow();
+      if (!row) return;
+      const full = await getJSON(`/billing/${encodeURIComponent(row.numero_documento)}`);
+      document.body.insertAdjacentHTML("beforeend", `
+        <div class="modal-backdrop" id="svcModal">
+          <div class="modal">
+            <div class="modal-head"><h2>Factura ${esc(full.numero_documento)}</h2><button class="secondary" onclick="closeModal()">Cerrar</button></div>
+            <div class="service-actions">
+              <a href="/billing/pdf/${encodeURIComponent(full.numero_documento)}" target="_blank"><button>Ver / descargar PDF</button></a>
+              <a href="/billing/word/${encodeURIComponent(full.numero_documento)}" target="_blank"><button class="secondary">Exportar Word</button></a>
+            </div>
+            <div class="table-wrap"><table><tbody>${Object.keys(full).filter(k => !String(k).toLowerCase().includes("hash")).map(k => `<tr><th>${esc(k)}</th><td>${esc(full[k])}</td></tr>`).join("")}</tbody></table></div>
+          </div>
+        </div>`);
+    }
+    async function openBillingEditForm() {
+      const row = requireBillingRow();
+      if (!row) return;
+      const full = await getJSON(`/billing/${encodeURIComponent(row.numero_documento)}`);
+      document.body.insertAdjacentHTML("beforeend", `
+        <div class="modal-backdrop" id="svcModal">
+          <div class="modal small">
+            <div class="modal-head"><h2>Editar factura ${esc(full.numero_documento)}</h2><button class="secondary" onclick="closeModal()">Cerrar</button></div>
+            <div class="form-grid">
+              <label>Número<input id="editInv_numero" value="${esc(full.numero_documento)}" /></label>
+              <label>Cliente<input id="editInv_cliente" value="${esc(full.nombre_cliente)}" /></label>
+              <label>Fecha emisión<input id="editInv_fecha" type="date" value="${esc(String(full.fecha_emision || "").slice(0,10))}" /></label>
+              <label>Moneda<select id="editInv_moneda"><option${full.moneda === "USD" ? " selected" : ""}>USD</option><option${full.moneda === "CRC" ? " selected" : ""}>CRC</option></select></label>
+              <label>Total<input id="editInv_total" type="number" step="0.01" value="${esc(full.total)}" /></label>
+              <label>Estado<select id="editInv_estado"><option${full.estado === "EMITIDA" ? " selected" : ""}>EMITIDA</option><option${full.estado === "ANULADA" ? " selected" : ""}>ANULADA</option></select></label>
+              <label>Término pago<input id="editInv_termino" type="number" value="${esc(full.termino_pago || 0)}" /></label>
+              <label>Num informe<input id="editInv_informe" value="${esc(full.num_informe || "")}" /></label>
+              <label>Buque / contenedor<input id="editInv_buque" value="${esc(full.buque_contenedor || "")}" /></label>
+              <label>Operación<input id="editInv_operacion" value="${esc(full.operacion || "")}" /></label>
+              <label class="wide">Descripción<textarea id="editInv_desc">${esc(full.descripcion_servicio || "")}</textarea></label>
+            </div>
+            <div class="md-actions"><button class="green" onclick="saveBillingEdit(${Number(full.id)})">Guardar</button><button class="secondary" onclick="closeModal()">Cancelar</button></div>
+            <div id="editInvMsg" class="status hidden"></div>
+          </div>
+        </div>`);
+    }
+    async function saveBillingEdit(id) {
+      const msg = $("editInvMsg");
+      msg.className = "status";
+      msg.textContent = "Guardando...";
+      try {
+        const payload = {
+          numero_documento:valueFrom("editInv_numero"),
+          nombre_cliente:valueFrom("editInv_cliente"),
+          fecha_emision:valueFrom("editInv_fecha"),
+          moneda:valueFrom("editInv_moneda"),
+          total:Number(valueFrom("editInv_total") || 0),
+          estado:valueFrom("editInv_estado"),
+          termino_pago:Number(valueFrom("editInv_termino") || 0),
+          num_informe:valueFrom("editInv_informe"),
+          buque_contenedor:valueFrom("editInv_buque"),
+          operacion:valueFrom("editInv_operacion"),
+          descripcion_servicio:valueFrom("editInv_desc")
+        };
+        if (!payload.numero_documento || !payload.nombre_cliente || payload.total <= 0) throw new Error("Número, cliente y total son requeridos.");
+        await sendJSON("PUT", `/billing/${encodeURIComponent(id)}`, payload);
+        closeModal();
+        await loadBillingRows();
+        refreshSummary();
+      } catch (err) {
+        msg.className = "status error";
+        msg.textContent = err.message;
+      }
+    }
+    async function deleteSelectedInvoice() {
+      const row = requireBillingRow();
+      if (!row) return;
+      if (!confirm(`¿Anular factura ${row.numero_documento}?`)) return;
+      try {
+        await sendJSON("DELETE", `/billing/${encodeURIComponent(row.id)}`, null);
+        await loadBillingRows();
+        refreshSummary();
+      } catch (err) {
+        alert(err.message);
+      }
+    }
+    function downloadBillingExcel() {
+      if (!billingRows.length) return alert("No hay datos para exportar.");
+      const cols = ["id","tipo_factura","tipo_documento","numero_documento","nombre_cliente","fecha_emision","moneda","total","estado"];
+      downloadExcelFile(`billing_${new Date().toISOString().slice(0,10)}.xls`, billingRows, cols, "Invoicing - detalle de facturas");
+    }
+    async function openAdvanceInvoiceForm() {
+      const clientes = await ensureFinanceClientes();
+      advanceServiceRows = [];
+      document.body.insertAdjacentHTML("beforeend", `
+        <div class="modal-backdrop" id="svcModal">
+          <div class="modal">
+            <div class="modal-head"><h2>Facturación Anticipada</h2><button class="secondary" onclick="closeModal()">Cerrar</button></div>
+            <div class="form-grid">
+              <label>Cliente / código<input id="adv_cliente" list="advClientList" placeholder="Seleccione o escriba cliente" onchange="syncAdvanceClient(); loadAdvanceInvoiceServices()" oninput="syncAdvanceClient()" /></label>
+              <label>Nombre en factura<input id="adv_nombre_factura" placeholder="Nombre editable para la factura" /></label>
+              <input id="adv_codigo_cliente" type="hidden" />
+              <datalist id="advClientList">${clientes.map(c => `<option value="${esc(c)}"></option>`).join("")}</datalist>
+              <label>Survey / servicio<select id="adv_service" onchange="applyAdvanceInvoiceService()"><option value="">Seleccione cliente primero</option></select></label>
+              <label>Fecha emisión<input value="${new Date().toISOString().slice(0,10)}" readonly /></label>
+              <label>Moneda<select id="adv_moneda"><option>USD</option><option>CRC</option></select></label>
+              <label>Payment terms<input id="adv_payment_terms" placeholder="CREDIT 10 DAYS" /></label>
+              <label>Total<input id="adv_total" type="number" step="0.01" /></label>
+              <label>Place<input id="adv_place" placeholder="PUERTO, PAIS" /></label>
+              <label>Buque / contenedor<input id="adv_buque" /></label>
+              <label>Survey<input id="adv_survey" list="advSurveyList" /></label>
+              <label>Num informe<input id="adv_informe" /></label>
+              <label>Periodo<input id="adv_periodo" /></label>
+              <datalist id="advSurveyList"></datalist>
+              <label class="wide">Descripción<textarea id="adv_desc"></textarea></label>
+            </div>
+            <div class="status">La cuenta bancaria se mantiene fija: BCR Banco de Costa Rica · IBAN ACCOUNT CR49015201308000025850 · SWIFT BCRICRSJ.</div>
+            <div class="md-actions"><button class="green" onclick="saveAdvanceInvoice()">Facturar</button><button class="secondary" onclick="closeModal()">Cancelar</button></div>
+            <div id="advMsg" class="status hidden"></div>
+          </div>
+        </div>`);
+    }
+    function syncAdvanceClient() {
+      const selected = valueFrom("adv_cliente");
+      const code = financeClientCode(selected);
+      if ($("adv_codigo_cliente")) $("adv_codigo_cliente").value = code;
+      const invoiceName = $("adv_nombre_factura");
+      if (invoiceName && (!invoiceName.value || invoiceName.dataset.synced === "1")) {
+        invoiceName.value = selected;
+        invoiceName.dataset.synced = "1";
+      }
+      if (invoiceName && !invoiceName.oninput) {
+        invoiceName.oninput = () => { invoiceName.dataset.synced = "0"; };
+      }
+    }
+    function advanceTermsDays(text) {
+      const match = String(text || "").match(/(\\d+)/);
+      return match ? Number(match[1]) : 0;
+    }
+    function advancePlace(row) {
+      return [row?.puerto, row?.pais].filter(Boolean).join(", ");
+    }
+    function advanceSurvey(row) {
+      return row?.operacion || row?.detalle || row?.tipo || "SURVEY";
+    }
+    function advanceDescription(row, cliente) {
+      const first = [row?.num_informe, row?.buque_contenedor, cliente].filter(Boolean).join(" / ");
+      return [first, advancePlace(row), "", "SURVEY:", `-${advanceSurvey(row)}`].join("\\n");
+    }
+    async function loadAdvanceInvoiceServices() {
+      const cliente = valueFrom("adv_cliente");
+      const svc = $("adv_service");
+      const msg = $("advMsg");
+      advanceServiceRows = [];
+      if (!cliente) {
+        svc.innerHTML = '<option value="">Seleccione cliente primero</option>';
+        return;
+      }
+      msg.className = "status";
+      msg.textContent = "Consultando servicios del cliente...";
+      try {
+        const payload = await getJSON(`/invoicing/facturables?cliente=${encodeURIComponent(cliente)}`);
+        advanceServiceRows = rowsList(payload);
+        svc.innerHTML = '<option value="">Seleccione survey / servicio</option>' + advanceServiceRows.map((row, idx) => {
+          const label = [advanceSurvey(row), row.num_informe, row.buque_contenedor, advancePlace(row)].filter(Boolean).join(" | ");
+          return `<option value="${idx}">${esc(label)}</option>`;
+        }).join("");
+        $("advSurveyList").innerHTML = [...new Set(advanceServiceRows.map(advanceSurvey).filter(Boolean))].map(v => `<option value="${esc(v)}"></option>`).join("");
+        msg.classList.add("hidden");
+        if (!advanceServiceRows.length) {
+          svc.innerHTML = '<option value="">Sin servicios finalizados pendientes</option>';
+          msg.className = "status";
+          msg.textContent = "No hay servicios facturables para este cliente. Puede completar los campos manualmente.";
+        }
+      } catch (err) {
+        svc.innerHTML = '<option value="">No se pudieron cargar servicios</option>';
+        msg.className = "status error";
+        msg.textContent = err.message;
+      }
+    }
+    function applyAdvanceInvoiceService() {
+      const idx = Number(valueFrom("adv_service"));
+      const row = Number.isFinite(idx) ? advanceServiceRows[idx] : null;
+      if (!row) return;
+      const cliente = valueFrom("adv_nombre_factura") || valueFrom("adv_cliente");
+      $("adv_place").value = advancePlace(row);
+      $("adv_buque").value = row.buque_contenedor || "";
+      $("adv_survey").value = advanceSurvey(row);
+      $("adv_informe").value = row.num_informe || "";
+      $("adv_periodo").value = [row.fecha_inicio, row.fecha_fin].filter(Boolean).join(" a ");
+      $("adv_desc").value = advanceDescription(row, cliente);
+    }
+    async function saveAdvanceInvoice() {
+      const cliente = valueFrom("adv_cliente");
+      const nombreFactura = valueFrom("adv_nombre_factura") || cliente;
+      const codigoCliente = valueFrom("adv_codigo_cliente") || financeClientCode(cliente);
+      const msg = $("advMsg");
+      msg.className = "status";
+      msg.textContent = "Creando factura anticipada...";
+      try {
+        const paymentTerms = valueFrom("adv_payment_terms") || "DUE UPON RECEIPT";
+        const payload = {
+          tipo_factura:"MANUAL",
+          codigo_cliente:codigoCliente,
+          nombre_cliente:nombreFactura,
+          descripcion:valueFrom("adv_desc"),
+          moneda:valueFrom("adv_moneda") || "USD",
+          termino_pago:advanceTermsDays(paymentTerms),
+          payment_terms:paymentTerms,
+          total:Number(valueFrom("adv_total") || 0),
+          buque:valueFrom("adv_buque"),
+          operacion:valueFrom("adv_survey"),
+          survey:valueFrom("adv_survey"),
+          place:valueFrom("adv_place"),
+          num_informe:valueFrom("adv_informe"),
+          periodo_operacion:valueFrom("adv_periodo")
+        };
+        if (!payload.codigo_cliente) throw new Error("Seleccione un cliente válido para tomar el código; luego puede corregir el Nombre en factura.");
+        if (!payload.nombre_cliente || !payload.descripcion || payload.total <= 0) throw new Error("Nombre en factura, descripción y total son requeridos.");
+        const data = await postJSON("/invoicing/anticipada", payload);
+        await postJSON("/collections/sync-from-invoicing", {}).catch(() => null);
+        closeModal();
+        if (financeTab === "billing" && $("billingTable")) await loadBillingRows();
+        alert(`Factura anticipada creada: ${data.numero_documento}. Puede exportarla en PDF o Word desde Ver Factura.`);
+      } catch (err) {
+        msg.className = "status error";
+        msg.textContent = err.message;
+      }
+    }
+    async function openCreditNoteForm() {
+      const clientes = await ensureFinanceClientes();
+      document.body.insertAdjacentHTML("beforeend", `
+        <div class="modal-backdrop" id="svcModal">
+          <div class="modal small">
+            <div class="modal-head"><h2>Nota de Crédito</h2><button class="secondary" onclick="closeModal()">Cerrar</button></div>
+            <div class="form-grid">
+              <label>Cliente<select id="nc_cliente">${clientes.map(c => `<option value="${esc(c)}">${esc(c)}</option>`).join("")}</select></label>
+              <label>Moneda<select id="nc_moneda"><option>USD</option><option>CRC</option></select></label>
+              <label>Total<input id="nc_total" type="number" step="0.01" /></label>
+              <label>Buque / contenedor<input id="nc_buque" /></label>
+              <label>Operación<input id="nc_operacion" /></label>
+              <label>Num informe<input id="nc_informe" /></label>
+              <label>Periodo<input id="nc_periodo" /></label>
+              <label class="wide">Descripción<textarea id="nc_desc"></textarea></label>
+            </div>
+            <div class="md-actions"><button class="brown" onclick="saveCreditNote()">Crear NC</button><button class="secondary" onclick="closeModal()">Cancelar</button></div>
+            <div id="ncMsg" class="status hidden"></div>
+          </div>
+        </div>`);
+    }
+    async function saveCreditNote() {
+      const cliente = valueFrom("nc_cliente");
+      const msg = $("ncMsg");
+      msg.className = "status";
+      msg.textContent = "Creando nota de crédito...";
+      try {
+        const payload = {
+          tipo_factura:"MANUAL",
+          codigo_cliente:financeClientCode(cliente),
+          nombre_cliente:cliente,
+          descripcion:valueFrom("nc_desc"),
+          moneda:valueFrom("nc_moneda") || "USD",
+          total:Number(valueFrom("nc_total") || 0),
+          buque:valueFrom("nc_buque"),
+          operacion:valueFrom("nc_operacion"),
+          num_informe:valueFrom("nc_informe"),
+          periodo_operacion:valueFrom("nc_periodo")
+        };
+        if (!payload.codigo_cliente || !payload.nombre_cliente || !payload.descripcion || payload.total <= 0) throw new Error("Cliente, descripción y total son requeridos.");
+        const data = await postJSON("/invoicing/nota-credito", payload);
+        await postJSON("/collections/sync-from-invoicing", {}).catch(() => null);
+        closeModal();
+        if (financeTab === "billing" && $("billingTable")) await loadBillingRows();
+        alert(`Nota de crédito creada: ${data.numero_documento}`);
+      } catch (err) {
+        msg.className = "status error";
+        msg.textContent = err.message;
+      }
+    }
+    function renderCreditHoldWeb(target=orderCashWorkspace()) {
+      target.innerHTML = `
+          <div class="panel-head">
+            <h2>Credit, Order Hold and Release</h2>
+            <span class="muted">Límite, términos crediticios y hold por cliente</span>
+          </div>
+          <div class="finance-filter-row compact">
+            <label>Cliente<select id="creditCliente" onchange="selectCreditByCombo()"><option value="">Todos</option></select></label>
+            <button onclick="loadCreditHold()">Buscar</button>
+            <button class="secondary" onclick="clearCreditHold()">Limpiar</button>
+          </div>
+          <div class="service-actions">
+            <button onclick="openCreditConfigForm('add')">Agregar límite</button>
+            <button class="secondary" onclick="viewSelectedCreditConfig()">Ver</button>
+            <button class="gray" onclick="openCreditConfigForm('edit')">Editar</button>
+            <button class="brown" onclick="toggleSelectedCreditHold()">Bloquear / liberar</button>
+            <button class="dark" onclick="deleteSelectedCreditConfig()">Eliminar</button>
+          </div>
+          <input id="creditQ" class="hidden" />
+          <div id="creditMsg" class="status hidden"></div>
+          <div id="creditTable" class="workspace"></div>
+        `;
+      $("creditTable").innerHTML = '<div class="status">Presione Buscar para consultar crédito.</div>';
+      loadFinanceClientCombos().catch(() => null);
+    }
+    function clearCreditHold() {
+      if ($("creditQ")) $("creditQ").value = "";
+      if ($("creditCliente")) $("creditCliente").value = "";
+      creditRows = [];
+      selectedCreditIndex = null;
+      selectedCreditIndexes = new Set();
+      if ($("creditMsg")) $("creditMsg").classList.add("hidden");
+      if ($("creditTable")) $("creditTable").innerHTML = '<div class="status">Presione Buscar para consultar crédito.</div>';
+    }
+    async function loadCreditHold() {
+      const msg = $("creditMsg");
+      const table = $("creditTable");
+      msg.className = "status";
+      msg.textContent = "Consultando credito...";
+      await loadFinanceClientCombos();
+      const q = valueFrom("creditCliente") || valueFrom("creditQ");
+      try {
+        const payload = await getJSON(`/som/finance/order-to-cash/credit-hold${q ? `?q=${encodeURIComponent(q)}` : ""}`);
+        creditRows = rowsList(payload);
+        selectedCreditIndex = null;
+        selectedCreditIndexes = new Set();
+        msg.classList.add("hidden");
+        if (!creditRows.length) {
+          table.innerHTML = '<div class="status">Sin clientes para la consulta.</div>';
+          return;
+        }
+        renderCreditTable();
+      } catch (err) {
+        msg.className = "status error";
+        msg.textContent = err.message;
+      }
+    }
+    function creditRow() {
+      if (selectedCreditIndex === null) selectedCreditIndex = firstFromSet(selectedCreditIndexes);
+      if (selectedCreditIndex !== null) return creditRows[selectedCreditIndex];
+      const code = valueFrom("creditCliente");
+      if (!code) return null;
+      const found = creditRows.find(row => String(row.codigo || row.codigo_cliente || "") === code);
+      if (found) return found;
+      const option = $("creditCliente")?.selectedOptions?.[0];
+      return { codigo:code, cliente:(option?.textContent || "").split("|").slice(1).join("|").trim() };
+    }
+    function requireCreditRow() {
+      const row = creditRow();
+      if (!row) alert("Seleccione primero un cliente de Credit.");
+      return row;
+    }
+    function renderCreditTable() {
+      const table = $("creditTable");
+      if (!creditRows.length) {
+        table.innerHTML = '<div class="status">Sin clientes para la consulta.</div>';
+        return;
+      }
+      table.innerHTML = `
+        <div class="table-wrap">
+          <table>
+            <thead><tr>
+              <th class="pick-col"></th><th>Código</th><th>Cliente</th><th>Límite</th><th>CxC abierta</th><th>Disponible</th><th>Estado</th><th>Hold</th><th>Decisión</th><th>Acción</th>
+            </tr></thead>
+            <tbody>${creditRows.map((row, idx) => {
+              const decision = String(row.decision || "");
+              const badge = decision === "REQUIRES_RELEASE" ? "cancel" : "closed";
+              const selected = selectedCreditIndexes.has(idx);
+              return `<tr class="${selected ? "service-selected" : ""}" onclick="toggleCreditRow(${idx})">
+                <td class="pick-col"><input class="row-pick" type="checkbox" ${selected ? "checked" : ""} onclick="event.stopPropagation(); toggleCreditRow(${idx}, this.checked)" /></td>
+                <td>${esc(row.codigo)}</td>
+                <td>${esc(row.cliente)}</td>
+                <td>${esc(row.moneda)} ${Number(row.limite || 0).toLocaleString("en-US", {minimumFractionDigits:2, maximumFractionDigits:2})}</td>
+                <td>${esc(row.moneda)} ${Number(row.cxC_abierta || 0).toLocaleString("en-US", {minimumFractionDigits:2, maximumFractionDigits:2})}</td>
+                <td>${esc(row.moneda)} ${Number(row.disponible || 0).toLocaleString("en-US", {minimumFractionDigits:2, maximumFractionDigits:2})}</td>
+                <td>${esc(row.estado || "-")}</td>
+                <td>${row.hold_manual ? "Si" : "No"}</td>
+                <td><span class="badge ${badge}">${esc(decision)}</span></td>
+                <td><div class="toolbar"><button class="secondary" onclick="event.stopPropagation(); selectCreditRow(${idx}); viewSelectedCreditConfig()">Ver</button><button onclick="event.stopPropagation(); selectCreditRow(${idx}); openCreditConfigForm('edit')">Editar</button><button class="brown" onclick="event.stopPropagation(); selectCreditRow(${idx}); toggleSelectedCreditHold()">Hold</button><button class="dark" onclick="event.stopPropagation(); selectCreditRow(${idx}); deleteSelectedCreditConfig()">Eliminar</button></div></td>
+              </tr>`;
+            }).join("")}</tbody>
+          </table>
+        </div>`;
+    }
+    function toggleCreditRow(index, checked=null) {
+      const next = checked === null ? !selectedCreditIndexes.has(index) : checked;
+      selectedCreditIndex = setIndexSelection(selectedCreditIndexes, index, next);
+      const row = selectedCreditIndex === null ? null : creditRows[selectedCreditIndex];
+      if ($("creditCliente")) $("creditCliente").value = row?.codigo || "";
+      renderCreditTable();
+    }
+    function selectCreditRow(index) {
+      selectedCreditIndex = index;
+      selectedCreditIndexes = new Set([index]);
+      const row = creditRows[index];
+      if ($("creditCliente") && row?.codigo) $("creditCliente").value = row.codigo;
+      renderCreditTable();
+    }
+    function selectCreditByCombo() {
+      const code = valueFrom("creditCliente");
+      selectedCreditIndex = code ? creditRows.findIndex(row => String(row.codigo || row.codigo_cliente || "") === code) : null;
+      if (selectedCreditIndex < 0) selectedCreditIndex = null;
+      selectedCreditIndexes = selectedCreditIndex === null ? new Set() : new Set([selectedCreditIndex]);
+      if (creditRows.length) renderCreditTable();
+    }
+    async function viewSelectedCreditConfig() {
+      const row = requireCreditRow();
+      if (!row) return;
+      const data = await getJSON(`/cliente-credito/${encodeURIComponent(row.codigo)}`);
+      const detail = data.exists ? data.data : { codigo_cliente:row.codigo, nombre_cliente:row.cliente, estado:"Sin límite crediticio" };
+      document.body.insertAdjacentHTML("beforeend", `
+        <div class="modal-backdrop" id="svcModal">
+          <div class="modal">
+            <div class="modal-head"><h2>Información crediticia</h2><button class="secondary" onclick="closeModal()">Cerrar</button></div>
+            <div class="table-wrap"><table><tbody>${Object.keys(detail).filter(k => !String(k).toLowerCase().includes("hash")).map(k => `<tr><th>${esc(k)}</th><td>${esc(detail[k])}</td></tr>`).join("")}</tbody></table></div>
+          </div>
+        </div>`);
+    }
+    async function openCreditConfigForm(mode) {
+      const selected = creditRow();
+      let row = selected || {};
+      let exists = false;
+      if (mode === "edit") {
+        row = requireCreditRow();
+        if (!row) return;
+        const data = await getJSON(`/cliente-credito/${encodeURIComponent(row.codigo)}`);
+        exists = !!data.exists;
+        if (!exists) {
+          if (!confirm("Este cliente existe en Master Data pero no tiene límite crediticio. ¿Desea crearlo ahora?")) return;
+          mode = "add";
+        } else {
+          row = { ...row, ...(data.data || {}) };
+        }
+      }
+      const isEdit = mode === "edit";
+      document.body.insertAdjacentHTML("beforeend", `
+        <div class="modal-backdrop" id="svcModal">
+          <div class="modal small">
+            <div class="modal-head"><h2>${isEdit ? "Editar crédito" : "Agregar límite crediticio"}</h2><button class="secondary" onclick="closeModal()">Cerrar</button></div>
+            <div class="form-grid">
+              <label>Código cliente<input id="cred_codigo" value="${esc(row.codigo_cliente || row.codigo || "")}" ${isEdit ? "readonly" : ""} required /></label>
+              <label>Nombre<input id="cred_nombre" value="${esc(row.nombre_cliente || row.cliente || "")}" readonly /></label>
+              <label>Límite<input id="cred_limite" type="number" step="0.01" value="${esc(row.limite_credito ?? row.limite ?? "")}" required /></label>
+              <label>Moneda<select id="cred_moneda"><option>USD</option><option>CRC</option></select></label>
+              <label>Término pago<input id="cred_termino" type="number" value="${esc(row.termino_pago ?? 30)}" /></label>
+              <label>Estado<select id="cred_estado"><option>ACTIVE</option><option>HOLD</option><option>INACTIVE</option></select></label>
+              <label>Hold manual<input id="cred_hold" type="checkbox" ${row.hold_manual ? "checked" : ""} /></label>
+              <label class="wide">Observaciones<textarea id="cred_obs">${esc(row.observaciones || row.mensaje || "")}</textarea></label>
+            </div>
+            <div class="md-actions"><button class="green" onclick="saveCreditConfig('${isEdit ? "edit" : "add"}')">Guardar</button><button class="secondary" onclick="closeModal()">Cancelar</button></div>
+            <div id="credMsg" class="status hidden"></div>
+          </div>
+        </div>`);
+      $("cred_moneda").value = row.moneda || "USD";
+      $("cred_estado").value = row.estado_credito || row.estado || (row.hold_manual ? "HOLD" : "ACTIVE");
+    }
+    async function saveCreditConfig(mode) {
+      const msg = $("credMsg");
+      msg.className = "status";
+      msg.textContent = "Guardando crédito...";
+      const payload = {
+        codigo_cliente:valueFrom("cred_codigo"),
+        nombre_cliente:valueFrom("cred_nombre"),
+        limite_credito:Number(valueFrom("cred_limite") || 0),
+        moneda:valueFrom("cred_moneda") || "USD",
+        termino_pago:Number(valueFrom("cred_termino") || 0),
+        estado_credito:valueFrom("cred_estado") || "ACTIVE",
+        hold_manual:!!($("cred_hold")?.checked),
+        observaciones:valueFrom("cred_obs")
+      };
+      if (!payload.codigo_cliente || payload.limite_credito < 0) {
+        msg.className = "status error";
+        msg.textContent = "Código cliente y límite válido son requeridos.";
+        return;
+      }
+      try {
+        if (mode === "edit") {
+          await sendJSON("PUT", `/cliente-credito/${encodeURIComponent(payload.codigo_cliente)}`, payload);
+        } else {
+          await postJSON("/cliente-credito/", payload);
+        }
+        closeModal();
+        await loadCreditHold();
+      } catch (err) {
+        msg.className = "status error";
+        msg.textContent = err.message;
+      }
+    }
+    async function toggleSelectedCreditHold() {
+      const row = requireCreditRow();
+      if (!row) return;
+      const data = await getJSON(`/cliente-credito/${encodeURIComponent(row.codigo)}`);
+      if (!data.exists) return alert("Este cliente aún no tiene configuración crediticia. Primero agregue un límite.");
+      const current = data.data || {};
+      const nextHold = !current.hold_manual;
+      if (!confirm(`${nextHold ? "Bloquear" : "Liberar"} crédito para ${row.cliente}?`)) return;
+      await sendJSON("PUT", `/cliente-credito/${encodeURIComponent(row.codigo)}`, {
+        ...current,
+        hold_manual:nextHold,
+        estado_credito:nextHold ? "HOLD" : "ACTIVE"
+      });
+      await loadCreditHold();
+    }
+    async function deleteSelectedCreditConfig() {
+      const row = requireCreditRow();
+      if (!row) return;
+      if (!confirm(`¿Eliminar configuración crediticia de ${row.cliente}?`)) return;
+      await sendJSON("DELETE", `/cliente-credito/${encodeURIComponent(row.codigo)}`, null);
+      await loadCreditHold();
+    }
+    function renderMasterData() {
+      $("content").innerHTML = `
+        <div class="card panel">
+          <div class="panel-head"><h2>Acciones</h2></div>
+          <div class="md-actions">${catalog.master_data_actions.map(a => `<button class="${buttonClass(a)}" onclick="masterAction('${a.key}')">${a.label}</button>`).join("")}</div>
+          <div class="filters">
+            <select id="mdTipo"><option>Todos</option><option>Empleado</option><option>Surveyor</option><option>Cliente</option><option>Proveedor</option><option>Servicio</option><option>Puerto</option></select>
+            <select id="mdContinente"><option>Seleccione continente</option></select>
+            <select id="mdPais"><option>Seleccione país</option></select>
+            <select id="mdPuerto"><option>Seleccione puerto</option></select>
+            <button class="secondary" onclick="loadMasterFilters()">Cargar filtros</button>
+            <button onclick="applyMasterFilter()">Buscar</button>
+          </div>
+          <div class="status master-empty">Seleccione una acción arriba o filtre por tipo para abrir la pantalla correspondiente.</div>
+        </div>
+        <div id="masterWorkspace" class="card panel workspace hidden"></div>`;
+    }
+    function buttonClass(action) {
+      if (action.key === "export_form") return "green";
+      if (action.key === "import_form") return "brown";
+      if (action.key === "company_fiscal") return "gray";
+      if (action.key === "bank_accounts") return "dark";
+      return "";
+    }
+    function masterAction(key) {
+      if (["clientes","surveyores","empleados","proveedores","servicios_md","puertos"].includes(key)) {
+        if (key === "puertos") {
+          openPortForm(null);
+          return;
+        }
+        openMasterForm(key, null);
+        return;
+      }
+      if (key === "export_form") {
+        $("masterWorkspace").classList.remove("hidden");
+        $("masterWorkspace").innerHTML = `<div class="panel-head"><h2>Exportar formulario</h2></div>
+          <div class="md-actions">
+            ${["cliente","proveedor","empleado","surveyor","servicio"].map(e => `<a href="/master-data/forms/${e}/xlsx" target="_blank"><button>Excel ${e}</button></a><a href="/master-data/forms/${e}/docx" target="_blank"><button class="secondary">Word ${e}</button></a>`).join("")}
+          </div>`;
+        return;
+      }
+      if (key === "import_form") {
+        $("masterWorkspace").classList.remove("hidden");
+        $("masterWorkspace").innerHTML = `<div class="panel-head"><h2>Cargar formularios</h2><span class="muted">Excel o Word exportados desde Master Data</span></div>
+          <div class="md-actions">
+            <input id="mdFormUploadInput" type="file" multiple accept=".xlsx,.docx" />
+            <button onclick="uploadMasterDataForms()">Cargar formularios</button>
+          </div>
+          <div id="mdFormUploadResult" class="status">Seleccione uno o varios formularios completados.</div>`;
+        return;
+      }
+      if (key === "company_fiscal") openCompanyFiscalForm();
+      if (key === "bank_accounts") openMasterView("bank_accounts");
+    }
+    async function uploadMasterDataForms() {
+      const input = $("mdFormUploadInput");
+      const result = $("mdFormUploadResult");
+      if (!input?.files?.length) {
+        result.className = "status error";
+        result.textContent = "Seleccione al menos un archivo .xlsx o .docx.";
+        return;
+      }
+      const form = new FormData();
+      [...input.files].forEach(file => form.append("files", file));
+      result.className = "status";
+      result.textContent = "Cargando formularios...";
+      try {
+        const data = await sendForm("/master-data/forms/upload", form);
+        const failed = Array.isArray(data.failed) ? data.failed : [];
+        result.className = failed.length ? "status warning" : "status";
+        result.innerHTML = `<strong>Creados:</strong> ${esc(data.created || 0)} · <strong>Actualizados:</strong> ${esc(data.updated || 0)} · <strong>No cargados:</strong> ${esc(failed.length)}`
+          + (failed.length ? `<div style="margin-top:8px">${failed.slice(0,8).map(item => `<div>${esc(item.file || item.entity || "Formulario")}: ${esc(item.error || "Error")}</div>`).join("")}</div>` : "");
+      } catch (err) {
+        result.className = "status error";
+        result.textContent = err.message;
+      }
+    }
+    async function loadMasterFilters() {
+      try {
+        const continentes = await getJSON("/cpp/continentes");
+        $("mdContinente").innerHTML = "<option>Seleccione continente</option>" + continentes.map(x => `<option>${x}</option>`).join("");
+        $("mdContinente").onchange = async () => {
+          const cont = $("mdContinente").value;
+          const paises = cont.startsWith("Seleccione") ? [] : await getJSON(`/cpp/paises?continente=${encodeURIComponent(cont)}`);
+          $("mdPais").innerHTML = "<option>Seleccione país</option>" + paises.map(x => `<option>${x}</option>`).join("");
+          $("mdPuerto").innerHTML = "<option>Seleccione puerto</option>";
+        };
+        $("mdPais").onchange = async () => {
+          const cont = $("mdContinente").value;
+          const pais = $("mdPais").value;
+          const puertos = pais.startsWith("Seleccione") ? [] : await getJSON(`/cpp/puertos?pais=${encodeURIComponent(pais)}${cont && !cont.startsWith("Seleccione") ? `&continente=${encodeURIComponent(cont)}` : ""}`);
+          $("mdPuerto").innerHTML = "<option>Seleccione puerto</option>" + puertos.map(x => `<option>${x}</option>`).join("");
+        };
+      } catch {}
+    }
+    async function applyMasterFilter() {
+      const tipo = $("mdTipo").value;
+      const map = { Cliente:"clientes", Proveedor:"proveedores", Empleado:"empleados", Surveyor:"surveyores", Servicio:"servicios_md", Puerto:"puertos" };
+      if (tipo === "Puerto") {
+        renderPortsMasterView();
+        const cont = valueFrom("mdContinente");
+        const pais = valueFrom("mdPais");
+        const puerto = valueFrom("mdPuerto");
+        await loadPortFilterContinents(cont && !cont.startsWith("Seleccione") ? cont : "");
+        if (cont && !cont.startsWith("Seleccione")) {
+          $("portFilterCont").value = cont;
+          await loadPortFilterCountries(pais && !pais.startsWith("Seleccione") ? pais : "");
+        }
+        if (pais && !pais.startsWith("Seleccione")) {
+          $("portFilterPais").value = pais;
+          await loadPortFilterPorts(puerto && !puerto.startsWith("Seleccione") ? puerto : "");
+        }
+        if (puerto && !puerto.startsWith("Seleccione")) $("portFilterPuerto").value = puerto;
+        await loadPorts();
+        return;
+      }
+      if (map[tipo]) openMasterView(map[tipo]);
+    }
+    async function openMasterView(key) {
+      selectedMasterView = catalog.master_data_views.find(v => v.key === key);
+      const ws = $("masterWorkspace");
+      ws.classList.remove("hidden");
+      ws.innerHTML = `<div class="panel-head"><h2>${selectedMasterView.label}</h2></div>`;
+      if (key === "bank_accounts") {
+        openBankAccounts();
+        return;
+      }
+      if (key === "company_fiscal") {
+        await openCompanyFiscalForm();
+        return;
+      }
+      if (key === "puertos") {
+        renderPortsMasterView();
+        return;
+      }
+      try {
+        const payload = await getJSON(selectedMasterView.endpoint);
+        const rows = rowsFromPayload(payload);
+        currentRows = rows;
+        ws.innerHTML = `<div class="panel-head"><h2>${selectedMasterView.label}</h2><div class="toolbar"><button onclick="openMasterForm('${key}', null, 'edit')">Nuevo</button><span class="muted">${rows.length} registros</span></div></div>${renderTable(rows, selectedMasterView.primary, key)}`;
+      } catch (err) {
+        ws.innerHTML = `<div class="panel-head"><h2>${selectedMasterView.label}</h2></div><div class="status error">No se pudo cargar: ${err.message}</div>`;
+      }
+    }
+    function rowsFromPayload(payload) {
+      if (Array.isArray(payload)) return payload;
+      if (Array.isArray(payload.data)) return payload.data;
+      if (Array.isArray(payload.items)) return payload.items;
+      if (payload && typeof payload === "object") return [payload];
+      return [];
+    }
+    function renderTable(rows, preferred, viewKey) {
+      if (!rows.length) return '<div class="status">Sin datos para esta pantalla.</div>';
+      const keys = (preferred || []).filter(k => Object.prototype.hasOwnProperty.call(rows[0], k));
+      const fallback = Object.keys(rows[0]).filter(k => !String(k).toLowerCase().includes("hash")).slice(0, 8);
+      const cols = keys.length ? keys : fallback;
+      return `<div class="table-wrap"><table><thead><tr>${cols.map(k => `<th>${esc(k)}</th>`).join("")}<th>Acción</th></tr></thead><tbody>${rows.slice(0,100).map((row, i) => `<tr>${cols.map(k => `<td>${esc(row[k])}</td>`).join("")}<td><div class="toolbar"><button class="secondary" onclick="openMasterForm('${viewKey}', ${i}, 'view')">Ver</button><button onclick="openMasterForm('${viewKey}', ${i}, 'edit')">Editar</button><button class="brown" onclick="deleteMasterRecord('${viewKey}', ${i})">Inhabilitar</button></div></td></tr>`).join("")}</tbody></table></div>`;
+    }
+    function renderPortsMasterView() {
+      const ws = $("masterWorkspace");
+      ws.classList.remove("hidden");
+      ws.innerHTML = `
+        <div class="panel-head">
+          <h2>Puertos</h2>
+          <div class="toolbar"><button onclick="openPortForm(null)">Nuevo</button><span id="portsCount" class="muted">Presione Buscar</span></div>
+        </div>
+        <div class="finance-filter-row">
+          <label>Continente<select id="portFilterCont" onchange="loadPortFilterCountries()"><option value="">Seleccione continente</option></select></label>
+          <label>País<select id="portFilterPais" onchange="loadPortFilterPorts()"><option value="">Seleccione país</option></select></label>
+          <label>Puerto<select id="portFilterPuerto"><option value="">Seleccione puerto</option></select></label>
+          <button class="secondary" onclick="loadPortFilterContinents()">Cargar combos</button>
+          <button onclick="loadPorts()">Buscar</button>
+          <button class="secondary" onclick="clearPortFilters()">Limpiar</button>
+        </div>
+        <div id="portsMsg" class="status hidden"></div>
+        <div id="portsTable" class="workspace"><div class="status">Cargue combos si desea filtrar, luego presione Buscar.</div></div>`;
+    }
+    async function loadPortFilterContinents(selected="") {
+      const el = $("portFilterCont");
+      if (!el) return;
+      el.innerHTML = '<option value="">Cargando...</option>';
+      try {
+        const rows = await getJSON("/cpp/continentes");
+        el.innerHTML = options(rows, selected, "Seleccione continente");
+      } catch (err) {
+        el.innerHTML = '<option value="">Seleccione continente</option>';
+        showPortsMsg(err.message, true);
+      }
+    }
+    async function loadPortFilterCountries(selected="") {
+      const cont = valueFrom("portFilterCont");
+      const pais = $("portFilterPais");
+      const puerto = $("portFilterPuerto");
+      if (!pais) return;
+      pais.innerHTML = '<option value="">Seleccione país</option>';
+      if (puerto) puerto.innerHTML = '<option value="">Seleccione puerto</option>';
+      if (!cont) return;
+      try {
+        const rows = await getJSON(`/cpp/paises?continente=${encodeURIComponent(cont)}`);
+        pais.innerHTML = options(rows, selected, "Seleccione país");
+      } catch (err) {
+        showPortsMsg(err.message, true);
+      }
+    }
+    async function loadPortFilterPorts(selected="") {
+      const cont = valueFrom("portFilterCont");
+      const pais = valueFrom("portFilterPais");
+      const puerto = $("portFilterPuerto");
+      if (!puerto) return;
+      puerto.innerHTML = '<option value="">Seleccione puerto</option>';
+      if (!pais) return;
+      try {
+        const rows = await getJSON(`/cpp/puertos?pais=${encodeURIComponent(pais)}${cont ? `&continente=${encodeURIComponent(cont)}` : ""}`);
+        puerto.innerHTML = options(rows, selected, "Seleccione puerto");
+      } catch (err) {
+        showPortsMsg(err.message, true);
+      }
+    }
+    function portsParams() {
+      const params = new URLSearchParams({ page:"1", page_size:"100" });
+      [["portFilterCont","continente"],["portFilterPais","pais"],["portFilterPuerto","puerto"]].forEach(([id,key]) => {
+        const value = valueFrom(id);
+        if (value) params.set(key, value);
+      });
+      return params.toString();
+    }
+    function showPortsMsg(message, isError=false) {
+      const msg = $("portsMsg");
+      if (!msg) return;
+      msg.className = isError ? "status error" : "status";
+      msg.textContent = message;
+    }
+    function clearPortsMsg() {
+      const msg = $("portsMsg");
+      if (!msg) return;
+      msg.className = "status hidden";
+      msg.textContent = "";
+    }
+    async function loadPorts() {
+      const table = $("portsTable");
+      showPortsMsg("Consultando puertos...");
+      try {
+        const payload = await getJSON(`/cpp/ports?${portsParams()}`);
+        portRows = rowsFromPayload(payload);
+        currentRows = portRows;
+        clearPortsMsg();
+        if ($("portsCount")) $("portsCount").textContent = `${portRows.length} registros`;
+        renderPortsTable();
+      } catch (err) {
+        table.innerHTML = "";
+        showPortsMsg(err.message, true);
+      }
+    }
+    function renderPortsTable() {
+      const table = $("portsTable");
+      if (!portRows.length) {
+        table.innerHTML = '<div class="status">Sin puertos para los filtros seleccionados.</div>';
+        return;
+      }
+      const cols = ["id","continente","pais","puerto"];
+      table.innerHTML = `<div class="table-wrap"><table><thead><tr>${cols.map(c => `<th>${esc(c)}</th>`).join("")}<th>Acción</th></tr></thead><tbody>${portRows.map((row, i) => `<tr>${cols.map(c => `<td>${esc(row[c])}</td>`).join("")}<td><div class="toolbar"><button class="secondary" onclick="openPortForm(${i}, 'view')">Ver</button><button onclick="openPortForm(${i}, 'edit')">Editar</button><button class="brown" onclick="deletePortRecord(${i})">Eliminar</button></div></td></tr>`).join("")}</tbody></table></div>`;
+    }
+    function clearPortFilters() {
+      ["portFilterCont","portFilterPais","portFilterPuerto"].forEach(id => { if ($(id)) $(id).innerHTML = `<option value="">${id === "portFilterCont" ? "Seleccione continente" : id === "portFilterPais" ? "Seleccione país" : "Seleccione puerto"}</option>`; });
+      portRows = [];
+      currentRows = [];
+      if ($("portsCount")) $("portsCount").textContent = "Presione Buscar";
+      clearPortsMsg();
+      if ($("portsTable")) $("portsTable").innerHTML = '<div class="status">Cargue combos si desea filtrar, luego presione Buscar.</div>';
+    }
+    function portFormValue(row, key) {
+      return esc(row?.[key] ?? "");
+    }
+    function openPortForm(rowIndex=null, mode="edit") {
+      const editing = rowIndex !== null && rowIndex !== undefined;
+      const row = editing ? portRows[rowIndex] : {};
+      const readonly = mode === "view";
+      const ws = $("masterWorkspace");
+      ws.classList.remove("hidden");
+      ws.innerHTML = `
+        <div class="panel-head"><h2>${editing ? (readonly ? "Ver" : "Editar") : "Agregar"} Puerto</h2><span class="muted">El ID se genera automáticamente al guardar</span></div>
+        <div class="form-grid">
+          ${editing ? `<label>ID<input id="portFormId" value="${portFormValue(row, "id")}" readonly /></label>` : ""}
+          <label>Continente<input id="portFormContinente" value="${portFormValue(row, "continente")}" list="portContinentesList" required /></label>
+          <label>País<input id="portFormPais" value="${portFormValue(row, "pais")}" list="portPaisesList" required /></label>
+          <label>Puerto<input id="portFormPuerto" value="${portFormValue(row, "puerto")}" required /></label>
+          <datalist id="portContinentesList"></datalist>
+          <datalist id="portPaisesList"></datalist>
+        </div>
+        <div class="md-actions">
+          ${readonly ? "" : `<button class="green" onclick="savePortRecord(${editing ? Number(row.id) : "null"})">Guardar</button>`}
+          ${editing && !readonly ? `<button class="brown" onclick="deletePortById(${Number(row.id)})">Eliminar</button>` : ""}
+          <button class="secondary" onclick="renderPortsMasterView()">Volver</button>
+        </div>
+        <div id="portFormMsg" class="status hidden"></div>`;
+      if (readonly) ["portFormContinente","portFormPais","portFormPuerto"].forEach(id => { if ($(id)) $(id).disabled = true; });
+      loadPortFormDatalists().catch(() => null);
+    }
+    async function loadPortFormDatalists() {
+      const conts = await getJSON("/cpp/continentes").catch(() => []);
+      if ($("portContinentesList")) $("portContinentesList").innerHTML = rowsList(conts).map(x => `<option value="${esc(x)}"></option>`).join("");
+      const cont = valueFrom("portFormContinente");
+      const paises = cont ? await getJSON(`/cpp/paises?continente=${encodeURIComponent(cont)}`).catch(() => []) : [];
+      if ($("portPaisesList")) $("portPaisesList").innerHTML = rowsList(paises).map(x => `<option value="${esc(x)}"></option>`).join("");
+      const contInput = $("portFormContinente");
+      if (contInput) contInput.onchange = loadPortFormDatalists;
+    }
+    function portPayloadFromForm() {
+      return {
+        continente:valueFrom("portFormContinente"),
+        pais:valueFrom("portFormPais"),
+        puerto:valueFrom("portFormPuerto")
+      };
+    }
+    async function savePortRecord(id=null) {
+      const msg = $("portFormMsg");
+      msg.className = "status";
+      msg.textContent = "Guardando...";
+      try {
+        const payload = portPayloadFromForm();
+        if (!payload.continente || !payload.pais || !payload.puerto) throw new Error("Continente, país y puerto son requeridos.");
+        await sendJSON(id ? "PUT" : "POST", id ? `/cpp/ports/${encodeURIComponent(id)}` : "/cpp/ports", payload);
+        renderPortsMasterView();
+        await loadPortFilterContinents(payload.continente);
+        $("portFilterCont").value = payload.continente;
+        await loadPortFilterCountries(payload.pais);
+        $("portFilterPais").value = payload.pais;
+        await loadPortFilterPorts(payload.puerto);
+        $("portFilterPuerto").value = payload.puerto;
+        await loadPorts();
+      } catch (err) {
+        msg.className = "status error";
+        msg.textContent = err.message;
+      }
+    }
+    async function deletePortRecord(rowIndex) {
+      const row = portRows[rowIndex];
+      if (!row) return;
+      await deletePortById(row.id);
+    }
+    async function deletePortById(id) {
+      if (!id) return;
+      if (!confirm(`¿Eliminar puerto ${id}?`)) return;
+      const msg = $("portFormMsg") || $("portsMsg");
+      if (msg) {
+        msg.className = "status";
+        msg.textContent = "Eliminando...";
+      }
+      try {
+        await sendJSON("DELETE", `/cpp/ports/${encodeURIComponent(id)}`, null);
+        renderPortsMasterView();
+      } catch (err) {
+        if (msg) {
+          msg.className = "status error";
+          msg.textContent = err.message;
+        } else {
+          alert(err.message);
+        }
+      }
+    }
+    function codePrefix() {
+      return selectedCompany().startsWith("MCI") ? "MCI" : "MSL";
+    }
+    async function nextCode(config) {
+      if (!config.ultimo) return "";
+      try {
+        const data = await getJSON(config.ultimo);
+        const next = Number(data.ultimo || 0) + 1;
+        return `${codePrefix()}-${String(next).padStart(4, "0")}-${config.suffix}`;
+      } catch {
+        return "";
+      }
+    }
+    function rowValue(row, key) {
+      if (!row) return undefined;
+      if (Object.prototype.hasOwnProperty.call(row, key)) return row[key];
+      const canonical = value => String(value || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+      const lower = canonical(key);
+      const found = Object.keys(row).find(k => canonical(k) === lower);
+      return found ? row[found] : undefined;
+    }
+    function normalizeClientePayload(payload) {
+      if (payload.FechaDePago === "") payload.FechaDePago = null;
+      return payload;
+    }
+    function normalizePayload(key, payload) {
+      if (key === "clientes") return normalizeClientePayload(payload);
+      if (key === "company_fiscal") {
+        const clone = { ...payload };
+        delete clone.company_code;
+        return clone;
+      }
+      return payload;
+    }
+    function buildMasterPayload(config) {
+      const payload = {};
+      config.fields.forEach(([key,,type]) => {
+        const el = $(`md_${key}`);
+        if (!el) return;
+        payload[key] = type === "checkbox" ? el.checked : el.value;
+      });
+      payload.company_code = selectedCompany();
+      return normalizePayload(currentMasterKey || "", payload);
+    }
+    function masterFieldHtml(field, row) {
+      const [key, label, type, fallback, required] = field;
+      const value = rowValue(row, key);
+      const val = value === undefined || value === null ? fallback : value;
+      const req = required ? " required" : "";
+      const wide = type === "textarea" ? " wide" : "";
+      if (type === "textarea") return `<label class="${wide}">${esc(label)}<textarea id="md_${key}"${req}>${esc(val)}</textarea></label>`;
+      if (type === "checkbox") {
+        const checked = val === true || String(val).toLowerCase() === "true" || String(val).toLowerCase() === "activo" ? " checked" : "";
+        return `<label>${esc(label)}<input id="md_${key}" type="checkbox"${checked} /></label>`;
+      }
+      return `<label>${esc(label)}<input id="md_${key}" type="${type}" value="${esc(val)}"${req} /></label>`;
+    }
+    let currentMasterKey = "";
+    async function openMasterForm(key, rowIndex, mode="edit") {
+      if (key === "puertos") {
+        if (rowIndex !== null && rowIndex !== undefined && !portRows.length && currentRows.length) {
+          portRows = currentRows;
+        }
+        openPortForm(rowIndex, mode);
+        return;
+      }
+      currentMasterKey = key;
+      const config = MASTER_CONFIG[key];
+      if (!config) return;
+      const editing = rowIndex !== null && rowIndex !== undefined;
+      let row = editing ? currentRows[rowIndex] : {};
+      const ws = $("masterWorkspace");
+      ws.classList.remove("hidden");
+      if (editing) {
+        ws.innerHTML = `<div class="panel-head"><h2>${mode === "view" ? "Ver" : "Editar"} ${config.title}</h2></div>`;
+        const code = rowValue(row, config.codeKey);
+        try {
+          row = await getJSON(`${config.endpoint}/${encodeURIComponent(code)}`);
+        } catch (err) {
+          ws.innerHTML = `<div class="panel-head"><h2>${config.title}</h2></div><div class="status error">No se pudo consultar GET: ${err.message}</div>`;
+          return;
+        }
+      }
+      const readonly = mode === "view";
+      ws.innerHTML = `<div class="panel-head"><h2>${editing ? "Editar" : "Agregar"} ${config.title}</h2></div>
+        <div class="form-grid">${config.fields.map(f => masterFieldHtml(f, row)).join("")}</div>
+        <div class="md-actions">
+          ${readonly ? "" : `<button class="green" onclick="saveMasterRecord('${key}', ${editing ? "true" : "false"})">Guardar</button>`}
+          ${editing ? `<button class="brown" onclick="deleteMasterRecord('${key}')">Inhabilitar / eliminar</button>` : ""}
+          <button class="secondary" onclick="openMasterView('${key}')">Volver</button>
+        </div>
+        <div id="masterFormMsg" class="status hidden"></div>`;
+      if (!editing && config.ultimo) {
+        const code = await nextCode(config);
+        const input = $(`md_${config.codeKey}`);
+        if (input && code) input.value = code;
+      }
+      const codeInput = $(`md_${config.codeKey}`);
+      if (editing && codeInput) codeInput.readOnly = true;
+      if (readonly) config.fields.forEach(([fieldKey]) => {
+        const el = $(`md_${fieldKey}`);
+        if (el) el.disabled = true;
+      });
+    }
+    async function saveMasterRecord(key, editing) {
+      const config = MASTER_CONFIG[key];
+      const msg = $("masterFormMsg");
+      msg.className = "status";
+      msg.textContent = "Guardando...";
+      try {
+        const payload = buildMasterPayload(config);
+        const path = editing ? config.update : config.add;
+        const recordId = payload[config.codeKey] || $(`md_${config.codeKey}`)?.value || "";
+        const resolvedPath = path
+          .replace("{company}", encodeURIComponent(selectedCompany()))
+          .replace("{id}", encodeURIComponent(recordId));
+        const data = await sendJSON(editing ? "PUT" : "POST", resolvedPath, payload);
+        msg.textContent = data.msg || "Guardado correctamente.";
+        await openMasterView(key);
+      } catch (err) {
+        msg.className = "status error";
+        msg.textContent = err.message;
+      }
+    }
+    async function deleteMasterRecord(key, rowIndex=null) {
+      const config = MASTER_CONFIG[key];
+      const code = rowIndex === null ? $(`md_${config.codeKey}`)?.value : rowValue(currentRows[rowIndex], config.codeKey);
+      if (!code) return;
+      if (!confirm(`¿Inhabilitar/eliminar ${config.title} ${code}?`)) return;
+      let msg = $("masterFormMsg");
+      if (!msg) {
+        const ws = $("masterWorkspace");
+        ws.classList.remove("hidden");
+        ws.innerHTML = `<div id="masterFormMsg" class="status">Aplicando...</div>`;
+        msg = $("masterFormMsg");
+      }
+      msg.className = "status";
+      msg.textContent = "Aplicando...";
+      try {
+        const data = await sendJSON("DELETE", `${config.endpoint}/${encodeURIComponent(code)}`);
+        msg.textContent = data.msg || "Actualizado.";
+        await openMasterView(key);
+      } catch (err) {
+        msg.className = "status error";
+        msg.textContent = err.message;
+      }
+    }
+    function bankPayloadFromForm() {
+      return {
+        bank_name:$("bank_bank_name").value,
+        currency:$("bank_currency").value,
+        iban:$("bank_iban").value,
+        swift_code:$("bank_swift_code").value,
+        bank_address:$("bank_bank_address").value,
+        uid:$("bank_uid").value,
+        beneficiary_name:$("bank_beneficiary_name").value
+      };
+    }
+    function bankForm(row=null) {
+      const editing = !!row;
+      const val = key => esc(row?.[key] ?? "");
+      $("masterWorkspace").innerHTML = `<div class="panel-head"><h2>${editing ? "Editar" : "Agregar"} dato bancario</h2></div>
+        <div class="form-grid">
+          <label>Banco<input id="bank_bank_name" value="${val("bank_name")}" required /></label>
+          <label>Moneda<select id="bank_currency"><option>CRC</option><option>USD</option><option>EUR</option></select></label>
+          <label>Cuenta IBAN<input id="bank_iban" value="${val("iban")}" required /></label>
+          <label>Swift Code<input id="bank_swift_code" value="${val("swift_code")}" /></label>
+          <label>UID<input id="bank_uid" value="${val("uid")}" /></label>
+          <label>Beneficiario<input id="bank_beneficiary_name" value="${val("beneficiary_name")}" required /></label>
+          <label class="wide">Dirección banco<textarea id="bank_bank_address">${val("bank_address")}</textarea></label>
+        </div>
+        <div class="md-actions">
+          <button class="green" onclick="saveBankAccount(${editing ? row.id : "null"})">Guardar</button>
+          ${editing ? `<button class="brown" onclick="deleteBankAccount(${row.id})">Eliminar</button>` : ""}
+          <button class="secondary" onclick="loadBankAccounts()">Volver</button>
+        </div>
+        <div id="bankMsg" class="status hidden"></div>`;
+      $("bank_currency").value = row?.currency || "CRC";
+    }
+    function bankDownloadLink(row, language) {
+      const params = new URLSearchParams({
+        request_user:session?.usuario || "",
+        request_role:session?.rol || "",
+        bank_access_token:bankAccessToken,
+        company:selectedCompany(),
+        company_name:(($("companyTop")?.selectedOptions?.[0] || $("company")?.selectedOptions?.[0])?.textContent || "").split("|").slice(1).join("|").trim(),
+        language
+      });
+      return `/master-data/bank-accounts/${encodeURIComponent(row.id)}/letter-download.pdf?${params.toString()}`;
+    }
+    async function openBankAccounts() {
+      const ws = $("masterWorkspace");
+      ws.classList.remove("hidden");
+      if (!bankAccessToken) {
+        ws.innerHTML = `<div class="panel-head"><h2>Datos bancarios</h2></div>
+          <div class="form-grid">
+            <label>Código Microsoft Authenticator<input id="bankTotp" inputmode="numeric" autocomplete="one-time-code" placeholder="000000" /></label>
+          </div>
+          <div class="md-actions"><button onclick="unlockBankAccounts()">Revalidar</button></div>
+          <div id="bankMsg" class="status hidden"></div>`;
+        return;
+      }
+      await loadBankAccounts();
+    }
+    async function unlockBankAccounts() {
+      const msg = $("bankMsg");
+      msg.className = "status";
+      msg.textContent = "Revalidando...";
+      try {
+        const data = await sendJSON("POST", "/master-data/bank-accounts/unlock", { totp_code:$("bankTotp").value });
+        bankAccessToken = data.access_token || "";
+        await loadBankAccounts();
+      } catch (err) {
+        msg.className = "status error";
+        msg.textContent = err.message;
+      }
+    }
+    async function loadBankAccounts() {
+      const ws = $("masterWorkspace");
+      ws.classList.remove("hidden");
+      ws.innerHTML = `<div class="panel-head"><h2>Datos bancarios</h2></div>`;
+      try {
+        const payload = await getJSON("/master-data/bank-accounts", { "X-Bank-Access-Token":bankAccessToken });
+        bankRows = rowsFromPayload(payload);
+        const cols = ["bank_name","currency","iban","swift_code","uid","beneficiary_name"];
+        ws.innerHTML = `<div class="panel-head"><h2>Datos bancarios</h2><div class="toolbar"><button onclick="bankForm()">Nuevo</button><span class="muted">${bankRows.length} registros</span></div></div>
+          <div class="table-wrap"><table><thead><tr>${cols.map(c => `<th>${esc(c)}</th>`).join("")}<th>Acción</th></tr></thead><tbody>${bankRows.map((row, i) => `<tr>${cols.map(c => `<td>${esc(row[c])}</td>`).join("")}<td><div class="toolbar"><button class="secondary" onclick="viewBankAccount(${i})">Ver</button><button onclick="bankForm(bankRows[${i}])">Editar</button><a href="${bankDownloadLink(row, "ES")}" target="_blank"><button class="green">PDF ES</button></a><a href="${bankDownloadLink(row, "EN")}" target="_blank"><button class="secondary">PDF EN</button></a><button class="brown" onclick="deleteBankAccount(${row.id})">Eliminar</button></div></td></tr>`).join("")}</tbody></table></div>`;
+      } catch (err) {
+        bankAccessToken = "";
+        ws.innerHTML = `<div class="panel-head"><h2>Datos bancarios</h2></div><div class="status error">${esc(err.message)}</div><div class="md-actions"><button onclick="openBankAccounts()">Revalidar</button></div>`;
+      }
+    }
+    function viewBankAccount(index) {
+      bankForm(bankRows[index]);
+      ["bank_bank_name","bank_currency","bank_iban","bank_swift_code","bank_bank_address","bank_uid","bank_beneficiary_name"].forEach(id => {
+        const el = $(id);
+        if (el) el.disabled = true;
+      });
+      $("bankMsg").className = "status";
+      $("bankMsg").textContent = "Vista de solo lectura.";
+    }
+    async function saveBankAccount(id=null) {
+      const msg = $("bankMsg");
+      msg.className = "status";
+      msg.textContent = "Guardando...";
+      try {
+        const path = id ? `/master-data/bank-accounts/${encodeURIComponent(id)}` : "/master-data/bank-accounts";
+        const data = await sendJSON(id ? "PUT" : "POST", path, bankPayloadFromForm(), { "X-Bank-Access-Token":bankAccessToken });
+        msg.textContent = data.id ? "Guardado correctamente." : "Guardado.";
+        await loadBankAccounts();
+      } catch (err) {
+        msg.className = "status error";
+        msg.textContent = err.message;
+      }
+    }
+    async function deleteBankAccount(id) {
+      if (!confirm(`¿Eliminar dato bancario ${id}?`)) return;
+      const ws = $("masterWorkspace");
+      ws.innerHTML = `<div id="bankMsg" class="status">Eliminando...</div>`;
+      try {
+        await sendJSON("DELETE", `/master-data/bank-accounts/${encodeURIComponent(id)}`, null, { "X-Bank-Access-Token":bankAccessToken });
+        await loadBankAccounts();
+      } catch (err) {
+        $("bankMsg").className = "status error";
+        $("bankMsg").textContent = err.message;
+      }
+    }
+    async function openCompanyFiscalForm() {
+      const ws = $("masterWorkspace");
+      ws.classList.remove("hidden");
+      ws.innerHTML = `<div class="panel-head"><h2>Datos fiscales</h2></div>`;
+      try {
+        const row = await getJSON("/companies/current");
+        currentRows = [row];
+        await openMasterForm("company_fiscal", 0, "edit");
+      } catch (err) {
+        ws.innerHTML = `<div class="panel-head"><h2>Datos fiscales</h2></div><div class="status error">No se pudo consultar datos fiscales: ${err.message}</div>`;
+      }
+    }
+    function renderServicios() {
+      selectedServiceIndex = null;
+      $("content").innerHTML = `
+        <div class="card panel">
+          <div class="panel-head">
+            <h2>Servicios</h2>
+            <span id="svcCount" class="muted">Cargando servicios...</span>
+          </div>
+          <div class="service-command-center">
+            <section class="service-command-card">
+              <h3>Acciones del servicio</h3>
+              <div class="service-actions primary-actions">
+                <button onclick="openServiceForm()">+ Agregar servicio</button>
+                <button class="secondary" onclick="confirmSelectedService()">Generar consecutivo</button>
+                <button onclick="editSelectedService()">Editar servicio</button>
+                <button class="green" onclick="closeSelectedService()">Finalizar</button>
+                <button class="secondary" onclick="viewSelectedService()">Ver</button>
+                <button class="secondary" onclick="delaySelectedService()">Demoras</button>
+                <button class="brown" onclick="cancelSelectedService()">Cancelar</button>
+                <button class="dark" onclick="deleteSelectedService()">Eliminar</button>
+              </div>
+            </section>
+            <section class="service-command-card">
+              <h3>Exportar tabla</h3>
+              <div class="service-actions export-actions">
+                <button class="secondary" onclick="exportServicios('csv')">CSV</button>
+                <button class="secondary" onclick="exportServicios('pdf')">PDF</button>
+                <button class="secondary" onclick="exportServicios('xml')">XML</button>
+                <button class="secondary" onclick="exportServicios('excel')">Excel</button>
+              </div>
+            </section>
+          </div>
+          <div id="svcMsg" class="status hidden"></div>
+          <div id="svcTable" class="workspace"></div>
+        </div>`;
+      $("svcTable").innerHTML = '<div class="status">Cargando servicios. Use los encabezados de la tabla para ordenar o filtrar.</div>';
+      loadServiceMeta().catch(() => null).then(() => loadServicios(1));
+    }
+    async function loadServiceMeta() {
+      const meta = await getJSON("/servicios/_meta/filtros");
+      serviceMeta = meta || {};
+      if ($("svcTipo")) $("svcTipo").innerHTML = options(serviceMeta.tipo, "", "Todos");
+      if ($("svcEstado")) $("svcEstado").innerHTML = options(serviceMeta.status, "", "Todos");
+      if ($("svcCliente")) $("svcCliente").innerHTML = options(serviceMeta.cliente, "", "Todos");
+      if ($("svcOperacion")) $("svcOperacion").innerHTML = options(serviceMeta.operacion, "", "Todos");
+      if ($("svcSurveyor")) $("svcSurveyor").innerHTML = options(serviceMeta.surveyor, "", "Todos");
+      const continentes = await getJSON("/cpp/continentes").catch(() => serviceMeta.continente || []);
+      if ($("svcContinente")) $("svcContinente").innerHTML = options(continentes, "", "Todos");
+      if ($("svcPais")) $("svcPais").innerHTML = options(serviceMeta.pais, "", "Todos");
+      if ($("svcPuerto")) $("svcPuerto").innerHTML = options(serviceMeta.puerto, "", "Todos");
+      if ($("svcContinente")) $("svcContinente").onchange = async () => {
+        const cont = valueFrom("svcContinente");
+        const paises = cont ? await getJSON(`/cpp/paises?continente=${encodeURIComponent(cont)}`).catch(() => serviceMeta.pais || []) : serviceMeta.pais || [];
+        if ($("svcPais")) $("svcPais").innerHTML = options(paises, "", "Todos");
+        if ($("svcPuerto")) $("svcPuerto").innerHTML = options([], "", "Todos");
+      };
+      if ($("svcPais")) $("svcPais").onchange = async () => {
+        const pais = valueFrom("svcPais");
+        const cont = valueFrom("svcContinente");
+        let path = `/cpp/puertos?pais=${encodeURIComponent(pais)}`;
+        if (cont) path += `&continente=${encodeURIComponent(cont)}`;
+        const puertos = pais ? await getJSON(path).catch(() => serviceMeta.puerto || []) : serviceMeta.puerto || [];
+        if ($("svcPuerto")) $("svcPuerto").innerHTML = options(puertos, "", "Todos");
+      };
+    }
+    function serviceQueryParams(page=1) {
+      const params = new URLSearchParams({ page:String(page), page_size:String(SERVICE_PAGE_SIZE) });
+      const map = {
+        svcYear:"year", svcTipo:"tipo", svcEstado:"status", svcCliente:"cliente", svcContinente:"continente",
+        svcPais:"pais", svcPuerto:"puerto", svcOperacion:"operacion", svcSurveyor:"surveyor", svcQ:"q"
+      };
+      Object.entries(map).forEach(([id, key]) => {
+        const val = valueFrom(id);
+        if (val && !val.toLowerCase().startsWith("seleccione")) params.set(key, val);
+      });
+      return params.toString();
+    }
+    async function loadServicios(page=1) {
+      servicePage = page;
+      showServiceMsg("Cargando servicios...", false);
+      try {
+        const payload = await getJSON(`/servicios/?${serviceQueryParams(page)}`);
+        serviceRows = rowsList(payload).map(row => {
+          const clean = { ...row };
+          SERVICE_HIDDEN_COLUMNS.forEach(col => delete clean[col]);
+          return clean;
+        });
+        serviceTotal = Number(payload.total || serviceRows.length || 0);
+        selectedServiceIndex = null;
+        selectedServiceIndexes = new Set();
+        $("svcCount").textContent = `${intFmt.format(serviceTotal)} servicios`;
+        $("svcMsg").classList.add("hidden");
+        renderServiceTable();
+      } catch (err) {
+        showServiceMsg(`No se pudo consultar GET servicios: ${err.message}`, true);
+      }
+    }
+    function showServiceMsg(text, isError=false) {
+      const msg = $("svcMsg");
+      if (!msg) return;
+      msg.className = isError ? "status error" : "status";
+      msg.textContent = text;
+    }
+    function serviceStatusBadge(status) {
+      const value = String(status || "");
+      const klass = value.toLowerCase().includes("cancel") ? "cancel" : value.toLowerCase().includes("cerr") || value.toLowerCase().includes("final") ? "closed" : "open";
+      return `<span class="badge ${klass}">${esc(value || "Sin estado")}</span>`;
+    }
+    function serviceCell(row, col) {
+      if (col === "estado") return serviceStatusBadge(row[col]);
+      const value = row[col];
+      if (["honorarios","costo_operativo","costo_tarjetas","valor_factura"].includes(col)) return esc(Number(value || 0).toLocaleString("en-US", { minimumFractionDigits:2, maximumFractionDigits:2 }));
+      return esc(value ?? "");
+    }
+    function renderServiceTable() {
+      const target = $("svcTable");
+      if (!serviceRows.length) {
+        target.innerHTML = '<div class="status">Sin servicios para los filtros seleccionados.</div>';
+        return;
+      }
+      const totalPages = Math.max(1, Math.ceil(serviceTotal / SERVICE_PAGE_SIZE));
+      target.innerHTML = `
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th class="pick-col"></th>${visibleServiceColumns().map(c => `<th>${esc(c)}</th>`).join("")}</tr></thead>
+            <tbody>${serviceRows.map((row, i) => {
+              const missingCosts = String(row.estado || "").toLowerCase().includes("oper") && !Number(row.honorarios || 0) && !Number(row.costo_operativo || 0) && !Number(row.costo_tarjetas || 0);
+              const selected = selectedServiceIndexes.has(i);
+              return `<tr id="svcRow_${i}" class="${selected ? "service-selected" : missingCosts ? "service-warning" : ""}" onclick="toggleServiceRow(${i})"><td class="pick-col"><input class="row-pick" type="checkbox" ${selected ? "checked" : ""} onclick="event.stopPropagation(); toggleServiceRow(${i}, this.checked)" /></td>${visibleServiceColumns().map(c => `<td>${serviceCell(row, c)}</td>`).join("")}</tr>`;
+            }).join("")}</tbody>
+          </table>
+        </div>
+        <div class="pager">
+          <button class="secondary" onclick="loadServicios(Math.max(1, servicePage-1))" ${servicePage <= 1 ? "disabled" : ""}>Anterior</button>
+          <span class="muted">Página ${servicePage} de ${totalPages} · ${serviceRows.length} visibles de ${intFmt.format(serviceTotal)}</span>
+          <button class="secondary" onclick="loadServicios(servicePage+1)" ${servicePage >= totalPages ? "disabled" : ""}>Siguiente</button>
+        </div>`;
+    }
+    function toggleServiceRow(index, checked=null) {
+      const next = checked === null ? !selectedServiceIndexes.has(index) : checked;
+      selectedServiceIndex = setIndexSelection(selectedServiceIndexes, index, next);
+      renderServiceTable();
+    }
+    function selectServiceRow(index) {
+      selectedServiceIndexes = new Set([index]);
+      selectedServiceIndex = index;
+      renderServiceTable();
+    }
+    function clearServiceFilters() {
+      ["svcQ","svcYear","svcTipo","svcEstado","svcCliente","svcContinente","svcPais","svcPuerto","svcOperacion","svcSurveyor"].forEach(id => {
+        const el = $(id);
+        if (el) el.value = "";
+      });
+      serviceRows = [];
+      selectedServiceIndex = null;
+      selectedServiceIndexes = new Set();
+      serviceTotal = 0;
+      $("svcCount").textContent = "Presione Buscar";
+      $("svcMsg").classList.add("hidden");
+      $("svcTable").innerHTML = '<div class="status">Configure filtros y presione Buscar.</div>';
+    }
+    async function serviceLookup(kind, term="") {
+      const params = new URLSearchParams({ page:"1", page_size:"250" });
+      if (term) params.set("q", term);
+      const endpoints = {
+        clientes:"/clientes",
+        operaciones:"/servicios_md/",
+        surveyores:"/surveyores"
+      };
+      const data = await getJSON(`${endpoints[kind]}?${params.toString()}`).catch(() => ({ data:[] }));
+      return rowsList(data);
+    }
+    async function ensureServiceCatalogs() {
+      const [clientes, operaciones, surveyors] = await Promise.all([
+        serviceLookup("clientes"),
+        serviceLookup("operaciones"),
+        getJSON("/servicios-surveyors/catalogo/lista").catch(() => ({ data:[] }))
+      ]);
+      serviceMeta.clientesCatalog = clientes;
+      serviceMeta.operacionesCatalog = operaciones.length
+        ? operaciones
+        : rowsList(serviceMeta.operacion || []).map(nombre => ({ nombre }));
+      serviceSurveyorCatalog = rowsList(surveyors).map(row => ({
+        ...row,
+        full_name:[row.nombre, row.apellidos].filter(Boolean).join(" ") || row.surveyor_nombre || row.nombre_completo || row.nombre || ""
+      }));
+    }
+    function catalogOptionText(row, keys) {
+      for (const key of keys) if (row?.[key]) return String(row[key]);
+      return "";
+    }
+    function serviceSelectOptions(rows, selected, keys, placeholder="Seleccione") {
+      const values = rowsList(rows).map(r => catalogOptionText(r, keys)).filter(Boolean);
+      return options(values, selected || "", placeholder);
+    }
+    function serviceInputDate(value) {
+      const text = String(value || "").trim();
+      if (!text) return "";
+      const iso = text.match(/^(\d{4}-\d{2}-\d{2})/);
+      if (iso) return iso[1];
+      const mdy = text.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+      if (mdy) return `${mdy[3]}-${mdy[1].padStart(2, "0")}-${mdy[2].padStart(2, "0")}`;
+      const dmy = text.match(/^(\d{1,2})-(\d{1,2})-(\d{4})$/);
+      if (dmy) return `${dmy[3]}-${dmy[2].padStart(2, "0")}-${dmy[1].padStart(2, "0")}`;
+      return text.slice(0, 10);
+    }
+    function serviceInputTime(value) {
+      const text = String(value || "").trim();
+      if (!text) return "";
+      const compact = text.toUpperCase().replace(/\./g, "").replace(/\s+/g, "");
+      const match = compact.match(/^(\d{1,2})(?::(\d{1,2}))?(?::\d{1,2})?(AM|PM)?$/);
+      if (!match) return text.slice(0, 5);
+      let hour = Number(match[1] || 0);
+      const minute = Number(match[2] || 0);
+      const suffix = match[3];
+      if (suffix === "PM" && hour < 12) hour += 12;
+      if (suffix === "AM" && hour === 12) hour = 0;
+      if (hour > 23 || minute > 59) return "";
+      return `${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}`;
+    }
+    async function loadFormLocation(row={}) {
+      const cont = valueFrom("svcForm_continente") || row.continente || "";
+      const pais = valueFrom("svcForm_pais") || row.pais || "";
+      $("svcForm_continente").innerHTML = options(await getJSON("/cpp/continentes").catch(() => serviceMeta.continente || []), cont, "Seleccione continente");
+      $("svcForm_pais").innerHTML = options(cont ? await getJSON(`/cpp/paises?continente=${encodeURIComponent(cont)}`).catch(() => serviceMeta.pais || []) : serviceMeta.pais || [], pais, "Seleccione país");
+      let puertoPath = `/cpp/puertos?pais=${encodeURIComponent(pais)}`;
+      if (cont) puertoPath += `&continente=${encodeURIComponent(cont)}`;
+      $("svcForm_puerto").innerHTML = options(pais ? await getJSON(puertoPath).catch(() => serviceMeta.puerto || []) : serviceMeta.puerto || [], row.puerto || "", "Seleccione puerto");
+      $("svcForm_continente").onchange = async () => {
+        const selected = valueFrom("svcForm_continente");
+        const paises = selected ? await getJSON(`/cpp/paises?continente=${encodeURIComponent(selected)}`).catch(() => []) : [];
+        $("svcForm_pais").innerHTML = options(paises, "", "Seleccione país");
+        $("svcForm_puerto").innerHTML = options([], "", "Seleccione puerto");
+      };
+      $("svcForm_pais").onchange = async () => {
+        const selectedPais = valueFrom("svcForm_pais");
+        const selectedCont = valueFrom("svcForm_continente");
+        let path = `/cpp/puertos?pais=${encodeURIComponent(selectedPais)}`;
+        if (selectedCont) path += `&continente=${encodeURIComponent(selectedCont)}`;
+        const puertos = selectedPais ? await getJSON(path).catch(() => []) : [];
+        $("svcForm_puerto").innerHTML = options(puertos, "", "Seleccione puerto");
+      };
+    }
+    function serviceFormValue(id) {
+      const el = $("svcForm_" + id);
+      return el ? el.value.trim() : "";
+    }
+    function servicePayload() {
+      const surveyors = readSurveyorLines();
+      const names = surveyors.map(s => s.surveyor_nombre).filter(Boolean);
+      const honorarios = surveyors.reduce((sum, item) => sum + Number(item.honorario || 0), 0);
+      return {
+        tipo:serviceFormValue("tipo"),
+        buque_contenedor:serviceFormValue("buque_contenedor"),
+        cliente:serviceFormValue("cliente"),
+        contacto:serviceFormValue("contacto"),
+        detalle:serviceFormValue("detalle"),
+        continente:serviceFormValue("continente"),
+        pais:serviceFormValue("pais"),
+        puerto:serviceFormValue("puerto"),
+        operacion:serviceFormValue("operacion"),
+        surveyor:names.length > 1 ? names.join(", ") : (names[0] || serviceFormValue("surveyor")),
+        honorarios:String(honorarios || Number(serviceFormValue("honorarios") || 0)),
+        costo_operativo:serviceFormValue("costo_operativo") || "0",
+        costo_tarjetas:serviceFormValue("costo_tarjetas") || "0",
+        fecha_inicio:serviceFormValue("fecha_inicio"),
+        hora_inicio:serviceFormValue("hora_inicio"),
+        fecha_fin:serviceFormValue("fecha_fin") || null,
+        hora_fin:serviceFormValue("hora_fin") || null,
+        fecha_factura:serviceFormValue("fecha_factura") || null,
+        fecha_vencimiento:serviceFormValue("fecha_vencimiento") || null
+      };
+    }
+    function estimatedServiceAmount(payload) {
+      return Number(payload.honorarios || 0) + Number(payload.costo_operativo || 0) + Number(payload.costo_tarjetas || 0);
+    }
+    function serviceCreditFingerprint(payload) {
+      return {
+        cliente:String(payload?.cliente || "").trim().toUpperCase(),
+        amount:Number(estimatedServiceAmount(payload) || 0).toFixed(2)
+      };
+    }
+    function serviceCreditCacheKey(payload) {
+      const fp = serviceCreditFingerprint(payload);
+      return `${fp.cliente}|${fp.amount}`;
+    }
+    function serviceNeedsCreditCheck(consec, payload) {
+      if (!consec) return true;
+      return true;
+    }
+    async function applyCreditReleaseIfNeeded(payload, requireAdvisoryAck=true) {
+      const decision = await postJSON("/cliente-credito/order-to-cash/check", {
+        cliente:payload.cliente,
+        projected_amount:estimatedServiceAmount(payload),
+        currency:"USD"
+      });
+      const money = value => Number(value || 0).toLocaleString("en-US", {minimumFractionDigits:2, maximumFractionDigits:2});
+      const trend = decision.payment_trend || {};
+      const alerts = Array.isArray(decision.risk_alerts) ? decision.risk_alerts : [];
+      const alertBlock = alerts.length ? `\\nAlertas:\\n${alerts.map(item => `- ${item}`).join("\\n")}\\n` : "";
+      const riskText =
+        `${decision.message || "Revision crediticia."}\n\n` +
+        `Limite: ${decision.currency} ${money(decision.credit_limit)}\n` +
+        `CxC pendiente: ${decision.currency} ${money(decision.open_ar)}\n` +
+        `CxC vencida: ${decision.currency} ${money(decision.overdue_ar)}\n` +
+        `Nueva exposicion: ${decision.currency} ${money(decision.projected_exposure)}\n` +
+        `Disponible proyectado: ${decision.currency} ${money(decision.available)}\n` +
+        `Exceso: ${decision.currency} ${money(decision.over_amount)}\n` +
+        `Payment trend: ${trend.label || trend.trend || "Sin datos"}\n` +
+        `Estado credito: ${decision.estado_credito || "-"} | Hold manual: ${decision.hold_manual ? "Si" : "No"}\n` +
+        alertBlock;
+      if (!decision.requires_release) {
+        if (decision.advisory_requires_ack && requireAdvisoryAck) {
+          const ok = confirm(`${riskText}\n¿Desea continuar con el servicio?`);
+          if (!ok) throw new Error("Servicio detenido por alerta crediticia.");
+        }
+        return { ...payload, credit_advisory_acknowledged: !!decision.advisory_requires_ack };
+      }
+      const role = String(session?.rol || "").toLowerCase();
+      if (!["admin", "master"].includes(role)) {
+        throw new Error(decision.message || "Cliente requiere liberacion crediticia de admin/master.");
+      }
+      const ok = confirm(`${riskText}\n¿Desea liberar y continuar?`);
+      if (!ok) throw new Error("Servicio detenido por control crediticio.");
+      const reason = prompt("Justificacion del release crediticio", decision.reason_code || "Release aprobado por admin/master");
+      if (!reason || !reason.trim()) throw new Error("Justificacion de release crediticio requerida.");
+      return { ...payload, credit_release_approved:true, credit_release_reason:reason };
+    }
+    function surveyorLineHtml(name="", amount="") {
+      return `<div class="surveyor-line">
+        <select class="svcSurveyorName">${serviceSelectOptions(serviceSurveyorCatalog, name, ["full_name","nombre_completo","nombre","surveyor_nombre"], "Seleccione surveyor")}</select>
+        <input class="svcSurveyorAmount" type="number" step="0.01" value="${esc(amount)}" placeholder="Honorario" />
+        <button class="secondary" type="button" onclick="this.closest('.surveyor-line').remove(); updateSurveyorTotals()">-</button>
+      </div>`;
+    }
+    function readSurveyorLines() {
+      return [...document.querySelectorAll(".surveyor-line")].map(line => ({
+        surveyor_nombre:line.querySelector(".svcSurveyorName")?.value || "",
+        honorario:Number(line.querySelector(".svcSurveyorAmount")?.value || 0)
+      })).filter(item => item.surveyor_nombre);
+    }
+    function updateSurveyorTotals() {
+      const total = readSurveyorLines().reduce((sum, item) => sum + Number(item.honorario || 0), 0);
+      const input = $("svcForm_honorarios");
+      if (input) input.value = String(total || "");
+    }
+    function addSurveyorLine(name="", amount="") {
+      $("svcSurveyorLines").insertAdjacentHTML("beforeend", surveyorLineHtml(name, amount));
+      document.querySelectorAll(".svcSurveyorAmount").forEach(el => el.oninput = updateSurveyorTotals);
+    }
+    async function openServiceForm(row=null) {
+      await ensureServiceCatalogs();
+      const editing = !!row;
+      serviceEditBaseline = editing ? {
+        cliente:row?.cliente || "",
+        honorarios:row?.honorarios || 0,
+        costo_operativo:row?.costo_operativo || 0,
+        costo_tarjetas:row?.costo_tarjetas || 0
+      } : null;
+      serviceCreditApprovalCache = null;
+      const val = key => esc(row?.[key] ?? "");
+      const dateVal = key => esc(serviceInputDate(row?.[key]));
+      const timeVal = key => esc(serviceInputTime(row?.[key]));
+      document.body.insertAdjacentHTML("beforeend", `
+        <div class="modal-backdrop" id="svcModal">
+          <div class="modal">
+            <div class="modal-head">
+              <h2>${editing ? "Editar servicio " + esc(row.consec) : "Agregar servicio"}</h2>
+              <button class="secondary" onclick="closeModal()">Cerrar</button>
+            </div>
+            <div class="form-grid">
+              <label>Tipo<select id="svcForm_tipo"><option>Buque</option><option>Contenedor</option></select></label>
+              <label>Buque / contenedor<input id="svcForm_buque_contenedor" value="${val("buque_contenedor")}" required /></label>
+              <label>Cliente<select id="svcForm_cliente">${serviceSelectOptions(serviceMeta.clientesCatalog, row?.cliente, ["nombrejuridico","NombreJuridico","nombrecomercial","NombreComercial"], "Seleccione cliente")}</select></label>
+              <label>Contacto<input id="svcForm_contacto" value="${val("contacto")}" /></label>
+              <label>Continente<select id="svcForm_continente"></select></label>
+              <label>País<select id="svcForm_pais"></select></label>
+              <label>Puerto<select id="svcForm_puerto"></select></label>
+              <label>Operación<select id="svcForm_operacion">${serviceSelectOptions(serviceMeta.operacionesCatalog, row?.operacion, ["nombre","Nombre","operacion","Operacion","servicio","Servicio","label","descripcion","Descripcion"], "Seleccione operación")}</select></label>
+              <label>Fecha inicio<input id="svcForm_fecha_inicio" type="date" value="${dateVal("fecha_inicio")}" required /></label>
+              <label>Hora inicio<input id="svcForm_hora_inicio" type="time" value="${timeVal("hora_inicio")}" required /></label>
+              <label>Fecha fin<input id="svcForm_fecha_fin" type="date" value="${dateVal("fecha_fin")}" /></label>
+              <label>Hora fin<input id="svcForm_hora_fin" type="time" value="${timeVal("hora_fin")}" /></label>
+              <label>Honorarios<input id="svcForm_honorarios" type="number" step="0.01" value="${val("honorarios")}" /></label>
+              <label>Costo operativo<input id="svcForm_costo_operativo" type="number" step="0.01" value="${val("costo_operativo")}" /></label>
+              <label>Costo tarjetas<input id="svcForm_costo_tarjetas" type="number" step="0.01" value="${val("costo_tarjetas")}" /></label>
+              <label>Fecha factura<input id="svcForm_fecha_factura" type="date" value="${dateVal("fecha_factura")}" /></label>
+              <label>Fecha vencimiento<input id="svcForm_fecha_vencimiento" type="date" value="${dateVal("fecha_vencimiento")}" /></label>
+              <label class="wide">Detalle<textarea id="svcForm_detalle">${val("detalle")}</textarea></label>
+              <input id="svcForm_surveyor" type="hidden" value="${val("surveyor")}" />
+              <div class="wide surveyors-box">
+                <div class="panel-head"><h2>Surveyors</h2><button type="button" onclick="addSurveyorLine()">+ Surveyor</button></div>
+                <div id="svcSurveyorLines"></div>
+              </div>
+            </div>
+            <div class="md-actions">
+              <button class="green" onclick="saveService(${editing ? Number(row.consec) : "null"})">Guardar</button>
+              <button class="secondary" onclick="closeModal()">Cancelar</button>
+            </div>
+            <div id="svcFormMsg" class="status hidden"></div>
+          </div>
+        </div>`);
+      $("svcForm_tipo").value = row?.tipo || "Buque";
+      await loadFormLocation(row || {});
+      let savedSurveyors = [];
+      if (editing) {
+        const loaded = await getJSON(`/servicios-surveyors/${encodeURIComponent(row.consec)}`).catch(() => ({ data:[] }));
+        savedSurveyors = rowsList(loaded);
+      }
+      if (savedSurveyors.length) {
+        savedSurveyors.forEach(item => addSurveyorLine(item.surveyor_nombre || item.nombre || "", item.honorario || ""));
+      } else {
+        addSurveyorLine(row?.surveyor || "", row?.honorarios || "");
+      }
+      document.querySelectorAll(".svcSurveyorName").forEach(el => el.onchange = updateSurveyorTotals);
+    }
+    function closeModal() {
+      $("svcModal")?.remove();
+      serviceEditBaseline = null;
+      serviceCreditApprovalCache = null;
+    }
+    async function saveService(consec=null) {
+      const msg = $("svcFormMsg");
+      msg.className = "status";
+      msg.textContent = "Guardando...";
+      try {
+        const payload = servicePayload();
+        const required = ["tipo","buque_contenedor","cliente","continente","pais","puerto","operacion","surveyor","fecha_inicio","hora_inicio"];
+        const missing = required.filter(k => !payload[k]);
+        if (missing.length) throw new Error("Faltan campos obligatorios: " + missing.join(", "));
+        let approvedPayload = payload;
+        if (serviceNeedsCreditCheck(consec, payload)) {
+          const cacheKey = serviceCreditCacheKey(payload);
+          if (serviceCreditApprovalCache?.key === cacheKey) {
+            approvedPayload = { ...payload, ...(serviceCreditApprovalCache.extra || {}) };
+          } else {
+            approvedPayload = await applyCreditReleaseIfNeeded(payload, true);
+            serviceCreditApprovalCache = {
+              key: cacheKey,
+              extra: {
+                credit_advisory_acknowledged: approvedPayload.credit_advisory_acknowledged,
+                credit_release_approved: approvedPayload.credit_release_approved,
+                credit_release_reason: approvedPayload.credit_release_reason
+              }
+            };
+          }
+        }
+        const data = consec
+          ? await sendJSON("PUT", `/servicios/editar/${encodeURIComponent(consec)}`, approvedPayload)
+          : await postJSON("/servicios/add", approvedPayload);
+        const serviceId = consec || data.consec || data.id;
+        if (serviceId) await sendJSON(consec ? "PUT" : "POST", `/servicios-surveyors/${encodeURIComponent(serviceId)}`, { surveyors:readSurveyorLines() }).catch(() => null);
+        msg.textContent = data.msg || "Servicio guardado.";
+        closeModal();
+        await loadServiceMeta();
+        await loadServicios(servicePage);
+        refreshSummary();
+      } catch (err) {
+        msg.className = "status error";
+        msg.textContent = err.message;
+      }
+    }
+    async function editSelectedService() {
+      const row = requireService();
+      if (!row) return;
+      try {
+        const full = await getJSON(`/servicios/${encodeURIComponent(row.consec)}`);
+        await openServiceForm(full);
+      } catch (err) {
+        showServiceMsg(`No se pudo consultar GET del servicio: ${err.message}`, true);
+      }
+    }
+    async function viewSelectedService() {
+      const row = requireService();
+      if (!row) return;
+      try {
+        const full = await getJSON(`/servicios/${encodeURIComponent(row.consec)}`);
+        document.body.insertAdjacentHTML("beforeend", `
+          <div class="modal-backdrop" id="svcModal">
+            <div class="modal">
+              <div class="modal-head"><h2>Servicio ${esc(full.consec)}</h2><button class="secondary" onclick="closeModal()">Cerrar</button></div>
+              <div class="table-wrap"><table><tbody>${visibleServiceColumns().map(c => `<tr><th>${esc(c)}</th><td>${serviceCell(full, c)}</td></tr>`).join("")}</tbody></table></div>
+            </div>
+          </div>`);
+      } catch (err) {
+        showServiceMsg(`No se pudo abrir servicio: ${err.message}`, true);
+      }
+    }
+    async function confirmSelectedService() {
+      const row = requireService();
+      if (!row) return;
+      const fecha = prompt("Fecha inicio (YYYY-MM-DD)", row.fecha_inicio || new Date().toISOString().slice(0,10));
+      if (!fecha) return;
+      const hora = prompt("Hora inicio (HH:MM)", String(row.hora_inicio || "08:00").slice(0,5));
+      if (!hora) return;
+      await serviceAction("PUT", `/servicios/confirmar/${encodeURIComponent(row.consec)}`, { fecha_inicio:fecha, hora_inicio:hora }, "Consecutivo generado.");
+    }
+    async function closeSelectedService() {
+      const row = requireService();
+      if (!row) return;
+      const fecha = prompt("Fecha fin (YYYY-MM-DD)", row.fecha_fin || new Date().toISOString().slice(0,10));
+      if (!fecha) return;
+      const hora = prompt("Hora fin (HH:MM)", String(row.hora_fin || "17:00").slice(0,5));
+      if (!hora) return;
+      await serviceAction("PUT", `/servicios/cerrar/${encodeURIComponent(row.consec)}`, { fecha_fin:fecha, hora_fin:hora }, "Servicio cerrado.");
+      await sendJSON("PUT", `/servicios/generar_informe/${encodeURIComponent(row.consec)}`, {}).catch(() => null);
+      await loadServicios(servicePage);
+    }
+    async function delaySelectedService() {
+      const row = requireService();
+      if (!row) return;
+      const total = prompt("Demoras / tiempo total", row.demoras || "");
+      if (total === null) return;
+      await serviceAction("PUT", `/servicios/demoras/${encodeURIComponent(row.consec)}`, { total }, "Demoras actualizadas.");
+    }
+    async function cancelSelectedService() {
+      const row = requireService();
+      if (!row) return;
+      const razon = prompt("Razón de cancelación", row.razon_cancelacion || "");
+      if (razon === null) return;
+      const comentario = prompt("Comentario de cancelación", row.comentario_cancelacion || "") || "";
+      await serviceAction("PUT", `/servicios/cancelar/${encodeURIComponent(row.consec)}`, { estado:"Cancelado", razon_cancelacion:razon, comentario_cancelacion:comentario }, "Servicio cancelado.");
+    }
+    async function deleteSelectedService() {
+      const row = requireService();
+      if (!row || !confirm(`¿Eliminar servicio ${row.consec}?`)) return;
+      await serviceAction("DELETE", `/servicios/${encodeURIComponent(row.consec)}`, null, "Servicio eliminado.");
+    }
+    async function serviceAction(method, path, payload, okText) {
+      showServiceMsg("Procesando...", false);
+      try {
+        await sendJSON(method, path, payload);
+        showServiceMsg(okText, false);
+        await loadServicios(servicePage);
+        refreshSummary();
+      } catch (err) {
+        showServiceMsg(err.message, true);
+      }
+    }
+    function exportServicios(kind) {
+      if (!serviceRows.length) {
+        alert("No hay datos para exportar.");
+        return;
+      }
+      const stamp = new Date().toISOString().slice(0,10);
+      const escapeCsv = value => `"${String(value ?? "").replace(/"/g, '""')}"`;
+      const cols = visibleServiceColumns();
+      const csv = [cols.join(",")].concat(serviceRows.map(row => cols.map(c => escapeCsv(row[c])).join(","))).join("\\n");
+      if (kind === "csv") {
+        downloadText(`servicios_${stamp}.csv`, csv, "text/csv;charset=utf-8");
+        return;
+      }
+      if (kind === "xml") {
+        const xml = `<?xml version="1.0" encoding="UTF-8"?><servicios>${serviceRows.map(row => `<servicio>${cols.map(c => `<${c}>${esc(row[c] ?? "")}</${c}>`).join("")}</servicio>`).join("")}</servicios>`;
+        downloadText(`servicios_${stamp}.xml`, xml, "application/xml;charset=utf-8");
+        return;
+      }
+      const tableHtml = `<table border="1"><thead><tr>${cols.map(c => `<th>${esc(c)}</th>`).join("")}</tr></thead><tbody>${serviceRows.map(row => `<tr>${cols.map(c => `<td>${esc(row[c] ?? "")}</td>`).join("")}</tr>`).join("")}</tbody></table>`;
+      if (kind === "excel") {
+        downloadText(`servicios_${stamp}.xls`, `<html><head><meta charset="utf-8"></head><body>${tableHtml}</body></html>`, "application/vnd.ms-excel;charset=utf-8");
+        return;
+      }
+      const win = window.open("", "_blank");
+      win.document.write(`<html><head><title>Servicios ${stamp}</title><style>body{font-family:Arial,sans-serif}table{border-collapse:collapse;width:100%;font-size:10px}th,td{border:1px solid #bbb;padding:4px;text-align:left}th{background:#eef3f8}</style></head><body><h2>Servicios ${esc(selectedCompany())}</h2>${tableHtml}<script>window.print()<\\/script></body></html>`);
+      win.document.close();
+    }
+    function hrActions() {
+      const specs = [
+        ["payroll","Payroll","Planilla, cálculo y colillas administrativas.","payroll_view"],
+        ["payslips","Colillas","Consulta y descarga de colillas de pago.","payslips_view"],
+        ["requests","Solicitudes","Vacaciones, incapacidades, constancias y aprobaciones.","requests_view"],
+        ["hours","Horas","Registro, edición y aprobación de horas.","hours_view"],
+        ["employees","Empleados","Ficha laboral, jornada, salario, vacaciones y activos.","employees_view"],
+        ["salary","Calculadora salarial","Empleado, independiente, propietario y escenarios.","salary_calculator"],
+        ["medical","Red médica","Clínicas, especialidades, ubicación y contacto.","medical_network"],
+        ["policies","Políticas","Documentos internos y normativa HHRR.","policies_view"]
+      ];
+      return specs.filter(item => canHr(item[3]));
+    }
+    function hrTable(rows, cols) {
+      if (!rows || !rows.length) return '<div class="status">Sin datos para esta vista.</div>';
+      return `<div class="table-wrap"><table><thead><tr>${cols.map(c => `<th>${esc(c.replace(/_/g," "))}</th>`).join("")}</tr></thead><tbody>${rows.map(row => `<tr>${cols.map(c => `<td>${esc(row?.[c] ?? "")}</td>`).join("")}</tr>`).join("")}</tbody></table></div>`;
+    }
+    function hrStatus(msg, error=false) {
+      const el = $("hrStatus");
+      if (!el) return;
+      el.className = error ? "status error" : "status";
+      el.textContent = msg;
+      el.classList.remove("hidden");
+    }
+    function renderHHRR() {
+      const actions = hrActions();
+      const role = String(session?.rol || "").toUpperCase();
+      $("content").innerHTML = `
+        <div class="hr-shell">
+          <div id="hrNewsBoard"></div>
+          <section class="hr-card">
+              <h2>Módulo HHRR</h2>
+              <p>Horas, vacaciones, solicitudes, payroll, colillas, empleados, calculadora salarial, red médica, políticas y noticias según permisos.</p>
+              <div class="hr-kpis">
+                <div class="hr-kpi"><span>Usuario</span><strong>${esc(session?.usuario || "-")}</strong></div>
+                <div class="hr-kpi"><span>Rol</span><strong>${esc(role || "-")}</strong></div>
+                <div class="hr-kpi"><span>Accesos</span><strong>${actions.length}</strong></div>
+              </div>
+          </section>
+          <section class="hr-card">
+            <div class="hr-actions">${actions.map(([key,title,desc]) => `<button class="hr-action-card ${hrCurrentView === key ? "active" : ""}" onclick="openHrView('${key}')"><strong>${esc(title)}</strong><span>${esc(desc)}</span></button>`).join("") || '<div class="status">No hay acciones HHRR autorizadas para este usuario.</div>'}</div>
+          </section>
+          <section class="hr-card hr-work">
+            <div class="panel-head"><h2 id="hrViewTitle">HHRR</h2><span id="hrViewHint" class="muted">Seleccione una opción.</span></div>
+            <div id="hrStatus" class="status hidden"></div>
+            <div id="hrWorkspace"></div>
+          </section>
+        </div>`;
+      loadNewsBoards();
+      openHrView(actions[0]?.[0] || "home");
+    }
+    async function loadHrNews() {
+      await loadNewsBoards();
+    }
+    function openHrView(key) {
+      hrCurrentView = key;
+      document.querySelectorAll(".hr-action-card").forEach(btn => btn.classList.toggle("active", btn.getAttribute("onclick")?.includes(`'${key}'`)));
+      const map = {
+        payroll:renderHrPayroll, payslips:renderHrPayslips, requests:renderHrRequests, hours:renderHrHours,
+        employees:renderHrEmployees, salary:renderHrSalary, medical:renderHrMedical, policies:renderHrPolicies, news:renderHrNewsForm
+      };
+      (map[key] || renderHrHome)();
+    }
+    function renderHrHome() {
+      $("hrViewTitle").textContent = "HHRR";
+      $("hrViewHint").textContent = "Seleccione una opción autorizada.";
+      $("hrWorkspace").innerHTML = '<div class="status">Use las tarjetas superiores para abrir una vista de HHRR.</div>';
+    }
+    function renderHrRequests() {
+      $("hrViewTitle").textContent = "Solicitudes HHRR";
+      $("hrViewHint").textContent = "Vacaciones, incapacidades, constancias y aprobación.";
+      selectedHrRequestIndex = null;
+      const createButton = canHr("requests_create") ? '<button onclick="openHrRequestForm()">Nueva solicitud</button>' : "";
+      $("hrWorkspace").innerHTML = `
+        <div class="hr-request-topbar">
+          <span class="muted">Seleccione una solicitud para ver el detalle y accionar.</span>
+          <div class="hr-request-tools">${createButton}<button class="secondary" onclick="loadHrRequests()">Actualizar</button></div>
+        </div>
+        <div id="hrRequestsView"></div>`;
+      loadHrRequests();
+    }
+    function openHrRequestForm() {
+      closeModal();
+      document.body.insertAdjacentHTML("beforeend", `
+        <div class="modal-backdrop" id="svcModal">
+          <div class="modal">
+            <div class="modal-head">
+              <h2>Nueva solicitud HHRR</h2>
+              <button class="secondary" onclick="closeModal()">Cerrar</button>
+            </div>
+            <p class="muted">Registre vacaciones, incapacidades, licencias o constancias para revisión.</p>
+          <div class="hr-form">
+            <label>Tipo<select id="hrReqType"><option>VACACIONES</option><option>INCAPACIDAD</option><option>CONSTANCIA_SALARIAL</option><option>CONSTANCIA_LABORAL</option><option>LICENCIA</option></select></label>
+            <label>Fecha<input id="hrReqDate" type="date" value="${new Date().toISOString().slice(0,10)}" /></label>
+            <label>Días<input id="hrReqDays" type="number" step="0.5" placeholder="Solo vacaciones" /></label>
+            <label class="wide">Motivo<textarea id="hrReqReason"></textarea></label>
+              <div class="wide md-actions"><button onclick="createHrRequest()">Enviar solicitud</button><button class="secondary" onclick="closeModal()">Cancelar</button></div>
+            </div>
+          </div>
+        </div>`);
+    }
+    function hrRequestStatusClass(status) {
+      const value = String(status || "").toUpperCase();
+      if (value === "APPROVED" || value === "APROBADO") return "approved";
+      if (value === "REJECTED" || value === "RECHAZADO") return "rejected";
+      return "pending";
+    }
+    function hrRequestStatusLabel(status) {
+      const value = String(status || "PENDING").toUpperCase();
+      const labels = { PENDING:"Pendiente", APPROVED:"Aprobada", REJECTED:"Rechazada", APROBADO:"Aprobada", RECHAZADO:"Rechazada" };
+      return labels[value] || value.replace(/_/g, " ");
+    }
+    function hrRequestTypeLabel(value) {
+      return String(value || "SOLICITUD").replace(/_/g, " ").toLowerCase().replace(/\\b\\w/g, c => c.toUpperCase());
+    }
+    function hrRequestPayloadText(row) {
+      const payload = row?.payload || {};
+      if (payload.motivo) return String(payload.motivo);
+      if (payload.reason) return String(payload.reason);
+      if (row?.comentario_solicitud) return String(row.comentario_solicitud);
+      return "Sin comentario.";
+    }
+    function hrSelectedRequest() {
+      return selectedHrRequestIndex === null ? null : hrRows[selectedHrRequestIndex];
+    }
+    function selectHrRequest(idx) {
+      selectedHrRequestIndex = idx;
+      renderHrRequestsView();
+    }
+    function renderHrRequestsView() {
+      const target = $("hrRequestsView");
+      if (!target) return;
+      if (!hrRows.length) {
+        target.innerHTML = '<div class="status">No hay solicitudes para mostrar.</div>';
+        return;
+      }
+      if (selectedHrRequestIndex === null || !hrRows[selectedHrRequestIndex]) {
+        const pendingIndex = hrRows.findIndex(row => hrRequestStatusClass(row.status) === "pending");
+        selectedHrRequestIndex = pendingIndex >= 0 ? pendingIndex : 0;
+      }
+      const counts = hrRows.reduce((acc, row) => {
+        acc.total += 1;
+        acc[hrRequestStatusClass(row.status)] += 1;
+        return acc;
+      }, { total:0, pending:0, approved:0, rejected:0 });
+      const selected = hrSelectedRequest();
+      const cardHtml = hrRows.map((row, idx) => {
+        const statusClass = hrRequestStatusClass(row.status);
+        const isSelected = idx === selectedHrRequestIndex;
+        const days = Number(row.vacaciones || 0);
+        return `
+          <div class="hr-request-card ${statusClass} ${isSelected ? "selected" : ""}" role="button" tabindex="0" onclick="selectHrRequest(${idx})" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();selectHrRequest(${idx})}">
+            <div>
+              <h3>${esc(row.empleado || row.created_by || "Sin empleado")}</h3>
+              <p>${esc(hrRequestTypeLabel(row.event_type))} · ${esc(row.event_date || "-")}</p>
+            </div>
+            <span class="hr-status-pill ${statusClass}">${esc(hrRequestStatusLabel(row.status))}</span>
+            <div class="hr-request-meta">
+              <span class="badge">ID ${esc(row.id)}</span>
+              ${days ? `<span class="badge open">${esc(days)} día(s)</span>` : ""}
+              <small>Creada por ${esc(row.created_by || "-")}</small>
+            </div>
+          </div>`;
+      }).join("");
+      const detail = selected ? renderHrRequestDetail(selected) : '<div class="status">Seleccione una solicitud.</div>';
+      const tableRows = hrRows.map(r => ({
+        id:r.id,
+        empleado:r.empleado,
+        tipo:hrRequestTypeLabel(r.event_type),
+        fecha:r.event_date,
+        estado:hrRequestStatusLabel(r.status),
+        vacaciones:r.vacaciones,
+        creado_por:r.created_by,
+        aprobado_por:r.approved_by || ""
+      }));
+      target.innerHTML = `
+        <div class="hr-request-summary">
+          <div class="hr-kpi"><span>Total</span><strong>${counts.total}</strong></div>
+          <div class="hr-kpi"><span>Pendientes</span><strong>${counts.pending}</strong></div>
+          <div class="hr-kpi"><span>Aprobadas</span><strong>${counts.approved}</strong></div>
+          <div class="hr-kpi"><span>Rechazadas</span><strong>${counts.rejected}</strong></div>
+        </div>
+        <div class="hr-request-workspace">
+          <div class="hr-request-list">${cardHtml}</div>
+          <aside class="hr-request-detail">${detail}</aside>
+        </div>
+        <details class="pln-section hr-request-table"><summary>Tabla completa / filtros</summary><div class="pln-section-body">${hrTable(tableRows, ["id","empleado","tipo","fecha","estado","vacaciones","creado_por","aprobado_por"])}</div></details>`;
+      enhanceExcelTables(target);
+    }
+    function renderHrRequestDetail(row) {
+      const statusClass = hrRequestStatusClass(row.status);
+      const canResolve = canHr("requests_approve") && statusClass === "pending";
+      const payload = row.payload || {};
+      const requestedDays = payload.dias_solicitados || row.vacaciones || "";
+      return `
+        <div class="panel-head">
+          <h3>Solicitud #${esc(row.id)}</h3>
+          <span class="hr-status-pill ${statusClass}">${esc(hrRequestStatusLabel(row.status))}</span>
+        </div>
+        <dl>
+          <dt>Empleado</dt><dd>${esc(row.empleado || "-")}</dd>
+          <dt>Tipo</dt><dd>${esc(hrRequestTypeLabel(row.event_type))}</dd>
+          <dt>Fecha</dt><dd>${esc(row.event_date || "-")}</dd>
+          <dt>Días</dt><dd>${esc(requestedDays || "-")}</dd>
+          <dt>Motivo</dt><dd>${esc(hrRequestPayloadText(row))}</dd>
+          <dt>Creada por</dt><dd>${esc(row.created_by || "-")}</dd>
+          <dt>Aprobada por</dt><dd>${esc(row.approved_by || "-")}</dd>
+          <dt>Creada</dt><dd>${esc(row.created_at || "-")}</dd>
+        </dl>
+        ${canResolve ? `<div class="hr-request-actions"><button class="green" onclick="resolveHrRequest('approve')">Aprobar</button><button class="brown" onclick="resolveHrRequest('reject')">Rechazar</button></div>` : `<div class="hr-request-empty-note">Esta solicitud no tiene acciones pendientes.</div>`}`;
+    }
+    async function loadHrRequests() {
+      try {
+        hrRows = rowsList(await getJSON("/hr/events/"));
+        selectedHrRequestIndex = null;
+        renderHrRequestsView();
+      } catch (err) {
+        $("hrRequestsView").innerHTML = `<div class="status error">${esc(err.message)}</div>`;
+      }
+    }
+    async function createHrRequest() {
+      const type = valueFrom("hrReqType");
+      const payload = { motivo:valueFrom("hrReqReason") };
+      if (type === "VACACIONES" && valueFrom("hrReqDays")) payload.dias_solicitados = Number(valueFrom("hrReqDays"));
+      try {
+        await postJSON("/hr/events/", { event_type:type, event_date:valueFrom("hrReqDate"), payload });
+        hrStatus("Solicitud enviada.");
+        closeModal();
+        await loadHrRequests();
+      } catch (err) { hrStatus(err.message, true); }
+    }
+    async function resolveHrRequest(action) {
+      const row = hrSelectedRequest();
+      if (!row) return hrStatus("Seleccione una solicitud.", true);
+      const id = row.id;
+      const comentario = prompt("Comentario", action === "reject" ? "Rechazo solicitado" : "Aprobado") || "";
+      try {
+        await sendJSON("PATCH", `/hr/events/${encodeURIComponent(id)}/${action}`, { comentario });
+        hrStatus(action === "approve" ? "Solicitud aprobada." : "Solicitud rechazada.");
+        await loadHrRequests();
+      } catch (err) { hrStatus(err.message, true); }
+    }
+    function renderHrHours() {
+      $("hrViewTitle").textContent = "Registro de Horas";
+      $("hrViewHint").textContent = "Registro, edición y aprobación según permisos.";
+      selectedHrHourIds = new Set();
+      const approveTools = canHr("hours_approve") ? `<button class="green" onclick="setSelectedHrHourStatus('APROBADO')">Aprobar seleccionadas</button><button class="brown" onclick="setSelectedHrHourStatus('RECHAZADO')">Rechazar seleccionadas</button>` : "";
+      const registerTools = canHr("hours_register") ? `<button onclick="openHrHourForm()">Registrar horas</button>` : "";
+      $("hrWorkspace").innerHTML = `
+        <div class="hr-hours-topbar">
+          <span class="muted">Seleccione una o varias líneas de la tabla para accionar.</span>
+          <div class="hr-hours-tools">${registerTools}<button class="secondary" onclick="loadHrHours()">Actualizar</button><button class="secondary" onclick="downloadHrHoursExcel()">Exportar Excel</button>${approveTools}</div>
+        </div>
+        <div id="hrHoursView"></div>`;
+      loadHrHours();
+    }
+    function openHrHourForm() {
+      closeModal();
+      document.body.insertAdjacentHTML("beforeend", `
+        <div class="modal-backdrop" id="svcModal">
+          <div class="modal">
+            <div class="modal-head">
+              <h2>Registrar horas</h2>
+              <button class="secondary" onclick="closeModal()">Cerrar</button>
+            </div>
+            <p class="muted">Registre horas ordinarias, operación o informe para revisión.</p>
+            <div class="hr-form">
+              <label>Usuario<input id="hrHourUser" placeholder="Solo admin/master" /></label>
+              <label>Tipo<select id="hrHourType"><option>OPERACION</option><option>INFORME</option></select></label>
+              <label>Inicio<input id="hrHourStart" type="datetime-local" /></label>
+              <label>Fin<input id="hrHourEnd" type="datetime-local" /></label>
+              <label>Referencia<input id="hrHourRef" /></label>
+              <label class="wide">Actividad<textarea id="hrHourActivity"></textarea></label>
+              <div class="wide md-actions"><button onclick="createHrHour()">Guardar horas</button><button class="secondary" onclick="closeModal()">Cancelar</button></div>
+            </div>
+          </div>
+        </div>`);
+    }
+    function hrHourStatusClass(status) {
+      const value = String(status || "PENDIENTE").toUpperCase();
+      if (value === "APROBADO" || value === "APPROVED") return "approved";
+      if (value === "RECHAZADO" || value === "REJECTED") return "rejected";
+      return "pending";
+    }
+    function hrHourStatusLabel(status) {
+      const value = String(status || "PENDIENTE").toUpperCase();
+      const labels = { PENDIENTE:"Pendiente", APROBADO:"Aprobado", RECHAZADO:"Rechazado", APPROVED:"Aprobado", REJECTED:"Rechazado" };
+      return labels[value] || value.replace(/_/g, " ");
+    }
+    function hrFilteredHours() {
+      const user = valueFrom("hrHourFilterUser").toLowerCase();
+      const tipo = valueFrom("hrHourFilterType").toUpperCase();
+      const estado = valueFrom("hrHourFilterStatus").toUpperCase();
+      const q = valueFrom("hrHourFilterQ").toLowerCase();
+      return hrRows.filter(row => {
+        const rowUser = String(row.usuario || "").toLowerCase();
+        const rowTipo = String(row.tipo || "").toUpperCase();
+        const rowEstado = String(row.estado || "PENDIENTE").toUpperCase();
+        const blob = [row.id,row.usuario,row.tipo,row.fecha_inicio,row.fecha_fin,row.duracion_horas,row.referencia,row.actividad_detalle,row.estado].map(v => String(v || "").toLowerCase()).join(" ");
+        if (user && rowUser !== user) return false;
+        if (tipo && rowTipo !== tipo) return false;
+        if (estado && rowEstado !== estado) return false;
+        if (q && !blob.includes(q)) return false;
+        return true;
+      });
+    }
+    function hrHourId(row) {
+      return String(row?.id ?? "");
+    }
+    function hrSelectedHours() {
+      return hrRows.filter(row => selectedHrHourIds.has(hrHourId(row)));
+    }
+    function hrHourPolicyFor(usuario) {
+      return hrHourPolicies.get(String(usuario || "").toLowerCase()) || {};
+    }
+    function toggleHrHourSelection(id, checked) {
+      const key = String(id || "");
+      if (!key) return;
+      if (checked) selectedHrHourIds.add(key);
+      else selectedHrHourIds.delete(key);
+      renderHrHoursView();
+    }
+    function toggleAllHrHours(checked) {
+      const visible = hrFilteredHours();
+      if (checked) visible.forEach(row => selectedHrHourIds.add(hrHourId(row)));
+      else visible.forEach(row => selectedHrHourIds.delete(hrHourId(row)));
+      renderHrHoursView();
+    }
+    function clearHrHourFilters() {
+      ["hrHourFilterUser","hrHourFilterType","hrHourFilterStatus","hrHourFilterQ"].forEach(id => { if ($(id)) $(id).value = ""; });
+      renderHrHoursView();
+    }
+    function renderHrHoursView() {
+      const target = $("hrHoursView");
+      if (!target) return;
+      if (!hrRows.length) {
+        target.innerHTML = '<div class="status">Sin registros de horas para mostrar.</div>';
+        return;
+      }
+      const validIds = new Set(hrRows.map(hrHourId));
+      selectedHrHourIds = new Set(Array.from(selectedHrHourIds).filter(id => validIds.has(id)));
+      const filtered = hrFilteredHours();
+      const filteredCounts = filtered.reduce((acc, row) => {
+        acc.total += 1;
+        acc.hours += Number(row.duracion_horas || 0);
+        acc[hrHourStatusClass(row.estado)] += 1;
+        return acc;
+      }, { total:0, hours:0, pending:0, approved:0, rejected:0 });
+      const visibleUsers = Array.from(new Set(filtered.map(row => row.usuario).filter(Boolean)));
+      const negotiatedHours = visibleUsers.reduce((sum, usuario) => {
+        const policy = hrHourPolicyFor(usuario);
+        return sum + Number(policy.horas_contratadas || policy.tope_ordinario || 0);
+      }, 0);
+      const usedVisibleHours = filtered.reduce((sum, row) => {
+        return hrHourStatusClass(row.estado) === "rejected" ? sum : sum + Number(row.duracion_horas || 0);
+      }, 0);
+      const remainingHours = Math.max(negotiatedHours - usedVisibleHours, 0);
+      const usagePct = negotiatedHours ? Math.min((usedVisibleHours / negotiatedHours) * 100, 999) : 0;
+      const activeFilters = ["hrHourFilterUser","hrHourFilterType","hrHourFilterStatus","hrHourFilterQ"].filter(id => Boolean(valueFrom(id))).length;
+      const userLabel = valueFrom("hrHourFilterUser") || "Todos";
+      const fmtHours = value => Number(value || 0).toLocaleString("en-US", { maximumFractionDigits:2 });
+      const selectedRows = hrSelectedHours();
+      const visibleIds = filtered.map(hrHourId);
+      const allSelected = visibleIds.length > 0 && visibleIds.every(id => selectedHrHourIds.has(id));
+      const users = Array.from(new Set(hrRows.map(row => row.usuario).filter(Boolean))).sort((a,b) => String(a).localeCompare(String(b)));
+      const rowsHtml = filtered.map(row => {
+        const id = hrHourId(row);
+        const selected = selectedHrHourIds.has(id);
+        const statusClass = hrHourStatusClass(row.estado);
+        return `<tr class="${selected ? "service-selected" : ""}" onclick="toggleHrHourSelection('${esc(id)}', !selectedHrHourIds.has('${esc(id)}'))">
+          <td class="pick-col"><input class="row-pick" type="checkbox" ${selected ? "checked" : ""} onclick="event.stopPropagation();toggleHrHourSelection('${esc(id)}', this.checked)" /></td>
+          <td>${esc(row.id)}</td>
+          <td>${esc(row.usuario || "")}</td>
+          <td>${esc(row.tipo || "")}</td>
+          <td>${esc(row.fecha_inicio || "")}</td>
+          <td>${esc(row.fecha_fin || "")}</td>
+          <td>${esc(row.duracion_horas || 0)}</td>
+          <td>${esc(row.referencia || "")}</td>
+          <td>${esc(row.actividad_detalle || "")}</td>
+          <td><span class="hr-status-pill ${statusClass}">${esc(hrHourStatusLabel(row.estado))}</span></td>
+        </tr>`;
+      }).join("");
+      target.innerHTML = `
+        <div class="hr-request-summary">
+          <div class="hr-kpi"><span>Usuario</span><strong>${esc(userLabel)}</strong></div>
+          <div class="hr-kpi"><span>Horas negociadas</span><strong>${fmtHours(negotiatedHours)} h</strong></div>
+          <div class="hr-kpi"><span>Horas usadas visibles</span><strong>${fmtHours(usedVisibleHours)} h</strong></div>
+          <div class="hr-kpi"><span>Saldo disponible</span><strong>${fmtHours(remainingHours)} h</strong></div>
+          <div class="hr-kpi"><span>Uso negociación</span><strong>${fmtHours(usagePct)}%</strong></div>
+          <div class="hr-kpi"><span>Registros visibles</span><strong>${filteredCounts.total}</strong></div>
+          <div class="hr-kpi"><span>Pendientes visibles</span><strong>${filteredCounts.pending}</strong></div>
+          <div class="hr-kpi"><span>Filtros activos</span><strong>${activeFilters}</strong></div>
+        </div>
+        <div class="hr-hours-filters">
+          <label>Usuario<select id="hrHourFilterUser" onchange="renderHrHoursView()"><option value="">Todos</option>${users.map(user => `<option value="${esc(user)}" ${valueFrom("hrHourFilterUser") === String(user) ? "selected" : ""}>${esc(user)}</option>`).join("")}</select></label>
+          <label>Tipo<select id="hrHourFilterType" onchange="renderHrHoursView()"><option value="">Todos</option><option value="OPERACION" ${valueFrom("hrHourFilterType") === "OPERACION" ? "selected" : ""}>Operación</option><option value="INFORME" ${valueFrom("hrHourFilterType") === "INFORME" ? "selected" : ""}>Informe</option></select></label>
+          <label>Estado<select id="hrHourFilterStatus" onchange="renderHrHoursView()"><option value="">Todos</option><option value="PENDIENTE" ${valueFrom("hrHourFilterStatus") === "PENDIENTE" ? "selected" : ""}>Pendiente</option><option value="APROBADO" ${valueFrom("hrHourFilterStatus") === "APROBADO" ? "selected" : ""}>Aprobado</option><option value="RECHAZADO" ${valueFrom("hrHourFilterStatus") === "RECHAZADO" ? "selected" : ""}>Rechazado</option></select></label>
+          <label>Buscar<input id="hrHourFilterQ" value="${esc(valueFrom("hrHourFilterQ"))}" onchange="renderHrHoursView()" onkeydown="if(event.key==='Enter'){event.preventDefault();renderHrHoursView()}" placeholder="Referencia, actividad, fecha..." /></label>
+          <button class="secondary" onclick="clearHrHourFilters()">Limpiar</button>
+        </div>
+        <div class="hr-hours-selection">
+          <label><input type="checkbox" ${allSelected ? "checked" : ""} onchange="toggleAllHrHours(this.checked)" /> Seleccionar todo</label>
+          <span>${filtered.length} visible(s) · ${selectedRows.length} seleccionado(s)</span>
+        </div>
+        <div class="table-wrap hr-hours-table">
+          <table>
+            <thead><tr><th class="pick-col"></th><th>id</th><th>usuario</th><th>tipo</th><th>inicio</th><th>fin</th><th>horas</th><th>referencia</th><th>actividad</th><th>estado</th></tr></thead>
+            <tbody>${rowsHtml || `<tr><td colspan="10">Sin registros para los filtros seleccionados.</td></tr>`}</tbody>
+          </table>
+        </div>`;
+      enhanceExcelTables(target);
+    }
+    async function loadHrHours() {
+      try {
+        const summary = await getJSON("/hr/ot-log/summary").catch(() => null);
+        hrHourPolicies = new Map(rowsList(summary).map(row => [String(row.usuario || "").toLowerCase(), row]));
+        const payload = await getJSON("/hr/ot-log/?page=1&page_size=100");
+        hrRows = rowsList(payload);
+        selectedHrHourIds = new Set();
+        renderHrHoursView();
+      } catch (err) {
+        $("hrHoursView").innerHTML = `<div class="status error">${esc(err.message)}</div>`;
+      }
+    }
+    async function createHrHour() {
+      const payload = {
+        usuario:valueFrom("hrHourUser") || undefined,
+        tipo:valueFrom("hrHourType"),
+        fecha_inicio:valueFrom("hrHourStart"),
+        fecha_fin:valueFrom("hrHourEnd"),
+        referencia:valueFrom("hrHourRef"),
+        actividad_detalle:valueFrom("hrHourActivity")
+      };
+      try { await postJSON("/hr/ot-log/", payload); hrStatus("Horas registradas."); closeModal(); await loadHrHours(); }
+      catch (err) { hrStatus(err.message, true); }
+    }
+    async function setSelectedHrHourStatus(status) {
+      const rows = hrSelectedHours();
+      if (!rows.length) return hrStatus("Seleccione uno o más registros de horas.", true);
+      const verb = status === "APROBADO" ? "aprobar" : "rechazar";
+      if (!confirm(`¿Desea ${verb} ${rows.length} registro(s) de horas seleccionado(s)?`)) return;
+      let ok = 0;
+      const errors = [];
+      for (const row of rows) {
+        const id = row?.id;
+        if (!id) continue;
+        try {
+          await sendJSON("PUT", `/hr/ot-log/${encodeURIComponent(id)}/estado`, { estado:status });
+          ok += 1;
+        } catch (err) {
+          errors.push(`#${id}: ${err.message}`);
+        }
+      }
+      const msg = errors.length ? `Actualizados ${ok}. Errores: ${errors.slice(0,3).join(" | ")}` : `Se actualizaron ${ok} registro(s).`;
+      hrStatus(msg, Boolean(errors.length));
+      await loadHrHours();
+    }
+    function downloadHrHoursExcel() {
+      const rows = hrFilteredHours().map(row => ({
+        id:row.id,
+        usuario:row.usuario,
+        tipo:row.tipo,
+        inicio:row.fecha_inicio,
+        fin:row.fecha_fin,
+        horas:row.duracion_horas,
+        referencia:row.referencia,
+        actividad:row.actividad_detalle,
+        estado:hrHourStatusLabel(row.estado)
+      }));
+      if (!rows.length) return alert("No hay horas para exportar.");
+      downloadExcelFile(`hhrr_horas_${new Date().toISOString().slice(0,10)}.xls`, rows, ["id","usuario","tipo","inicio","fin","horas","referencia","actividad","estado"], "HHRR - registro de horas");
+    }
+    function renderHrPayslips() {
+      $("hrViewTitle").textContent = "Colillas de Pago";
+      $("hrViewHint").textContent = "Consulta y descarga de colillas.";
+      selectedHrPayslipIndex = null;
+      $("hrWorkspace").innerHTML = `<div class="hr-toolbar"><label>Año<input id="hrPayYear" type="number" value="${$("year").value}" /></label><label>Mes<input id="hrPayMonth" type="number" min="1" max="12" /></label><button onclick="loadHrPayslips()">Cargar colillas</button><button class="secondary" onclick="downloadHrPayslip()">Descargar colilla seleccionada</button></div><div id="hrPayslipsTable"></div>`;
+      loadHrPayslips();
+    }
+    function renderHrPayslipRows() {
+      const target = $("hrPayslipsTable");
+      if (!target) return;
+      const cols = ["usuario","year","month","salario_bruto","salario_neto","horas_extra","monto_horas_extra","generado_por","creado_en"];
+      if (!hrRows.length) {
+        target.innerHTML = '<div class="status">Sin colillas para esta consulta.</div>';
+        return;
+      }
+      target.innerHTML = `<div class="table-wrap"><table><thead><tr><th class="pick-col"></th>${cols.map(c => `<th>${esc(c.replace(/_/g," "))}</th>`).join("")}</tr></thead><tbody>${hrRows.map((row, idx) => {
+        const selected = idx === selectedHrPayslipIndex;
+        return `<tr class="${selected ? "service-selected" : ""}" onclick="selectHrPayslip(${idx})"><td class="pick-col"><input class="row-pick" type="radio" name="hrPayslipPick" ${selected ? "checked" : ""} onclick="event.stopPropagation(); selectHrPayslip(${idx})" /></td>${cols.map(c => `<td>${esc(row?.[c] ?? "")}</td>`).join("")}</tr>`;
+      }).join("")}</tbody></table></div>`;
+      enhanceExcelTables(target);
+    }
+    function selectHrPayslip(idx) {
+      selectedHrPayslipIndex = idx;
+      renderHrPayslipRows();
+    }
+    async function loadHrPayslips() {
+      const params = new URLSearchParams({ page:"1", page_size:"100" });
+      if (valueFrom("hrPayYear")) params.set("year", valueFrom("hrPayYear"));
+      if (valueFrom("hrPayMonth")) params.set("month", valueFrom("hrPayMonth"));
+      try {
+        const payload = await getJSON(`/hr/payroll/payslips?${params}`);
+        hrRows = rowsList(payload);
+        selectedHrPayslipIndex = null;
+        renderHrPayslipRows();
+      } catch (err) { $("hrPayslipsTable").innerHTML = `<div class="status error">${esc(err.message)}</div>`; }
+    }
+    async function downloadHrPayslip() {
+      const row = selectedHrPayslipIndex === null ? null : hrRows[selectedHrPayslipIndex];
+      if (!row) return alert("Seleccione una colilla de la tabla.");
+      try {
+        const filename = `colilla-${row.usuario || "empleado"}-${row.year}-${String(row.month).padStart(2, "0")}.pdf`;
+        await downloadBinary(`/hr/payroll/payslips/${encodeURIComponent(row.year)}/${encodeURIComponent(row.month)}/pdf?usuario=${encodeURIComponent(row.usuario)}`, filename);
+      } catch (err) {
+        alert(err.message || "No se pudo descargar la colilla.");
+      }
+    }
+    function renderHrPayroll() {
+      $("hrViewTitle").textContent = "Payroll / Planilla";
+      $("hrViewHint").textContent = "Empleados activos y cálculo del período cerrado.";
+      selectedHrPayrollIndex = null;
+      hrPayrollPreview = null;
+      $("hrWorkspace").innerHTML = `
+        <div class="hr-toolbar">
+          <label>Año cerrado<input id="hrPayrollYear" type="number" disabled /></label>
+          <label>Mes cerrado<input id="hrPayrollMonth" type="number" disabled /></label>
+          <button class="secondary" onclick="loadHrPayrollEmployees()">Actualizar empleados</button>
+          <button onclick="generateSelectedHrPayroll()">Generar planilla</button>
+        </div>
+        <div class="hr-payroll-layout">
+          <div id="hrPayrollTable"></div>
+          <div id="hrPayrollPreview" class="hr-preview-card">
+            <h3>Planilla</h3>
+            <div class="status">Seleccione un empleado y genere la planilla.</div>
+          </div>
+        </div>`;
+      loadHrPayrollPeriodAndEmployees();
+    }
+    function renderHrPayrollRows() {
+      const cols = ["usuario","nombre","apellidos","jornada","salario","pago","estado","planilla_estado","horas_contratadas","horas_tope_ordinario","tarifa_hora_extra"];
+      if (!hrRows.length) {
+        $("hrPayrollTable").innerHTML = '<div class="status">Sin empleados activos para payroll.</div>';
+        return;
+      }
+      $("hrPayrollTable").innerHTML = `<div class="table-wrap"><table><thead><tr><th></th>${cols.map(c => `<th>${esc(c.replace(/_/g," "))}</th>`).join("")}</tr></thead><tbody>${hrRows.map((row, idx) => {
+        const selected = idx === selectedHrPayrollIndex;
+        return `<tr class="${selected ? "service-selected" : ""}" onclick="selectHrPayrollEmployee(${idx})"><td class="pick-col"><input class="row-pick" type="radio" name="hrPayrollPick" ${selected ? "checked" : ""} onclick="event.stopPropagation(); selectHrPayrollEmployee(${idx})" /></td>${cols.map(c => `<td>${esc(row?.[c] ?? "")}</td>`).join("")}</tr>`;
+      }).join("")}</tbody></table></div>`;
+      enhanceExcelTables($("hrPayrollTable"));
+    }
+    function selectHrPayrollEmployee(idx) {
+      selectedHrPayrollIndex = idx;
+      hrPayrollPreview = null;
+      renderHrPayrollRows();
+      const row = selectedHrPayrollEmployee();
+      if (row?.payroll_run_id) {
+        renderHrPayrollPreview(null, "Este empleado ya tiene la planilla generada para el período cerrado.");
+      } else {
+        renderHrPayrollPreview(null, "Empleado seleccionado. Presione Generar planilla para revisar y confirmar.");
+      }
+    }
+    function selectedHrPayrollEmployee() {
+      return selectedHrPayrollIndex === null ? null : hrRows[selectedHrPayrollIndex];
+    }
+    function renderHrPayrollPreview(data, message="") {
+      const box = $("hrPayrollPreview");
+      if (!box) return;
+      if (!data) {
+        box.innerHTML = `<h3>Planilla</h3><div class="status">${esc(message || "Seleccione un empleado y genere la planilla.")}</div>`;
+        return;
+      }
+      const metrics = [
+        ["Empleado", `${data.nombre || ""} ${data.apellidos || ""}`.trim() || data.usuario],
+        ["Periodo", `${String(data.month).padStart(2,"0")}/${data.year}`],
+        ["Salario bruto", Number(data.salario_bruto || 0).toLocaleString("en-US",{minimumFractionDigits:2, maximumFractionDigits:2})],
+        ["Salario neto", Number(data.salario_neto || 0).toLocaleString("en-US",{minimumFractionDigits:2, maximumFractionDigits:2})],
+        ["Horas registradas", data.horas_registradas || 0],
+        ["Horas extra", data.horas_ot || 0],
+        ["Monto horas extra", Number(data.pago_horas_extra || 0).toLocaleString("en-US",{minimumFractionDigits:2, maximumFractionDigits:2})],
+        ["Costo empresa", Number(data.costo_total_empresa || 0).toLocaleString("en-US",{minimumFractionDigits:2, maximumFractionDigits:2})]
+      ];
+      box.innerHTML = `<h3>Previsualización de planilla</h3>
+        <div class="hr-preview-grid">${metrics.map(([label,value]) => `<div class="hr-preview-metric"><span>${esc(label)}</span><strong>${esc(value)}</strong></div>`).join("")}</div>
+        <div class="hr-payroll-note">Revise el cálculo. Al confirmar se registra la planilla y se sincroniza el asiento contable automáticamente.</div>
+        <div class="hr-toolbar" style="padding:10px 0 0; margin:0; border:0;">
+          <button onclick="postSelectedHrPayroll()">Confirmar y postear asiento</button>
+        </div>`;
+    }
+    async function loadHrPayrollPeriodAndEmployees() {
+      try {
+        const period = await getJSON("/hr/payroll/period");
+        $("hrPayrollYear").value = period.year || "";
+        $("hrPayrollMonth").value = period.month || "";
+      } catch (err) {
+        hrStatus(err.message, true);
+      }
+      await loadHrPayrollEmployees();
+    }
+    async function loadHrPayrollEmployees() {
+      try {
+        const payload = await getJSON("/hr/payroll/employees");
+        hrRows = rowsList(payload);
+        selectedHrPayrollIndex = null;
+        hrPayrollPreview = null;
+        renderHrPayrollRows();
+        renderHrPayrollPreview(null, `${hrRows.length} empleado(s) activos cargados. Seleccione una fila.`);
+      } catch (err) { $("hrPayrollTable").innerHTML = `<div class="status error">${esc(err.message)}</div>`; }
+    }
+    async function generateSelectedHrPayroll() {
+      await calculateSelectedHrPayroll();
+    }
+    async function calculateSelectedHrPayroll() {
+      const row = selectedHrPayrollEmployee();
+      if (!row) return hrStatus("Seleccione un empleado de la tabla.", true);
+      if (row.payroll_run_id) {
+        const msg = "La planilla de este empleado ya fue cerrada para el período seleccionado.";
+        renderHrPayrollPreview(null, msg);
+        return hrStatus(msg, true);
+      }
+      const year = valueFrom("hrPayrollYear");
+      const month = valueFrom("hrPayrollMonth");
+      try {
+        const data = await getJSON(`/hr/payroll/calculate?usuario=${encodeURIComponent(row.usuario)}&year=${encodeURIComponent(year)}&month=${encodeURIComponent(month)}`);
+        hrPayrollPreview = data;
+        renderHrPayrollPreview(data);
+        hrStatus("Planilla previsualizada. Revise y confirme para registrar asiento.");
+      } catch (err) {
+        hrPayrollPreview = null;
+        renderHrPayrollPreview(null, err.message);
+        hrStatus(err.message, true);
+      }
+    }
+    async function postSelectedHrPayroll() {
+      const row = selectedHrPayrollEmployee();
+      if (!row) return hrStatus("Seleccione un empleado de la tabla.", true);
+      if (row.payroll_run_id) return hrStatus("La planilla de este empleado ya fue cerrada.", true);
+      if (!hrPayrollPreview || String(hrPayrollPreview.usuario) !== String(row.usuario)) {
+        await calculateSelectedHrPayroll();
+        if (!hrPayrollPreview || String(hrPayrollPreview.usuario) !== String(row.usuario)) return;
+      }
+      if (!confirm(`Postear planilla de ${row.usuario} y sincronizar asiento contable?`)) return;
+      const payload = {
+        usuario:hrPayrollPreview.usuario,
+        year:hrPayrollPreview.year,
+        month:hrPayrollPreview.month,
+        salario_neto:hrPayrollPreview.salario_neto || 0,
+        salario_bruto:hrPayrollPreview.salario_bruto || hrPayrollPreview.salario_neto || 0,
+        horas_ot:hrPayrollPreview.horas_ot || 0,
+        pago_horas_extra:hrPayrollPreview.pago_horas_extra || 0,
+        pdf_path:`/LOCAL_USER_FILE/COLILLA_${hrPayrollPreview.usuario}_${hrPayrollPreview.year}_${hrPayrollPreview.month}.pdf`
+      };
+      try {
+        await sendJSON("PUT", "/hr/payroll/post", payload);
+        await postJSON("/accounting/sync/payroll", {});
+        hrStatus("Planilla registrada y asiento contable sincronizado.");
+        hrPayrollPreview = null;
+        renderHrPayrollPreview(null, "Planilla posteada. Puede seleccionar otro empleado.");
+        await loadHrPayrollEmployees();
+      } catch (err) { hrStatus(err.message, true); }
+    }
+    function renderHrEmployees() {
+      $("hrViewTitle").textContent = "Empleados HHRR";
+      $("hrViewHint").textContent = "Ficha laboral, jornada, salario, vacaciones, activos y políticas de horas.";
+      selectedHrEmployeeIndex = null;
+      hrEmployeePage = 1;
+      $("hrWorkspace").innerHTML = `
+        <div class="hr-emp-toolbar">
+          <span class="muted">Vista alineada con HHRR escritorio. Solo admin/master puede consultar o modificar empleados.</span>
+          <div class="hr-emp-actions">
+            <button onclick="openHrEmployeeForm(null, 'new')">Nuevo empleado</button>
+            <button class="secondary" onclick="loadHrEmployees(1)">Buscar</button>
+            <button class="secondary" onclick="clearHrEmployeeFilters()">Limpiar</button>
+          </div>
+        </div>
+        <div class="hr-emp-filters">
+          <label>Nombre<input id="hrEmpName" placeholder="Nombre o apellidos" onkeydown="if(event.key==='Enter'){event.preventDefault();loadHrEmployees(1)}" /></label>
+          <label>Código<input id="hrEmpCode" placeholder="MSL-0001-E" onkeydown="if(event.key==='Enter'){event.preventDefault();loadHrEmployees(1)}" /></label>
+          <label>Estado<select id="hrEmpStatus"><option value="Activo">Activo</option><option value="Inactivo">Inactivo</option><option value="Todos">Todos</option></select></label>
+          <label>Usuario<input id="hrEmpUser" placeholder="usuario SOM" onkeydown="if(event.key==='Enter'){event.preventDefault();loadHrEmployees(1)}" /></label>
+          <button onclick="loadHrEmployees(1)">Buscar</button>
+          <button class="secondary" onclick="clearHrEmployeeFilters()">Limpiar</button>
+        </div>
+        <div id="hrEmployeesTable"><div class="status">Cargando empleados...</div></div>`;
+      loadHrEmployees();
+    }
+    function hrEmployeeParams(page=hrEmployeePage) {
+      const params = new URLSearchParams({ page:String(page || 1), page_size:"50" });
+      if (valueFrom("hrEmpName")) params.set("nombre", valueFrom("hrEmpName"));
+      if (valueFrom("hrEmpCode")) params.set("codigo", valueFrom("hrEmpCode"));
+      if (valueFrom("hrEmpStatus")) params.set("estado", valueFrom("hrEmpStatus"));
+      if (valueFrom("hrEmpUser")) params.set("usuario", valueFrom("hrEmpUser"));
+      return params;
+    }
+    async function loadHrEmployees(page=hrEmployeePage) {
+      const params = hrEmployeeParams(page);
+      try {
+        const payload = await getJSON(`/hr/employees?${params}`);
+        hrEmployeePage = Number(payload.page || page || 1);
+        hrEmployeeTotal = Number(payload.total || 0);
+        hrRows = rowsList(payload);
+        selectedHrEmployeeIndex = null;
+        renderHrEmployeesTable();
+      } catch (err) { $("hrEmployeesTable").innerHTML = `<div class="status error">${esc(err.message)}</div>`; }
+    }
+    function clearHrEmployeeFilters() {
+      ["hrEmpName","hrEmpCode","hrEmpUser"].forEach(id => { if ($(id)) $(id).value = ""; });
+      if ($("hrEmpStatus")) $("hrEmpStatus").value = "Activo";
+      loadHrEmployees(1);
+    }
+    function renderHrEmployeesTable() {
+      const target = $("hrEmployeesTable");
+      if (!target) return;
+      const cols = ["id","codigo","nombre","apellidos","cedula_id","usuario","estado","jornada","salario","pago","banco","moneda","fecha_ingreso","horas_contratadas","horas_tope_ordinario","horas_tope_maximo","tarifa_hora_extra","pago_minimo_garantizado","activo1","activo2","activo3"];
+      const pages = Math.max(1, Math.ceil((hrEmployeeTotal || hrRows.length || 0) / 50));
+      if (!hrRows.length) {
+        target.innerHTML = `<div class="status">Sin empleados para los filtros seleccionados.</div>
+          <div class="pager"><span>Página ${hrEmployeePage} de ${pages} · 0 registros</span></div>`;
+        return;
+      }
+      target.innerHTML = `
+        <div class="hr-emp-table table-wrap">
+          <table>
+            <thead><tr><th>Acción</th>${cols.map(c => `<th>${esc(c.replace(/_/g," "))}</th>`).join("")}</tr></thead>
+            <tbody>${hrRows.map((row, idx) => {
+              const selected = idx === selectedHrEmployeeIndex;
+              return `<tr class="${selected ? "service-selected" : ""}" onclick="selectedHrEmployeeIndex=${idx};renderHrEmployeesTable()">
+                <td><div class="toolbar"><button class="secondary" onclick="event.stopPropagation();openHrEmployeeForm(${idx}, 'view')">Ver</button><button onclick="event.stopPropagation();openHrEmployeeForm(${idx}, 'edit')">Editar</button></div></td>
+                ${cols.map(c => `<td>${esc(hrEmployeeDisplay(row, c))}</td>`).join("")}
+              </tr>`;
+            }).join("")}</tbody>
+          </table>
+        </div>
+        <div class="pager">
+          <span>Página ${hrEmployeePage} de ${pages} · ${hrEmployeeTotal || hrRows.length} registro(s)</span>
+          <div class="toolbar">
+            <button class="secondary" ${hrEmployeePage <= 1 ? "disabled" : ""} onclick="loadHrEmployees(1)">«</button>
+            <button class="secondary" ${hrEmployeePage <= 1 ? "disabled" : ""} onclick="loadHrEmployees(${Math.max(1, hrEmployeePage - 1)})">‹</button>
+            <button class="secondary" ${hrEmployeePage >= pages ? "disabled" : ""} onclick="loadHrEmployees(${Math.min(pages, hrEmployeePage + 1)})">›</button>
+          </div>
+        </div>`;
+      enhanceExcelTables(target);
+    }
+    function hrEmployeeDisplay(row, key) {
+      const value = row?.[key];
+      if (key === "pago_minimo_garantizado") return value ? "Sí" : "No";
+      if (value === true) return "Sí";
+      if (value === false) return "No";
+      return value ?? "";
+    }
+    function hrEmployeeSelectOptions(values, selected="") {
+      return values.map(v => `<option value="${esc(v)}" ${String(v) === String(selected || "") ? "selected" : ""}>${esc(v)}</option>`).join("");
+    }
+    function hrEmployeeField(field, row={}, mode="edit") {
+      const [name, label, type, choices] = field;
+      const readonly = mode === "view" || name === "codigo";
+      const disabled = readonly ? "disabled" : "";
+      const value = row?.[name] ?? "";
+      if (type === "textarea") return `<label class="wide">${esc(label)}<textarea id="hrEmpForm_${esc(name)}" ${disabled}>${esc(value)}</textarea></label>`;
+      if (type === "select") return `<label>${esc(label)}<select id="hrEmpForm_${esc(name)}" ${disabled}>${hrEmployeeSelectOptions(choices, value)}</select></label>`;
+      if (type === "checkbox") return `<label class="hr-emp-check"><input id="hrEmpForm_${esc(name)}" type="checkbox" ${value ? "checked" : ""} ${disabled} /> ${esc(label)}</label>`;
+      const step = type === "number" ? ' step="0.01"' : "";
+      const onAge = name === "fecha_nacimiento" ? ' onchange="updateHrEmployeeAge()"' : "";
+      return `<label>${esc(label)}<input id="hrEmpForm_${esc(name)}" type="${esc(type)}" value="${esc(value)}" ${disabled}${step}${onAge} /></label>`;
+    }
+    function hrEmployeeFieldGroups() {
+      return [
+        ["Datos personales", [
+          ["id","ID","text"],["codigo","Código","text"],["cedula_id","Cédula ID","text"],["usuario","Usuario SOM","text"],
+          ["nombre","Nombre","text"],["apellidos","Apellidos","text"],
+          ["estado_civil","Estado civil","select",["","Soltero","Casado","Unión libre","Divorciado","Separado","Viudo","Otro"]],
+          ["genero","Género","select",["","Masculino","Femenina","Otro"]],
+          ["nacionalidad","Nacionalidad","text"],["fecha_nacimiento","Fecha nacimiento","date"],["edad","Edad","number"]
+        ]],
+        ["Contacto y dirección", [
+          ["prefijo","Prefijo","select",["","+506","+52","+57","+1","+504"]],["telefono","Teléfono","text"],
+          ["provincia","Provincia","text"],["canton","Cantón","text"],["distrito","Distrito","text"],["direccion","Dirección","textarea"]
+        ]],
+        ["Laboral y pagos", [
+          ["jornada","Jornada","select",["","Completa","Medio tiempo","Por horas","Tiempo completo"]],
+          ["salario","Salario","number"],["pago","Pago","select",["","Mensual","Quincenal","Semanal"]],
+          ["banco","Banco","text"],["cuenta_iban","Cuenta IBAN","text"],["moneda","Moneda","select",["","CRC","USD","EUR"]],
+          ["fecha_ingreso","Fecha ingreso","date"],["horas_contratadas","Horas contratadas","number"],
+          ["horas_tope_ordinario","Horas tope ordinario","number"],["horas_tope_maximo","Horas tope máximo","number"],
+          ["tarifa_hora_extra","Tarifa hora extra","number"],["vacaciones","Vacaciones","number"],
+          ["estado","Estado","select",["","Activo","Inactivo"]],["pago_minimo_garantizado","Pago mínimo garantizado","checkbox"]
+        ]],
+        ["Emergencia y salud", [
+          ["enfermedades","Enfermedades","textarea"],["contacto_emergencia","Contacto emergencia","text"],["telefono_emergencia","Teléfono emergencia","text"]
+        ]],
+        ["Activos", [
+          ["activo1","Activo 1","text"],["marca1","Marca 1","text"],["serial1","Serial 1","text"],
+          ["activo2","Activo 2","text"],["marca2","Marca 2","text"],["serial2","Serial 2","text"],
+          ["activo3","Activo 3","text"],["marca3","Marca 3","text"],["serial3","Serial 3","text"]
+        ]]
+      ];
+    }
+    function openHrEmployeeForm(idx=null, mode="view") {
+      const row = idx === null ? { estado:"Activo", moneda:"CRC", pago:"Mensual", jornada:"Completa", pago_minimo_garantizado:false } : (hrRows[idx] || {});
+      const title = mode === "new" ? "Nuevo empleado" : mode === "edit" ? "Modificar empleado" : "Ver empleado";
+      const groups = hrEmployeeFieldGroups();
+      closeModal();
+      document.body.insertAdjacentHTML("beforeend", `
+        <div class="modal-backdrop" id="svcModal">
+          <div class="modal hr-emp-modal">
+            <div class="modal-head"><h2>${esc(title)}</h2><button class="secondary" onclick="closeModal()">Cerrar</button></div>
+            <div class="hr-emp-tabs">${groups.map((g,i) => `<button type="button" class="${i === 0 ? "active" : ""}" onclick="showHrEmployeeTab(${i})">${esc(g[0])}</button>`).join("")}</div>
+            <div id="hrEmpFormMsg" class="status hidden"></div>
+            <form id="hrEmpForm" onsubmit="event.preventDefault();saveHrEmployee('${mode}')">
+              ${groups.map((g,i) => `<section class="hr-emp-tab-panel ${i === 0 ? "active" : ""}" data-hr-emp-tab="${i}">${g[1].map(field => hrEmployeeField(field, row, mode)).join("")}</section>`).join("")}
+              <div class="md-actions" style="margin-top:14px;">
+                ${mode === "view" ? "" : `<button type="submit">${mode === "new" ? "Crear empleado" : "Guardar cambios"}</button>`}
+                <button class="secondary" type="button" onclick="closeModal()">Cerrar</button>
+              </div>
+            </form>
+          </div>
+        </div>`);
+      if (mode !== "new" && $("hrEmpForm_id")) $("hrEmpForm_id").value = row.id || "";
+    }
+    function showHrEmployeeTab(index) {
+      document.querySelectorAll(".hr-emp-tabs button").forEach((btn, i) => btn.classList.toggle("active", i === index));
+      document.querySelectorAll(".hr-emp-tab-panel").forEach(panel => panel.classList.toggle("active", panel.dataset.hrEmpTab === String(index)));
+    }
+    function updateHrEmployeeAge() {
+      const birth = valueFrom("hrEmpForm_fecha_nacimiento");
+      const target = $("hrEmpForm_edad");
+      if (!birth || !target) return;
+      const d = new Date(`${birth}T00:00:00`);
+      if (Number.isNaN(d.getTime())) return;
+      const today = new Date();
+      let age = today.getFullYear() - d.getFullYear();
+      const m = today.getMonth() - d.getMonth();
+      if (m < 0 || (m === 0 && today.getDate() < d.getDate())) age -= 1;
+      target.value = age >= 0 ? age : "";
+    }
+    function collectHrEmployeePayload(mode) {
+      const payload = {};
+      hrEmployeeFieldGroups().flatMap(g => g[1]).forEach(([name, label, type]) => {
+        if (name === "id") return;
+        const el = $(`hrEmpForm_${name}`);
+        if (!el) return;
+        if (type === "checkbox") payload[name] = Boolean(el.checked);
+        else payload[name] = el.value === "" ? null : el.value;
+      });
+      if (!payload.nombre || !payload.apellidos) throw new Error("Nombre y apellidos son obligatorios.");
+      if (payload.estado) payload.activo = String(payload.estado).toLowerCase() !== "inactivo";
+      if (mode === "new") delete payload.codigo;
+      return payload;
+    }
+    async function saveHrEmployee(mode) {
+      const msg = $("hrEmpFormMsg");
+      msg.className = "status";
+      msg.textContent = "Guardando...";
+      msg.classList.remove("hidden");
+      try {
+        const payload = collectHrEmployeePayload(mode);
+        if (mode === "new") await postJSON("/hr/employees", payload);
+        else {
+          const id = valueFrom("hrEmpForm_id");
+          if (!id) throw new Error("No se encontró el ID del empleado.");
+          await sendJSON("PUT", `/hr/employees/${encodeURIComponent(id)}`, payload);
+        }
+        msg.textContent = mode === "new" ? "Empleado creado." : "Empleado actualizado.";
+        await loadHrEmployees(hrEmployeePage);
+        closeModal();
+      } catch (err) {
+        msg.className = "status error";
+        msg.textContent = err.message;
+        msg.classList.remove("hidden");
+      }
+    }
+    function renderHrSalary() {
+      $("hrViewTitle").textContent = "Calculadora Salarial";
+      $("hrViewHint").textContent = "CR 2026: impuestos, cargas, IVA, PYME, depreciación y comparativa.";
+      hrSalaryScenario = "EMPLOYEE";
+      hrSalaryExpenses = [];
+      $("hrWorkspace").innerHTML = `
+        <div class="hr-salary-layout">
+          <section>
+            <div class="hr-salary-tabs">
+              <button id="hrSalTab_EMPLOYEE" class="active" onclick="switchHrSalaryScenario('EMPLOYEE')">Asalariado</button>
+              <button id="hrSalTab_INDEPENDENT" onclick="switchHrSalaryScenario('INDEPENDENT')">Independiente</button>
+              <button id="hrSalTab_OWNER" onclick="switchHrSalaryScenario('OWNER')">Dueño de empresa</button>
+            </div>
+            <div id="hrSalaryForm"></div>
+            <div class="md-actions" style="margin-top:12px;">
+              <button onclick="calculateHrSalary(false)">Calcular</button>
+              <button onclick="calculateHrSalary(true)">Calcular y guardar</button>
+              <button class="secondary" onclick="compareHrSalary()">Comparar opciones</button>
+              <button class="secondary" onclick="clearHrSalaryExpenses()">Limpiar gastos</button>
+            </div>
+          </section>
+          <section class="hr-salary-result">
+            <div id="hrSalaryStatus" class="status">Ingrese un monto y presione Calcular.</div>
+            <div id="hrSalaryKpis" class="hr-salary-kpis"></div>
+            <div id="hrSalaryDetail" class="hr-salary-detail">Sin cálculo todavía.</div>
+            <div class="hr-salary-history">
+              <div class="panel-head"><h3>Historial</h3><button class="secondary" onclick="loadHrSalaryHistory()">Actualizar</button></div>
+              <div id="hrSalaryHistory"><div class="status">Cargando historial...</div></div>
+            </div>
+          </section>
+        </div>`;
+      renderHrSalaryForm();
+      loadHrSalaryRules();
+      loadHrSalaryHistory();
+    }
+    function currentYear() {
+      return new Date().getFullYear();
+    }
+    function hrSalaryYearOptions(selected="") {
+      const current = currentYear();
+      let html = '<option value=""></option>';
+      for (let year=current; year>=1995; year--) html += `<option value="${year}" ${String(selected) === String(year) ? "selected" : ""}>${year}</option>`;
+      return html;
+    }
+    function switchHrSalaryScenario(scenario) {
+      hrSalaryScenario = scenario;
+      document.querySelectorAll(".hr-salary-tabs button").forEach(btn => btn.classList.remove("active"));
+      $(`hrSalTab_${scenario}`)?.classList.add("active");
+      renderHrSalaryForm();
+    }
+    function renderHrSalaryForm() {
+      const box = $("hrSalaryForm");
+      if (!box) return;
+      const pymeYears = ["1","2","3","4","5","6"].map(y => `<option value="${y}">${y}</option>`).join("");
+      const expenseEditor = hrSalaryScenario === "EMPLOYEE" ? "" : renderHrSalaryExpenseEditor();
+      if (hrSalaryScenario === "EMPLOYEE") {
+        box.innerHTML = `
+          <div class="hr-salary-pane active">
+            <label>Etiqueta<input id="hrSalLabel" /></label>
+            <label>Salario mensual bruto<input id="hrSalAmount" type="number" step="0.01" value="0" /></label>
+            <div class="status wide">Automatiza SEM, IVM, Banco Popular, renta salarial y costo patronal 2026.</div>
+          </div>`;
+        return;
+      }
+      if (hrSalaryScenario === "INDEPENDENT") {
+        box.innerHTML = `
+          <div class="hr-salary-pane active">
+            <label>Etiqueta<input id="hrSalLabel" /></label>
+            <label>Monto mensual a facturar sin IVA<input id="hrSalAmount" type="number" step="0.01" value="0" /></label>
+            <label>Monto deuda vehicular / costo original<input id="hrSalVehicleDebt" type="number" step="0.01" value="0" /></label>
+            <label>Año compra vehículo<select id="hrSalVehicleYear">${hrSalaryYearOptions(currentYear())}</select></label>
+            <label>Vida útil vehículo en años<input id="hrSalVehicleLife" type="number" step="1" value="10" /></label>
+            <label>Cuota vehicular mensual<input id="hrSalVehiclePayment" type="number" step="0.01" value="0" /></label>
+            <label class="hr-salary-check"><input id="hrSalPyme" type="checkbox" /> PYME registrada</label>
+            <label>Año PYME<select id="hrSalPymeYear">${pymeYears}</select></label>
+            <div class="status wide">Vehículo usa vida útil referencial de 10 años; gastos corrientes no requieren año ni vida útil.</div>
+            ${expenseEditor}
+          </div>`;
+        renderHrSalaryExpenseList();
+        return;
+      }
+      box.innerHTML = `
+        <div class="hr-salary-pane active">
+          <label>Etiqueta<input id="hrSalLabel" /></label>
+          <label>Ingreso bruto mensual empresa sin IVA<input id="hrSalAmount" type="number" step="0.01" value="0" /></label>
+          <label>Tipo pago socio<select id="hrSalDistribution"><option value="NONE">No aplica</option><option value="DIETAS">Dietas</option><option value="DIVIDENDS">Dividendos</option></select></label>
+          <div class="status">Calcula automáticamente el 15% y el neto de dietas/dividendos sobre el ingreso mensual.</div>
+          <label class="hr-salary-check"><input id="hrSalPyme" type="checkbox" /> PYME registrada</label>
+          <label>Año PYME<select id="hrSalPymeYear">${pymeYears}</select></label>
+          <label>Monto deuda vehicular / costo original<input id="hrSalVehicleDebt" type="number" step="0.01" value="0" /></label>
+          <label>Año compra vehículo<select id="hrSalVehicleYear">${hrSalaryYearOptions(currentYear())}</select></label>
+          <label>Vida útil vehículo en años<input id="hrSalVehicleLife" type="number" step="1" value="10" /></label>
+          <label>Cuota vehicular mensual<input id="hrSalVehiclePayment" type="number" step="0.01" value="0" /></label>
+          ${expenseEditor}
+        </div>`;
+      renderHrSalaryExpenseList();
+    }
+    function renderHrSalaryExpenseEditor() {
+      const categories = hrSalaryRules?.expense_categories || [];
+      const optionsHtml = categories.map(v => `<option value="${esc(v)}"></option>`).join("");
+      return `
+        <div class="hr-salary-expense wide">
+          <strong>Gastos deducibles</strong>
+          <div class="hr-salary-expense-grid">
+            <label>Rubro<input id="hrSalExpenseCategory" list="hrSalExpenseCategories" value="${esc(categories[0] || "")}" /><datalist id="hrSalExpenseCategories">${optionsHtml}</datalist></label>
+            <label>Monto<input id="hrSalExpenseAmount" type="number" step="0.01" value="0" /></label>
+            <label>Año compra<select id="hrSalExpenseYear">${hrSalaryYearOptions("")}</select></label>
+            <label>Vida útil<input id="hrSalExpenseLife" type="number" step="1" value="10" /></label>
+            <label>Nota<input id="hrSalExpenseNote" /></label>
+            <button type="button" onclick="addHrSalaryExpense()">Agregar</button>
+          </div>
+          <div id="hrSalaryExpenseList" class="hr-salary-expense-list"></div>
+        </div>`;
+    }
+    async function loadHrSalaryRules() {
+      try {
+        hrSalaryRules = await getJSON("/hr/salary-calculator/rules");
+        renderHrSalaryForm();
+      } catch (err) {
+        if ($("hrSalaryStatus")) $("hrSalaryStatus").textContent = `No se pudieron cargar reglas: ${err.message}`;
+      }
+    }
+    function hrSalaryNum(id) {
+      const text = valueFrom(id).replace(/\\s/g, "");
+      if (!text) return 0;
+      if (text.includes(",") && text.includes(".")) return Number(text.lastIndexOf(",") > text.lastIndexOf(".") ? text.replace(/\\./g, "").replace(",", ".") : text.replace(/,/g, "")) || 0;
+      if (text.includes(",")) return Number(text.replace(",", ".")) || 0;
+      return Number(text) || 0;
+    }
+    function hrSalaryIntOrNull(id) {
+      const value = hrSalaryNum(id);
+      return value ? Math.trunc(value) : null;
+    }
+    function addHrSalaryExpense() {
+      const category = valueFrom("hrSalExpenseCategory") || "Otro gasto deducible";
+      const amount = hrSalaryNum("hrSalExpenseAmount");
+      const purchaseYear = hrSalaryIntOrNull("hrSalExpenseYear");
+      const usefulLife = hrSalaryIntOrNull("hrSalExpenseLife");
+      const note = valueFrom("hrSalExpenseNote") || null;
+      hrSalaryExpenses.push({ category, amount, note, purchase_year:purchaseYear, useful_life_years:usefulLife });
+      if ($("hrSalExpenseAmount")) $("hrSalExpenseAmount").value = "0";
+      if ($("hrSalExpenseNote")) $("hrSalExpenseNote").value = "";
+      if ($("hrSalExpenseYear")) $("hrSalExpenseYear").value = "";
+      renderHrSalaryExpenseList();
+    }
+    function removeHrSalaryExpense(index) {
+      hrSalaryExpenses.splice(index, 1);
+      renderHrSalaryExpenseList();
+    }
+    function clearHrSalaryExpenses() {
+      hrSalaryExpenses = [];
+      renderHrSalaryExpenseList();
+    }
+    function renderHrSalaryExpenseList() {
+      const box = $("hrSalaryExpenseList");
+      if (!box) return;
+      box.innerHTML = hrSalaryExpenses.length
+        ? hrSalaryExpenses.map((row, idx) => `<div class="hr-salary-expense-row"><span>${esc(row.category)} · ${salaryMoney(row.amount)}${row.purchase_year ? ` · compra ${esc(row.purchase_year)} · vida ${esc(row.useful_life_years || 10)} años` : ""}</span><button class="secondary" onclick="removeHrSalaryExpense(${idx})">Quitar</button></div>`).join("")
+        : '<div class="status">Sin gastos agregados.</div>';
+    }
+    function collectHrSalaryPayload(save=false) {
+      const payload = { scenario:hrSalaryScenario, amount:hrSalaryNum("hrSalAmount"), label:valueFrom("hrSalLabel") || null, save:Boolean(save), expenses:[] };
+      if (hrSalaryScenario !== "EMPLOYEE") {
+        payload.vehicle_debt_amount = hrSalaryNum("hrSalVehicleDebt");
+        payload.vehicle_purchase_year = hrSalaryIntOrNull("hrSalVehicleYear");
+        payload.vehicle_useful_life_years = Math.trunc(hrSalaryNum("hrSalVehicleLife") || 10);
+        payload.vehicle_monthly_payment = hrSalaryNum("hrSalVehiclePayment");
+        payload.is_pyme = Boolean($("hrSalPyme")?.checked);
+        payload.pyme_year = Math.trunc(hrSalaryNum("hrSalPymeYear") || 0);
+        payload.expenses = hrSalaryExpenses;
+      }
+      if (hrSalaryScenario === "OWNER") {
+        payload.distribution_type = valueFrom("hrSalDistribution") || "NONE";
+        payload.distribution_amount = 0;
+      }
+      return payload;
+    }
+    const HR_SALARY_LABELS = {
+      gross_salary:"Salario bruto", worker_contributions_total:"Total deducciones trabajador", salary_income_tax:"Impuesto al salario", net_salary:"Salario neto",
+      employer_contributions_total:"Total aporte patronal", total_company_cost:"Costo total empresa", monthly_invoice_subtotal:"Subtotal factura mensual",
+      vat_13:"IVA 13%", monthly_invoice_total:"Total factura con IVA", deductible_expenses:"Gastos deducibles", deductible_expenses_total:"Total gastos deducibles",
+      deductible_expenses_total_monthly:"Total gastos deducibles mensual", net_before_ccss:"Ingreso neto antes de CCSS", ccss_rate:"Tasa CCSS",
+      ccss_independent:"CCSS independiente", taxable_income_monthly_reference:"Base imponible mensual ref.", taxable_income_annual_reference:"Base imponible anual ref.",
+      annual_income_tax:"Renta anual", base_annual_income_tax:"Renta anual antes de exoneración", pyme_applied:"Beneficio PYME aplicado",
+      pyme_gross_limit_exceeded:"Límite PYME excedido", monthly_income_tax_reference:"Renta mensual ref.", net_after_ccss_and_tax_monthly_reference:"Neto mensual ref.",
+      cash_remaining_monthly_reference:"Dinero mensual después de rebajos", monthly_gross_income:"Ingreso bruto mensual", monthly_income_total_with_vat:"Ingreso mensual con IVA",
+      annual_gross_income:"Ingreso bruto anual", distribution_type:"Tipo de pago socio", distribution_gross_monthly:"Monto bruto dietas/dividendos",
+      distribution_withholding_15:"Retención 15%", distribution_net_monthly:"Neto después del 15%", distribution_is_deductible:"Deducible para empresa",
+      annual_net_taxable_income:"Renta neta imponible anual", corporate_regime:"Régimen renta jurídica", base_corporate_income_tax:"Impuesto base",
+      pyme_exemption_rate:"Exoneración PYME", annual_corporate_income_tax:"Renta jurídica anual", monthly_corporate_income_tax_reference:"Renta jurídica mensual ref.",
+      worker_contributions:"Deducciones trabajador", employer_contributions:"Aporte patronal", salary_income_tax_detail:"Detalle impuesto salarial",
+      income_tax_detail:"Detalle impuesto renta", corporate_tax_detail:"Detalle renta jurídica"
+    };
+    const HR_SALARY_HIGHLIGHTS = {
+      EMPLOYEE:["net_salary","worker_contributions_total","salary_income_tax","total_company_cost"],
+      INDEPENDENT:["monthly_invoice_total","cash_remaining_monthly_reference","ccss_independent","annual_income_tax"],
+      OWNER:["monthly_income_total_with_vat","distribution_net_monthly","distribution_withholding_15","annual_corporate_income_tax"]
+    };
+    function salaryLabel(key) {
+      return HR_SALARY_LABELS[key] || String(key || "").replace(/_/g, " ").replace(/\\b\\w/g, c => c.toUpperCase());
+    }
+    function salaryMoney(value) {
+      const n = Number(value || 0);
+      return `CRC ${n.toLocaleString("en-US", { minimumFractionDigits:2, maximumFractionDigits:2 })}`;
+    }
+    function salaryValueText(key, value) {
+      if (typeof value === "boolean") return value ? "Sí" : "No";
+      if (typeof value === "number") return key.endsWith("_rate") ? `${(value * 100).toFixed(2)}%` : salaryMoney(value);
+      if (key === "distribution_type") return ({ NONE:"No aplica", DIETAS:"Dietas", DIVIDENDS:"Dividendos" }[value] || value);
+      return value ?? "";
+    }
+    function renderHrSalaryKpis(data) {
+      const keys = HR_SALARY_HIGHLIGHTS[data?.scenario] || [];
+      $("hrSalaryKpis").innerHTML = keys.map(key => `<div class="hr-kpi"><span>${esc(salaryLabel(key))}</span><strong>${esc(salaryValueText(key, data?.[key]))}</strong></div>`).join("");
+    }
+    function renderHrSalaryResult(data) {
+      renderHrSalaryKpis(data);
+      const scenarioLabel = ({ EMPLOYEE:"Asalariado", INDEPENDENT:"Independiente", OWNER:"Dueño de empresa" }[data.scenario] || data.scenario);
+      $("hrSalaryStatus").textContent = `${scenarioLabel} · regla ${data.rule_version || "CR-2026"} · cálculo automático listo`;
+      const lines = ["Desglose del cálculo", ""];
+      Object.entries(data).forEach(([key, value]) => {
+        if (["scenario","rule_version","currency","disclaimer"].includes(key)) return;
+        if (Array.isArray(value)) {
+          lines.push(salaryLabel(key));
+          value.forEach(item => {
+            if (item && typeof item === "object") {
+              const name = item.name || item.category || `${item.from ?? ""} - ${item.to ?? ""}`;
+              const amount = item.amount ?? item.tax ?? "";
+              const rate = typeof item.rate === "number" ? ` (${(item.rate * 100).toFixed(2)}%)` : "";
+              const extra = item.remaining_book_value !== undefined && item.remaining_book_value !== null ? ` | saldo libro ${salaryMoney(item.remaining_book_value)}` : "";
+              lines.push(`  - ${name}: ${salaryMoney(amount)}${rate}${extra}`);
+            }
+          });
+          lines.push("");
+        } else {
+          lines.push(`${salaryLabel(key)}: ${salaryValueText(key, value)}`);
+        }
+      });
+      lines.push("");
+      lines.push(String(data.disclaimer || ""));
+      $("hrSalaryDetail").textContent = lines.join("\\n");
+    }
+    async function calculateHrSalary(save=false) {
+      try {
+        const data = await postJSON("/hr/salary-calculator/calculate", collectHrSalaryPayload(save));
+        renderHrSalaryResult(data);
+        if (save) await loadHrSalaryHistory();
+      } catch (err) {
+        $("hrSalaryDetail").innerHTML = `<div class="status error">${esc(err.message)}</div>`;
+      }
+    }
+    async function compareHrSalary() {
+      try {
+        const data = await postJSON("/hr/salary-calculator/compare", collectHrSalaryPayload(false));
+        $("hrSalaryStatus").textContent = `IA activa · comparativa ${data.rule_version || "CR-2026"} · ${data.recommended_label || ""}`;
+        $("hrSalaryKpis").innerHTML = (data.scenarios || []).slice(0,4).map(row => `<div class="hr-kpi"><span>${esc(row.label || row.scenario)}</span><strong>${salaryMoney(row.monthly_income_reference)}</strong></div>`).join("");
+        const lines = ["IA activa: comparativa de escenarios", "", String(data.summary || ""), ""];
+        (data.scenarios || []).forEach((row, idx) => {
+          lines.push(`${idx + 1}. ${row.label}`);
+          lines.push(`   Ingreso mensual ref.: ${salaryMoney(row.monthly_income_reference)}`);
+          lines.push(`   Carga mensual fiscal/social: ${salaryMoney(row.monthly_tax_and_social_burden)}`);
+          lines.push(`   PYME aplicado: ${row.pyme_applied ? "Sí" : "No"}`);
+          if (row.pyme_gross_limit_exceeded) lines.push("   Nota: excede el límite PYME anual 2026.");
+          lines.push("   Pros:");
+          (row.pros || []).forEach(item => lines.push(`     - ${item}`));
+          lines.push("   Contras:");
+          (row.cons || []).forEach(item => lines.push(`     - ${item}`));
+          lines.push("");
+        });
+        lines.push(String(data.disclaimer || ""));
+        $("hrSalaryDetail").textContent = lines.join("\\n");
+      } catch (err) {
+        $("hrSalaryDetail").innerHTML = `<div class="status error">${esc(err.message)}</div>`;
+      }
+    }
+    async function loadHrSalaryHistory() {
+      const target = $("hrSalaryHistory");
+      if (!target) return;
+      try {
+        const payload = await getJSON("/hr/salary-calculator/history?limit=50");
+        hrSalaryHistoryRows = rowsList(payload);
+        if (!hrSalaryHistoryRows.length) {
+          target.innerHTML = '<div class="status">Sin cálculos guardados para esta empresa.</div>';
+          return;
+        }
+        const rows = hrSalaryHistoryRows.map(row => ({ id:row.id, escenario:({ EMPLOYEE:"Asalariado", INDEPENDENT:"Independiente", OWNER:"Dueño de empresa" }[row.scenario] || row.scenario), etiqueta:row.label || "", creado_por:row.created_by || "", fecha:row.created_at || "" }));
+        target.innerHTML = hrTable(rows, ["id","escenario","etiqueta","creado_por","fecha"]);
+        enhanceExcelTables(target);
+      } catch (err) {
+        target.innerHTML = `<div class="status error">${esc(err.message)}</div>`;
+      }
+    }
+    function renderHrMedical() {
+      $("hrViewTitle").textContent = "Red Médica";
+      $("hrViewHint").textContent = "Consulta por profesional, ubicación, especialidad, tipo de atención, centro o servicio.";
+      selectedHrMedicalIndex = null;
+      $("hrWorkspace").innerHTML = `
+        <div class="hr-medical-shell">
+          <div class="hr-medical-actions">
+            <div class="hr-medical-tools">
+              <button onclick="loadHrMedical()">Actualizar</button>
+              <button class="secondary" onclick="copyHrMedicalDetail()">Copiar detalle</button>
+              <button class="secondary" onclick="exportHrMedical()">Exportar resultado</button>
+              <button class="gray" onclick="clearHrMedicalFilters()">Ver todo</button>
+            </div>
+            <strong id="hrMedicalResult" class="muted">Cargando red médica...</strong>
+          </div>
+          <div id="hrMedicalKpis" class="hr-kpis"></div>
+          <div class="hr-medical-filters">
+            <label>Busqueda libre<input id="hrMedQ" oninput="scheduleHrMedicalLoad()" onkeydown="if(event.key==='Enter'){event.preventDefault();loadHrMedical()}" placeholder="Nombre, clínica, especialidad..." /></label>
+            <label>Provincia<select id="hrMedProvince" onchange="updateHrMedicalFilter('province', this.value)"></select></label>
+            <label>Cantón<select id="hrMedCanton" onchange="updateHrMedicalFilter('canton', this.value)"></select></label>
+            <label>Distrito<select id="hrMedDistrict" onchange="updateHrMedicalFilter('district', this.value)"></select></label>
+            <label>Especialidad<select id="hrMedSpecialty" onchange="updateHrMedicalFilter('specialty', this.value)"></select></label>
+            <label>Consulta<select id="hrMedConsultation" onchange="updateHrMedicalFilter('consultation_type', this.value)"></select></label>
+            <label>Servicio<select id="hrMedService" onchange="updateHrMedicalFilter('service_type', this.value)"></select></label>
+            <label>Centro / lugar<select id="hrMedClinic" onchange="updateHrMedicalFilter('clinic', this.value)"></select></label>
+          </div>
+          <div class="hr-medical-quick">
+            <strong>Accesos rápidos:</strong>
+            <button class="secondary" onclick="quickHrMedical('specialty','Medicina General')">Medicina General</button>
+            <button class="secondary" onclick="quickHrMedical('specialty','Odontologia')">Odontología</button>
+            <button class="secondary" onclick="quickHrMedical('specialty','Psicologia')">Psicología</button>
+            <button class="secondary" onclick="quickHrMedical('consultation_type','Presencial y Virtual')">Virtual</button>
+            <button class="secondary" onclick="quickHrMedical('province','SAN JOSE')">San José</button>
+            <button class="secondary" onclick="quickHrMedical('province','ALAJUELA')">Alajuela</button>
+          </div>
+          <div id="hrMedicalMsg" class="status hidden"></div>
+          <div class="hr-medical-layout">
+            <div id="hrMedicalTable" class="hr-medical-table"></div>
+            <aside id="hrMedicalDetail" class="hr-medical-detail">
+              <h3>Selecciona un profesional</h3>
+              <pre>Aquí verás especialidad, centro, modalidad y ubicación completa.</pre>
+            </aside>
+          </div>
+        </div>`;
+      loadHrMedical();
+    }
+    function hrMedicalFilterState() {
+      return {
+        q:valueFrom("hrMedQ"),
+        province:valueFrom("hrMedProvince"),
+        canton:valueFrom("hrMedCanton"),
+        district:valueFrom("hrMedDistrict"),
+        specialty:valueFrom("hrMedSpecialty"),
+        consultation_type:valueFrom("hrMedConsultation"),
+        service_type:valueFrom("hrMedService"),
+        clinic:valueFrom("hrMedClinic")
+      };
+    }
+    function hrMedicalParams(extra={}) {
+      const params = new URLSearchParams({ page:"1", page_size:String(extra.page_size || 400) });
+      const values = { ...hrMedicalFilterState(), ...extra };
+      delete values.page_size;
+      Object.entries(values).forEach(([key, value]) => { if (String(value || "").trim()) params.set(key, String(value).trim()); });
+      return params;
+    }
+    function setHrMedicalSelect(id, values, selected="") {
+      const el = $(id);
+      if (!el) return;
+      el.innerHTML = options(values || [], selected || "", "Todos");
+      if (selected && ![...el.options].some(opt => opt.value === selected)) el.value = "";
+    }
+    function renderHrMedicalFilters(payload={}) {
+      hrMedicalFilters = payload || {};
+      const current = hrMedicalFilterState();
+      setHrMedicalSelect("hrMedProvince", payload.provinces, current.province);
+      setHrMedicalSelect("hrMedCanton", payload.cantons, current.canton);
+      setHrMedicalSelect("hrMedDistrict", payload.districts, current.district);
+      setHrMedicalSelect("hrMedSpecialty", payload.specialties, current.specialty);
+      setHrMedicalSelect("hrMedConsultation", payload.consultation_types, current.consultation_type);
+      setHrMedicalSelect("hrMedService", payload.service_types, current.service_type);
+      setHrMedicalSelect("hrMedClinic", payload.clinics, current.clinic);
+      renderHrMedicalKpis(payload.summary || {});
+    }
+    function renderHrMedicalKpis(summary={}) {
+      const total = Number(summary.total || 0);
+      const visible = hrMedicalRows.length;
+      $("hrMedicalKpis").innerHTML = [
+        ["Registros red", total],
+        ["Resultado visible", visible],
+        ["Profesionales", summary.professionals || 0],
+        ["Especialidades", summary.specialties || 0],
+        ["Provincias", summary.provinces || 0]
+      ].map(([label,value]) => `<div class="hr-kpi"><span>${esc(label)}</span><strong>${Number(value || 0).toLocaleString("en-US")}</strong></div>`).join("");
+    }
+    let hrMedicalLoadTimer = null;
+    function scheduleHrMedicalLoad() {
+      if (hrMedicalLoadTimer) clearTimeout(hrMedicalLoadTimer);
+      hrMedicalLoadTimer = setTimeout(() => loadHrMedical(), 350);
+    }
+    function updateHrMedicalFilter(key, value) {
+      if (key === "province") {
+        if ($("hrMedCanton")) $("hrMedCanton").value = "";
+        if ($("hrMedDistrict")) $("hrMedDistrict").value = "";
+      }
+      if (key === "canton" && $("hrMedDistrict")) $("hrMedDistrict").value = "";
+      loadHrMedical();
+    }
+    function quickHrMedical(key, value) {
+      const map = {
+        province:"hrMedProvince",
+        specialty:"hrMedSpecialty",
+        consultation_type:"hrMedConsultation"
+      };
+      if ($(map[key])) $(map[key]).value = value;
+      loadHrMedical();
+    }
+    async function loadHrMedical() {
+      const msg = $("hrMedicalMsg");
+      const result = $("hrMedicalResult");
+      if (msg) { msg.className = "status"; msg.textContent = "Consultando red médica..."; }
+      try {
+        const params = hrMedicalParams();
+        const [filterPayload, searchPayload] = await Promise.all([
+          getJSON(`/hr/medical-network/filters?${params}`),
+          getJSON(`/hr/medical-network/search?${params}`)
+        ]);
+        hrMedicalRows = rowsList(searchPayload);
+        selectedHrMedicalIndex = hrMedicalRows.length ? 0 : null;
+        renderHrMedicalFilters(filterPayload);
+        renderHrMedicalTable(searchPayload.total || hrMedicalRows.length);
+        renderHrMedicalDetail();
+        if (result) {
+          const total = Number(searchPayload.total || hrMedicalRows.length);
+          result.textContent = `${total.toLocaleString("en-US")} resultados${total > hrMedicalRows.length ? " | mostrando primeros 400" : ""}`;
+        }
+        if (msg) msg.classList.add("hidden");
+      } catch (err) {
+        if ($("hrMedicalTable")) $("hrMedicalTable").innerHTML = `<div class="status error">${esc(err.message)}</div>`;
+        if (msg) { msg.className = "status error"; msg.textContent = err.message; }
+      }
+    }
+    function renderHrMedicalTable(total=null) {
+      const target = $("hrMedicalTable");
+      if (!target) return;
+      if (!hrMedicalRows.length) {
+        target.innerHTML = '<div class="status">Sin resultados. Ajuste filtros o use Ver todo.</div>';
+        renderHrMedicalKpis(hrMedicalFilters.summary || {});
+        return;
+      }
+      const cols = ["tasacion_id","professional_name","specialty","consultation_type","service_type","clinic_name","province","canton","district"];
+      target.innerHTML = `<div class="table-wrap"><table><thead><tr>${cols.map(c => `<th>${esc(c.replace(/_/g," "))}</th>`).join("")}</tr></thead><tbody>${hrMedicalRows.map((row, idx) => {
+        const virtual = String(row.consultation_type || "").toLowerCase().includes("virtual");
+        return `<tr class="${idx === selectedHrMedicalIndex ? "selected" : ""} ${virtual ? "virtual" : ""}" onclick="selectHrMedical(${idx})">${cols.map(c => `<td>${esc(row[c])}</td>`).join("")}</tr>`;
+      }).join("")}</tbody></table></div>`;
+      enhanceExcelTables(target);
+      renderHrMedicalKpis({ ...(hrMedicalFilters.summary || {}), total:total ?? hrMedicalFilters?.summary?.total });
+    }
+    function selectHrMedical(idx) {
+      selectedHrMedicalIndex = idx;
+      renderHrMedicalTable();
+      renderHrMedicalDetail();
+    }
+    function currentHrMedicalRow() {
+      return selectedHrMedicalIndex === null ? null : hrMedicalRows[selectedHrMedicalIndex];
+    }
+    function hrMedicalDetailText(row=currentHrMedicalRow()) {
+      if (!row) return "";
+      return [
+        `Profesional: ${row.professional_name || ""}`,
+        `Especialidad: ${row.specialty || ""}`,
+        `Consulta: ${row.consultation_type || ""}`,
+        `Servicio: ${row.service_type || ""}`,
+        `Lugar: ${row.clinic_name || ""}`,
+        `Ubicación: ${row.province || ""} / ${row.canton || ""} / ${row.district || ""}`,
+        `ID: ${row.tasacion_id || ""}`
+      ].join("\\n");
+    }
+    function renderHrMedicalDetail() {
+      const row = currentHrMedicalRow();
+      const detail = $("hrMedicalDetail");
+      if (!detail) return;
+      if (!row) {
+        detail.innerHTML = '<h3>Sin resultados</h3><pre>Ajuste filtros o limpie la búsqueda para ampliar la red disponible.</pre>';
+        return;
+      }
+      detail.innerHTML = `<h3>${esc(row.professional_name || "Sin nombre")}</h3><pre>${esc(hrMedicalDetailText(row))}</pre><div class="hr-medical-detail-actions"><button class="secondary" onclick="copyHrMedicalDetail()">Copiar detalle</button><button onclick="filterHrMedicalSelectedSpecialty()">Filtrar por esta especialidad</button><button class="secondary" onclick="filterHrMedicalSelectedLocation()">Filtrar por esta ubicación</button></div>`;
+    }
+    async function copyHrMedicalDetail() {
+      const text = hrMedicalDetailText();
+      if (!text) return alert("Seleccione un profesional.");
+      try {
+        await navigator.clipboard.writeText(text);
+        hrStatus("Detalle de red médica copiado.");
+      } catch {
+        showObjectModal("Detalle red médica", { detalle:text });
+      }
+    }
+    function filterHrMedicalSelectedSpecialty() {
+      const row = currentHrMedicalRow();
+      if (!row?.specialty) return;
+      $("hrMedSpecialty").value = row.specialty;
+      loadHrMedical();
+    }
+    function filterHrMedicalSelectedLocation() {
+      const row = currentHrMedicalRow();
+      if (!row) return;
+      if ($("hrMedProvince")) $("hrMedProvince").value = row.province || "";
+      if ($("hrMedCanton")) $("hrMedCanton").value = row.canton || "";
+      if ($("hrMedDistrict")) $("hrMedDistrict").value = row.district || "";
+      loadHrMedical();
+    }
+    function clearHrMedicalFilters() {
+      ["hrMedQ","hrMedProvince","hrMedCanton","hrMedDistrict","hrMedSpecialty","hrMedConsultation","hrMedService","hrMedClinic"].forEach(id => { if ($(id)) $(id).value = ""; });
+      loadHrMedical();
+    }
+    function exportHrMedical() {
+      if (!hrMedicalRows.length) return alert("No hay resultados para exportar.");
+      downloadExcelFile(`red_medica_${new Date().toISOString().slice(0,10)}.xls`, hrMedicalRows, ["tasacion_id","professional_name","specialty","consultation_type","service_type","clinic_name","province","canton","district"], "Red médica");
+    }
+    function renderHrPolicies() {
+      $("hrViewTitle").textContent = "Políticas HHRR";
+      $("hrViewHint").textContent = "Seleccione una política para leerla. Admin y master pueden administrarlas.";
+      const canManage = canManageHrPolicies();
+      $("hrWorkspace").innerHTML = `
+        <div class="hr-policy-shell">
+          <div class="hr-policy-actions">
+            <label>Categoría<input id="hrPolicyCategory" placeholder="Ej. Vacaciones, General..." onkeydown="if(event.key==='Enter'){event.preventDefault();loadHrPolicies();}" /></label>
+            <div class="hr-policy-tools">
+              <button onclick="loadHrPolicies()">Cargar políticas</button>
+              <button class="secondary" onclick="clearHrPolicyFilter()">Limpiar</button>
+              ${canManage ? '<button class="green" onclick="openHrPolicyForm()">Agregar política</button>' : ""}
+            </div>
+          </div>
+          <div id="hrPoliciesView"><div class="status">Cargando políticas...</div></div>
+        </div>`;
+      selectedHrPolicyId = null;
+      loadHrPolicies();
+    }
+    function canManageHrPolicies() {
+      const role = String(session?.rol || "").toLowerCase();
+      return ["admin","master"].includes(role);
+    }
+    async function loadHrPolicies() {
+      const params = new URLSearchParams({ solo_activas:"true" });
+      if (valueFrom("hrPolicyCategory")) params.set("categoria", valueFrom("hrPolicyCategory"));
+      try {
+        const payload = await getJSON(`/hr/policies?${params}`);
+        hrRows = rowsList(payload);
+        if (!selectedHrPolicyId || !hrRows.some(row => String(row.id) === String(selectedHrPolicyId))) {
+          selectedHrPolicyId = hrRows[0]?.id || null;
+        }
+        renderHrPoliciesView();
+      } catch (err) { $("hrPoliciesView").innerHTML = `<div class="status error">${esc(err.message)}</div>`; }
+    }
+    function clearHrPolicyFilter() {
+      if ($("hrPolicyCategory")) $("hrPolicyCategory").value = "";
+      selectedHrPolicyId = null;
+      loadHrPolicies();
+    }
+    function selectedHrPolicy() {
+      return hrRows.find(row => String(row.id) === String(selectedHrPolicyId)) || null;
+    }
+    function selectHrPolicy(id) {
+      selectedHrPolicyId = id;
+      renderHrPoliciesView();
+    }
+    function renderHrPoliciesView() {
+      const target = $("hrPoliciesView");
+      if (!target) return;
+      if (!hrRows.length) {
+        target.innerHTML = '<div class="status">Sin políticas activas para esta consulta.</div>';
+        return;
+      }
+      const selected = selectedHrPolicy() || hrRows[0];
+      selectedHrPolicyId = selected?.id || null;
+      const canManage = canManageHrPolicies();
+      const categories = new Set();
+      const list = hrRows.map(row => {
+        categories.add(row.categoria || "General");
+        const active = String(row.id) === String(selectedHrPolicyId);
+        return `
+          <div class="hr-policy-card ${active ? "selected" : ""}" role="button" tabindex="0" onclick="selectHrPolicy(${Number(row.id)})" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();selectHrPolicy(${Number(row.id)});}">
+            <h3>${esc(row.titulo || "Sin título")}</h3>
+            <p>${esc(row.categoria || "General")}${row.articulo_ref ? ` · ${esc(row.articulo_ref)}` : ""}</p>
+          </div>`;
+      }).join("");
+      target.innerHTML = `
+        <div class="hr-request-summary">
+          <div class="hr-kpi"><span>Políticas</span><strong>${hrRows.length}</strong></div>
+          <div class="hr-kpi"><span>Categorías</span><strong>${categories.size}</strong></div>
+          <div class="hr-kpi"><span>Modo</span><strong>${canManage ? "Admin" : "Lectura"}</strong></div>
+        </div>
+        <div class="hr-policy-layout">
+          <div class="hr-policy-list">${list}</div>
+          <aside class="hr-policy-reader">${renderHrPolicyReader(selected, canManage)}</aside>
+        </div>`;
+    }
+    function renderHrPolicyReader(row, canManage) {
+      if (!row) return '<div class="status">Seleccione una política.</div>';
+      return `
+        <div class="panel-head">
+          <div>
+            <h3>${esc(row.titulo || "Política")}</h3>
+            <span class="muted">Categoría: ${esc(row.categoria || "General")}${row.articulo_ref ? ` | Referencia: ${esc(row.articulo_ref)}` : ""}</span>
+          </div>
+        </div>
+        <pre>${esc(row.contenido || "")}</pre>
+        <div class="hr-policy-reader-footer">Esta política interna se basa en el Reglamento Interno de Trabajo de MSL, aprobado conforme a la legislación laboral costarricense vigente. En caso de duda o conflicto, prevalece el documento oficial del Reglamento.</div>
+        ${canManage ? `<div class="hr-policy-reader-actions"><button onclick="openHrPolicyForm(${Number(row.id)})">Editar</button><button class="brown" onclick="deleteHrPolicy(${Number(row.id)})">Eliminar</button></div>` : ""}`;
+    }
+    function openHrPolicyForm(id=null) {
+      if (!canManageHrPolicies()) return hrStatus("Solo admin/master pueden modificar políticas.", true);
+      const row = id ? hrRows.find(item => String(item.id) === String(id)) : null;
+      closeModal();
+      document.body.insertAdjacentHTML("beforeend", `
+        <div class="modal-backdrop" id="svcModal">
+          <div class="modal">
+            <div class="modal-head">
+              <h2>${row ? "Editar política" : "Agregar política"}</h2>
+              <button class="secondary" onclick="closeModal()">Cerrar</button>
+            </div>
+            <div class="hr-form">
+              <label>Categoría<input id="hrPolCategory" value="${esc(row?.categoria || "")}" /></label>
+              <label>Título<input id="hrPolTitle" value="${esc(row?.titulo || "")}" /></label>
+              <label>Referencia artículo<input id="hrPolArticle" value="${esc(row?.articulo_ref || "")}" /></label>
+              ${row ? `<label>Activa<select id="hrPolActive"><option value="true" ${row.activo ? "selected" : ""}>Sí</option><option value="false" ${!row.activo ? "selected" : ""}>No</option></select></label>` : ""}
+              <label class="wide">Contenido<textarea id="hrPolContent">${esc(row?.contenido || "")}</textarea></label>
+              <div class="wide md-actions"><button onclick="saveHrPolicy(${row ? Number(row.id) : "null"})">Guardar</button><button class="secondary" onclick="closeModal()">Cancelar</button></div>
+            </div>
+          </div>
+        </div>`);
+    }
+    async function saveHrPolicy(id=null) {
+      if (!canManageHrPolicies()) return hrStatus("Solo admin/master pueden guardar políticas.", true);
+      const payload = {
+        categoria:valueFrom("hrPolCategory").trim(),
+        titulo:valueFrom("hrPolTitle").trim(),
+        articulo_ref:valueFrom("hrPolArticle").trim(),
+        contenido:valueFrom("hrPolContent").trim()
+      };
+      if ($("hrPolActive")) payload.activo = valueFrom("hrPolActive") === "true";
+      if (!payload.categoria || !payload.titulo || !payload.contenido) {
+        alert("Categoría, título y contenido son obligatorios.");
+        return;
+      }
+      try {
+        if (id) await sendJSON("PUT", `/hr/policies/${encodeURIComponent(id)}`, payload);
+        else await postJSON("/hr/policies", payload);
+        selectedHrPolicyId = id || null;
+        closeModal();
+        hrStatus(id ? "Política actualizada." : "Política creada.");
+        await loadHrPolicies();
+      } catch (err) { hrStatus(err.message, true); }
+    }
+    async function deleteHrPolicy(id) {
+      if (!canManageHrPolicies()) return hrStatus("Solo admin/master pueden eliminar políticas.", true);
+      const row = hrRows.find(item => String(item.id) === String(id));
+      if (!row) return;
+      if (!confirm(`¿Desea desactivar esta política?\\n\\n${row.titulo || ""}`)) return;
+      try {
+        await sendJSON("DELETE", `/hr/policies/${encodeURIComponent(id)}`);
+        selectedHrPolicyId = null;
+        hrStatus("Política desactivada correctamente.");
+        await loadHrPolicies();
+      } catch (err) { hrStatus(err.message, true); }
+    }
+    function renderHrNewsForm() {
+      $("hrViewTitle").textContent = "Noticias HHRR";
+      $("hrViewHint").textContent = canManageNews() ? "Administre la cartelera visible en Inicio y HHRR." : "Noticias publicadas para usuarios del ERP.";
+      $("hrWorkspace").innerHTML = '<div id="hrNews" class="news-mount"></div>';
+      loadNewsBoards();
+    }
+    async function publishHrNews() {
+      const payload = {};
+      [1,2,3,4,5].forEach(i => payload[`noticia_${i}`] = valueFrom(`hrNews${i}`));
+      try { await postJSON("/noticias", payload); hrStatus("Noticias publicadas."); await loadNewsBoards(); }
+      catch (err) { hrStatus(err.message, true); }
+    }
+    function showObjectModal(title, data) {
+      document.body.insertAdjacentHTML("beforeend", `<div class="modal-backdrop" id="svcModal"><div class="modal"><div class="modal-head"><h2>${esc(title)}</h2><button class="secondary" onclick="closeModal()">Cerrar</button></div>${hrTable(Object.entries(data || {}).map(([key,value]) => ({ key, value:typeof value === "object" ? JSON.stringify(value) : value })), ["key","value"])}</div></div>`);
+    }
+    function renderComingSoon(mod) {
+      $("content").innerHTML = `<div class="card panel"><div class="panel-head"><h2>${mod.title}</h2></div><div class="status">Seleccione una opción del módulo para continuar.</div></div>`;
+    }
+    $("loginBtn").onclick = login;
+    $("totpBtn").onclick = validateTotp;
+    $("bioBtn").onclick = unlockWithPasskey;
+    $("backLogin").onclick = showLogin;
+    $("setupPasskey").onclick = registerDevicePasskey;
+    $("logout").onclick = () => { if (notificationPollTimer) clearInterval(notificationPollTimer); localStorage.removeItem(SESSION_KEY); session=null; showLogin(); };
+    $("notifyEnable").onclick = enableNotifications;
+    $("notifyBell").onclick = async (event) => { event.stopPropagation(); $("notifyPanel").classList.toggle("hidden"); await loadNotifications(false); };
+    if ($("refresh")) $("refresh").onclick = () => {
+      refreshSummary();
+      if (currentModule === "master_data") renderMasterData();
+      if (currentModule === "servicios") renderServicios();
+      if (currentModule === "finanzas") renderFinanzas();
+      if (currentModule === "hhrre" || currentModule === "hhrr") renderHHRR();
+    };
+    function changeCompany(value) {
+      if (!value) return;
+      if (currentModule === "informes" && !SOMTally.canLeave()) {
+        $("company").value = session.company; $("companyTop").value = session.company; return;
+      }
+      if ($("company")) $("company").value = value;
+      if ($("companyTop")) $("companyTop").value = value;
+      bankAccessToken = "";
+      bankRows = [];
+      if (session) {
+        session.company = value;
+        localStorage.setItem(SESSION_KEY, JSON.stringify(session));
+        const saved = readLocalJson(PASSKEY_KEY);
+        if (saved?.session) {
+          saved.session.company = value;
+          saved.company = value;
+          localStorage.setItem(PASSKEY_KEY, JSON.stringify(saved));
+        }
+        localStorage.setItem(SAVED_LOGIN_KEY, JSON.stringify({ usuario:session.usuario, company:value }));
+      }
+      setBrand();
+      if (currentModule === "dashboard") refreshSummary();
+      else resetKpisForManualLoad();
+      if (currentModule === "master_data") renderMasterData();
+      if (currentModule === "servicios") renderServicios();
+      if (currentModule === "finanzas") renderFinanzas();
+      if (currentModule === "hhrre" || currentModule === "hhrr") renderHHRR();
+    }
+    $("company").onchange = () => { const before=session?.company; changeCompany($("company").value); if (currentModule === "informes" && before!==session?.company) renderInformesTally(); };
+    $("companyTop").onchange = () => { const before=session?.company; changeCompany($("companyTop").value); if (currentModule === "informes" && before!==session?.company) renderInformesTally(); };
+    $("year").onchange = () => {
+      if (currentModule === "dashboard") refreshSummary();
+      else resetKpisForManualLoad();
+      if (currentModule === "servicios") renderServicios();
+      if (currentModule === "finanzas") renderFinanzas();
+      if (currentModule === "hhrre" || currentModule === "hhrr") renderHHRR();
+    };
+    document.addEventListener("click", closeExcelFilterMenus);
+    const contentObserver = new MutationObserver(() => enhanceExcelTables($("content") || document));
+    if ($("content")) contentObserver.observe($("content"), { childList:true, subtree:true });
+    bootSelectors();
+    loadCatalog().then(showLogin).catch(showLogin);
+  </script>
+</body>
+</html>"""
+    html = html.replace("{year}", str(year)).replace("{asset_version}", _ASSET_VERSION)
+    return HTMLResponse(
+        html,
+        headers={
+            "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
+            "Pragma": "no-cache",
+        },
+    )
+
+
+@router.get("/som/web-version")
+def som_web_version():
+    return {"asset_version": _ASSET_VERSION}
+
+
+def _asset_path(*filenames: str) -> Path | None:
+    for filename in filenames:
+        for folder in (_ASSETS, _REPO_ASSETS):
+            candidate = folder / filename
+            if candidate.exists():
+                return candidate
+    return None
+
+
+def _square_logo_png(filename: str, size: int) -> bytes:
+    source = _asset_path(filename)
+    if not source:
+        raise HTTPException(status_code=404, detail="Logo no disponible")
+    size = max(32, min(int(size or 192), 1024))
+    with Image.open(source) as image:
+        logo = image.convert("RGBA")
+        canvas = Image.new("RGBA", (size, size), (255, 255, 255, 255))
+        max_logo = int(size * 0.82)
+        logo.thumbnail((max_logo, max_logo), Image.Resampling.LANCZOS)
+        x = (size - logo.width) // 2
+        y = (size - logo.height) // 2
+        canvas.alpha_composite(logo, (x, y))
+        output = BytesIO()
+        canvas.save(output, format="PNG")
+        return output.getvalue()
+
+
+@router.get("/som/manifest.webmanifest")
+def som_web_manifest():
+    return JSONResponse(
+        {
+            "name": "ERP-SOM Web",
+            "short_name": "SOM Web",
+            "description": "ERP-SOM Web para MSL Marine Surveyors.",
+            "start_url": f"/som?v={_ASSET_VERSION}",
+            "scope": "/",
+            "display": "standalone",
+            "background_color": "#ffffff",
+            "theme_color": "#073659",
+            "icons": [
+                {"src": f"/som/icon/msl-192.png?v={_ASSET_VERSION}", "sizes": "192x192", "type": "image/png", "purpose": "any"},
+                {"src": f"/som/icon/msl-512.png?v={_ASSET_VERSION}", "sizes": "512x512", "type": "image/png", "purpose": "any"},
+                {"src": f"/som/icon/msl-512.png?v={_ASSET_VERSION}", "sizes": "512x512", "type": "image/png", "purpose": "maskable"},
+            ],
+        },
+        media_type="application/manifest+json",
+        headers={"Cache-Control": "no-store, no-cache, must-revalidate, max-age=0"},
+    )
+
+
+@router.get("/som/service-worker.js")
+def som_web_service_worker():
+    js = """
+self.addEventListener('push', event => {
+  let payload = {};
+  try { payload = event.data ? event.data.json() : {}; } catch { payload = {}; }
+  const title = payload.title || 'SOM Web';
+  const options = {
+    body: payload.body || '',
+    icon: payload.icon || '/som/icon/msl-192.png',
+    badge: payload.badge || '/som/icon/msl-192.png',
+    data: payload.data || { url: payload.url || '/som' }
+  };
+  event.waitUntil(self.registration.showNotification(title, options));
+});
+self.addEventListener('notificationclick', event => {
+  event.notification.close();
+  const target = event.notification?.data?.url || '/som';
+  event.waitUntil(clients.matchAll({ type: 'window', includeUncontrolled: true }).then(clientList => {
+    for (const client of clientList) {
+      if ('focus' in client) {
+        client.navigate(target);
+        return client.focus();
+      }
+    }
+    return clients.openWindow(target);
+  }));
+});
+"""
+    return Response(
+        js,
+        media_type="application/javascript",
+        headers={"Cache-Control": "no-store, no-cache, must-revalidate, max-age=0"},
+    )
+
+
+@router.get("/som/icon/{name}")
+def som_web_icon(name: str):
+    brand = "mci" if name.lower().startswith("mci") else "msl"
+    filename = "mci_logo.png" if brand == "mci" else "msl_logo.png"
+    digits = "".join(ch for ch in name if ch.isdigit())
+    size = int(digits or 192)
+    return Response(
+        _square_logo_png(filename, size),
+        media_type="image/png",
+        headers={"Cache-Control": "public, max-age=86400"},
+    )
+
+
+@router.get("/favicon.ico")
+def som_web_favicon():
+    return Response(
+        _square_logo_png("msl_logo.png", 64),
+        media_type="image/png",
+        headers={"Cache-Control": "public, max-age=86400"},
+    )
+
+
+@router.get("/som/logo/{brand}")
+def som_web_logo(brand: str) -> FileResponse:
+    path = _asset_path(*(["mci_logo.png"] if brand.lower() in {"mci", "mci-cr"} else ["msl_logo.png", "header.png"]))
+    if not path:
+        raise HTTPException(status_code=404, detail="Logo no disponible")
+    return FileResponse(path)

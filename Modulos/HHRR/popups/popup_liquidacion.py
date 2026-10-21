@@ -239,13 +239,13 @@ class PopupLiquidacion(tk.Toplevel):
             return
 
         try:
-            crear_evento_hr({
-                "empleado_id": self.empleado_id,
-                "event_type": "LIQUIDATION",
-                "event_date": to_db_date(date.today()),
-                "status": "CLOSED",
-                "payload": self.calculo
-            })
+            if not self.empleado_id:
+                raise ValueError("Seleccione el empleado de la liquidacion")
+            crear_evento_hr(
+                event_type="LIQUIDATION",
+                event_date=to_db_date(date.today()),
+                payload={**self.calculo, "empleado_id": self.empleado_id},
+            )
         except Exception as e:
             messagebox.showerror(
                 "Error",

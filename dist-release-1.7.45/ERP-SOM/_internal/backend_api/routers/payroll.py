@@ -1,0 +1,1250 @@
+from fastapi import APIRouter, Depends, Header, HTTPException, Query
+from psycopg2.extras import RealDictCursor
+from datetime import date
+from decimal import Decimal, ROUND_HALF_UP
+import os
+from fastapi.responses import FileResponse
+
+from database import get_db
+from security.auth import get_current_user
+from security.rbac import require_permission
+from routers.hr_ot_log import _employee_hours_policy
+from services.employee_hours_policy_schema import ensure_employee_hours_policy_columns
+from services.tenanting import company_code, ensure_company_column
+
+BASE_DIR = os.path.dirname(
+    os.path.dirname(
+        os.path.dirname(
+            os.path.abspath(__file__)
+        )
+    )
+)
+
+
+
+
+router = APIRouter(
+    prefix="/hr/payroll",
+    tags=["HHRR - PAYROLL"]
+)
+
+# ============================================================
+# CONSTANTES COSTA RICA 2026 (NO TOCAR)
+# ============================================================
+
+TRAMOS_RENTA = [
+    (918000, 0.00),
+    (1347000, 0.10),
+    (2364000, 0.15),
+    (4727000, 0.20),
+    (float("inf"), 0.25)
+]
+
+DEDUCCIONES_TRABAJADOR = {
+    "SEM": 0.055,
+    "IVM": 0.0433,
+    "BANCO_POPULAR": 0.01
+}
+
+CARGAS_PATRONALES = {
+    "SEM": 0.0925,
+    "IVM": 0.0558,
+    "BP_CC": 0.0025,
+    "BP_LPT": 0.0025,
+    "FODESAF": 0.05,
+    "IMAS": 0.005,
+    "INA": 0.015,
+    "FCL": 0.015,
+    "OPC": 0.02,
+    "INS": 0.01
+}
+
+# ============================================================
+# HELPERS
+# ============================================================
+
+def calcular_renta(monto: float) -> float:
+    impuesto = 0
+    restante = monto
+    base_anterior = 0
+
+    for limite, tasa in TRAMOS_RENTA:
+        tramo = min(restante, limite - base_anterior)
+        if tramo <= 0:
+            break
+        impuesto += tramo * tasa
+        restante -= tramo
+        base_anterior = limite
+
+    return round(impuesto, 2)
+
+
+def _can_view_all_payslips(user: dict) -> bool:
+    return (user.get("rol") or "").strip().lower() in {"admin", "master"}
+
+
+def _target_payslip_user(user: dict, requested_user: str | None = None) -> str:
+    current = (user.get("usuario") or "").strip().lower()
+    requested = (requested_user or current).strip().lower()
+    if not requested:
+        raise HTTPException(401, "Usuario no autenticado")
+    if not _can_view_all_payslips(user) and requested != current:
+        raise HTTPException(403, "No autorizado para consultar colillas de otro usuario")
+    return requested
+
+
+def _ensure_payroll_company() -> None:
+    ensure_company_column("payroll_runs")
+
+
+def _payroll_rates(pago: str) -> tuple[float, float, bool]:
+    is_quincenal = "QUINC" in ((pago or "").upper())
+    return (
+        0.1083 if is_quincenal else 0.1083,
+        0.17 if is_quincenal else 0.17,
+        is_quincenal,
+    )
+
+
+def _income_tax_for_period(salario_bruto: float, salario_mensual: float, is_quincenal: bool) -> float:
+    if not is_quincenal:
+        return calcular_renta(salario_bruto)
+    monthly_base = salario_bruto * 2 if salario_mensual and salario_bruto <= (salario_mensual / 2 + 1) else salario_bruto
+    return round(calcular_renta(monthly_base) / 2, 2)
+
+
+def _payroll_rates_for_stored_run(salario_bruto: float, salario_mensual: float, pago: str) -> tuple[float, float, bool]:
+    deduccion_rate, patronal_rate, is_quincenal = _payroll_rates(pago)
+    return deduccion_rate, patronal_rate, is_quincenal
+
+
+def _closed_payroll_period() -> tuple[int, int]:
+    hoy = date.today()
+    if hoy.month == 1:
+        return hoy.year - 1, 12
+    return hoy.year, hoy.month - 1
+
+
+def _money(value) -> Decimal:
+    return Decimal(str(value or 0)).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+
+
+def _insert_payroll_adjustment_entry(cur, run: dict, before: dict, after: dict, user_name: str, deduccion_rate: float, patronal_rate: float):
+    old_gross = _money(before.get("salario_bruto"))
+    new_gross = _money(after.get("salario_bruto"))
+    old_net = _money(before.get("salario_neto"))
+    new_net = _money(after.get("salario_neto"))
+    gross_delta = _money(new_gross - old_gross)
+    net_delta = _money(new_net - old_net)
+    if gross_delta == 0 and net_delta == 0:
+        return None
+
+    worker_delta = _money(gross_delta * Decimal(str(deduccion_rate)))
+    employer_delta = _money(gross_delta * Decimal(str(patronal_rate)))
+    tax_delta = _money(calcular_renta(float(new_gross)) - calcular_renta(float(old_gross)))
+    bonus_delta = _money(gross_delta * Decimal("0.0833"))
+    vacation_delta = _money(gross_delta * Decimal("0.0417"))
+
+    def signed_line(code, name, debit, credit, description):
+        debit = _money(debit)
+        credit = _money(credit)
+        if debit < 0 or credit < 0:
+            return {
+                "account_code": code,
+                "account_name": name,
+                "debit": abs(credit),
+                "credit": abs(debit),
+                "line_description": description,
+            }
+        return {
+            "account_code": code,
+            "account_name": name,
+            "debit": debit,
+            "credit": credit,
+            "line_description": description,
+        }
+
+    detail = f"Ajuste Payroll {run.get('usuario')} {run.get('year')}-{int(run.get('month')):02d}"
+    lines = [
+        signed_line("500-001-001-001", "Sueldos", gross_delta, 0, f"{detail} - ajuste salario bruto"),
+        signed_line("500-001-001-002", "Cargas Sociales", employer_delta, 0, f"{detail} - ajuste carga patronal"),
+        signed_line("500-001-001-003", "Aguinaldos", bonus_delta, 0, f"{detail} - ajuste aguinaldo"),
+        signed_line("500-001-001-004", "Vacaciones", vacation_delta, 0, f"{detail} - ajuste vacaciones"),
+        signed_line("2.1.05.01", "Obligaciones patronales por pagar-CCSS", 0, employer_delta, f"{detail} - ajuste CCSS patronal"),
+        signed_line("2.1.03.01", "Retenciones obreras por pagar-CCSS", 0, worker_delta, f"{detail} - ajuste CCSS obrera"),
+        signed_line("2.1.02.07", "Salarios por pagar", 0, net_delta, f"{detail} - ajuste salario neto"),
+        signed_line("2.1.04.03", "Provision aguinaldo", 0, bonus_delta, f"{detail} - ajuste reserva aguinaldo"),
+        signed_line("2.1.04.01", "Provision vacaciones", 0, vacation_delta, f"{detail} - ajuste reserva vacaciones"),
+    ]
+    if tax_delta != 0:
+        lines.insert(6, signed_line("2.1.02.04", "Impuesto de renta por pagar", 0, tax_delta, f"{detail} - ajuste renta salarial"))
+
+    total_debit = sum(_money(line["debit"]) for line in lines)
+    total_credit = sum(_money(line["credit"]) for line in lines)
+    if total_debit != total_credit:
+        raise HTTPException(500, f"Ajuste Payroll descuadrado: debe {total_debit} haber {total_credit}")
+
+    current_period = date.today().strftime("%Y-%m")
+    cur.execute(
+        """
+        INSERT INTO accounting_entries(
+            entry_date, period, description, origin, origin_id, created_by,
+            workflow_status, company_code, posting_metadata
+        )
+        VALUES(CURRENT_DATE, %s, %s, 'PAYROLL_ADJUSTMENT', %s, %s, 'POSTED', 'MSL-CR', %s::jsonb)
+        RETURNING id
+        """,
+        (
+            current_period,
+            f"{detail} - bruto {old_gross} -> {new_gross}",
+            str(run.get("id")),
+            user_name,
+            __import__("json").dumps({
+                "payroll_run_id": run.get("id"),
+                "usuario": run.get("usuario"),
+                "payroll_period": f"{run.get('year')}-{int(run.get('month')):02d}",
+                "old_gross": str(old_gross),
+                "new_gross": str(new_gross),
+                "old_net": str(old_net),
+                "new_net": str(new_net),
+            }),
+        ),
+    )
+    entry_id = cur.fetchone()["id"]
+    for line in lines:
+        cur.execute(
+            """
+            INSERT INTO accounting_lines(entry_id, account_code, account_name, debit, credit, line_description)
+            VALUES(%s,%s,%s,%s,%s,%s)
+            """,
+            (entry_id, line["account_code"], line["account_name"], line["debit"], line["credit"], line["line_description"]),
+        )
+    return entry_id
+
+# ============================================================
+# 1️⃣ LISTADO BASE PAYROLL (TABLA FIJA)
+# ============================================================
+
+@router.get(
+    "/employees",
+    dependencies=[Depends(require_permission("hhrr", "employees"))]
+)
+def listar_empleados_payroll(conn=Depends(get_db)):
+
+    cur = conn.cursor(cursor_factory=RealDictCursor)
+    allowed_year, allowed_month = _closed_payroll_period()
+    ensure_employee_hours_policy_columns(cur)
+    cur.execute("ALTER TABLE empleados ADD COLUMN IF NOT EXISTS activo BOOLEAN NOT NULL DEFAULT TRUE")
+    cur.execute("UPDATE empleados SET activo = TRUE WHERE activo IS NULL")
+    conn.commit()
+
+    cur.execute("""
+        SELECT DISTINCT ON (LOWER(TRIM(e.usuario)))
+            e.nombre,
+            e.apellidos,
+            e.jornada,
+            e.salario,
+            e.pago,
+            e.estado,
+            e.usuario,
+            e.horas_contratadas,
+            e.horas_tope_ordinario,
+            e.horas_tope_maximo,
+            e.tarifa_hora_extra,
+            e.pago_minimo_garantizado,
+            e.cedula_id,
+            pr.id AS payroll_run_id,
+            CASE WHEN pr.id IS NULL THEN 'Pendiente' ELSE 'Generada' END AS planilla_estado
+        FROM empleados e
+        LEFT JOIN payroll_runs pr
+          ON pr.usuario = e.usuario
+         AND pr.year = %s
+         AND pr.month = %s
+        WHERE e.estado = 'Activo'
+          AND COALESCE(e.activo, TRUE) = TRUE
+          AND e.usuario IS NOT NULL
+          AND TRIM(e.usuario) <> ''
+        ORDER BY LOWER(TRIM(e.usuario)), e.nombre, e.apellidos
+    """, (allowed_year, allowed_month))
+
+    return {
+        "total": cur.rowcount,
+        "year": allowed_year,
+        "month": allowed_month,
+        "data": cur.fetchall()
+    }
+
+# ============================================================
+# 2️⃣ PREVIEW / CÁLCULO PAYROLL (NO GUARDA)
+# ============================================================
+
+@router.get(
+    "/period",
+    dependencies=[Depends(require_permission("hhrr", "payroll"))]
+)
+def periodo_payroll_cerrado():
+    year, month = _closed_payroll_period()
+    return {
+        "year": year,
+        "month": month,
+        "label": f"{month:02d}/{year}"
+    }
+
+
+@router.get(
+    "/calculate",
+    dependencies=[Depends(require_permission("hhrr", "payroll"))]
+)
+def calcular_payroll(
+    usuario: str = Query(...),
+    year: int = Query(..., ge=2000),
+    month: int = Query(..., ge=1, le=12),
+    conn=Depends(get_db)
+):
+    cur = conn.cursor(cursor_factory=RealDictCursor)
+    ensure_employee_hours_policy_columns(cur)
+    cur.execute("ALTER TABLE empleados ADD COLUMN IF NOT EXISTS activo BOOLEAN NOT NULL DEFAULT TRUE")
+    cur.execute("UPDATE empleados SET activo = TRUE WHERE activo IS NULL")
+    conn.commit()
+
+    # --------------------------------------------------------
+    # VALIDAR PERÍODO (SOLO MES CERRADO / MES ANTERIOR)
+    # --------------------------------------------------------
+    allowed_year, allowed_month = _closed_payroll_period()
+
+    if year != allowed_year or month != allowed_month:
+        raise HTTPException(
+            400,
+            f"Solo se permite generar la planilla del período cerrado: {allowed_month}/{allowed_year}"
+        )
+
+    # --------------------------------------------------------
+    # BLOQUEAR SI YA ESTÁ CERRADA
+    # --------------------------------------------------------
+    cur.execute("""
+        SELECT 1
+        FROM payroll_runs
+        WHERE usuario = %s
+          AND year = %s
+          AND month = %s
+        LIMIT 1
+    """, (usuario, year, month))
+
+    if cur.fetchone():
+        raise HTTPException(
+            400,
+            "La planilla de este período ya fue cerrada"
+        )
+
+    # --------------------------------------------------------
+    # DATOS DEL EMPLEADO
+    # --------------------------------------------------------
+    cur.execute("""
+        SELECT
+            nombre,
+            apellidos,
+            jornada,
+            salario,
+            pago,
+            horas_contratadas,
+            horas_tope_ordinario,
+            horas_tope_maximo,
+            tarifa_hora_extra,
+            pago_minimo_garantizado,
+            cedula_id
+        FROM empleados
+        WHERE usuario = %s
+          AND estado = 'Activo'
+          AND COALESCE(activo, TRUE) = TRUE
+        LIMIT 1
+    """, (usuario,))
+
+    emp = cur.fetchone()
+
+    if not emp:
+        raise HTTPException(404, "Empleado no encontrado")
+
+    # --------------------------------------------------------
+    # HORAS APROBADAS (OT LOG)
+    # --------------------------------------------------------
+    cur.execute("""
+        SELECT COALESCE(SUM(duracion_horas), 0) AS total
+        FROM hr_ot_log
+        WHERE usuario = %s
+          AND estado = 'APROBADO'
+          AND EXTRACT(YEAR FROM fecha_inicio) = %s
+          AND EXTRACT(MONTH FROM fecha_inicio) = %s
+    """, (usuario, year, month))
+
+    horas_registradas = float(cur.fetchone()["total"] or 0)
+
+    salario_base_mensual = float(emp["salario"] or 0)
+    pago = (emp["pago"] or "").upper()
+    salario_base = salario_base_mensual
+    jornada = (emp["jornada"] or "").upper()
+    hours_policy = _employee_hours_policy(emp)
+
+    horas_ot = 0.0
+    pago_horas_extra = 0.0
+    salario_bruto = salario_base
+
+    # --------------------------------------------------------
+    # LÓGICA POR JORNADA
+    # --------------------------------------------------------
+    if jornada == "COMPLETA" and horas_registradas > 0:
+
+        salario_diario = salario_base / 30
+        salario_hora = salario_diario / 8
+
+        valor_hora_extra = salario_hora * 1.5
+
+        horas_ot = horas_registradas
+        pago_horas_extra = round(valor_hora_extra * horas_ot, 2)
+
+        salario_bruto += pago_horas_extra
+
+    elif jornada != "COMPLETA" and horas_registradas > 0:
+
+        tope_ordinario = float(hours_policy.get("tope_ordinario") or emp["horas_contratadas"] or 0)
+        tarifa_hora_extra = float(hours_policy.get("tarifa_hora_extra") or 0)
+        salario_base = float(hours_policy.get("salario_base_mensual") or salario_base_mensual or salario_base)
+        horas_ot = max(horas_registradas - tope_ordinario, 0) if tope_ordinario else horas_registradas
+        pago_horas_extra = round(horas_ot * tarifa_hora_extra, 2) if tarifa_hora_extra else 0.0
+
+        salario_bruto = salario_base + pago_horas_extra
+
+    # --------------------------------------------------------
+    # DEDUCCIONES Y RENTA (SOBRE SALARIO BRUTO)
+    # --------------------------------------------------------
+    deduccion_rate, patronal_rate, is_quincenal = _payroll_rates(pago)
+    deducciones_trabajador = round(salario_bruto * deduccion_rate, 2)
+
+    impuesto_renta = _income_tax_for_period(salario_bruto, salario_base_mensual, is_quincenal)
+
+    salario_neto = round(
+        salario_bruto - deducciones_trabajador - impuesto_renta,
+        2
+    )
+
+    cargas_patronales = round(salario_bruto * patronal_rate, 2)
+    salario_neto_quincena_1 = None
+    salario_neto_quincena_2 = None
+    salario_neto_mensual_estimado = None
+    if is_quincenal:
+        base_quincenal = round(salario_base_mensual / 2, 2)
+        neto_q1 = round(base_quincenal - (base_quincenal * deduccion_rate), 2)
+        bruto_q2 = round(base_quincenal + pago_horas_extra, 2)
+        renta_q2 = round(impuesto_renta / 2, 2)
+        neto_q2 = round(bruto_q2 - (bruto_q2 * deduccion_rate) - renta_q2, 2)
+        salario_neto_quincena_1 = neto_q1
+        salario_neto_quincena_2 = neto_q2
+        salario_neto_mensual_estimado = round(neto_q1 + neto_q2, 2)
+
+    # --------------------------------------------------------
+    # RESPONSE
+    # --------------------------------------------------------
+    return {
+        "usuario": usuario,
+        "cedula_id": emp["cedula_id"],
+        "nombre": emp["nombre"],
+        "apellidos": emp["apellidos"],
+        "jornada": jornada,
+        "pago": emp["pago"],
+        "year": year,
+        "month": month,
+        "salario_base": round(salario_base, 2),
+        "salario_base_quincenal": round(salario_base_mensual / 2, 2) if is_quincenal else None,
+        "horas_registradas": round(horas_registradas, 2),
+        "horas_ot": round(horas_ot, 2),
+        "pago_horas_extra": pago_horas_extra,
+        "salario_bruto": round(salario_bruto, 2),
+        "deducciones_trabajador": deducciones_trabajador,
+        "impuesto_renta": impuesto_renta,
+        "salario_neto": salario_neto,
+        "salario_neto_quincena_1": salario_neto_quincena_1,
+        "salario_neto_quincena_2": salario_neto_quincena_2,
+        "salario_neto_mensual_estimado": salario_neto_mensual_estimado,
+        "cargas_patronales": cargas_patronales,
+        "costo_total_empresa": round(salario_bruto + cargas_patronales, 2)
+    }
+
+# ============================================================
+# 3️⃣ POSTEAR PLANILLA (CONFIRMACIÓN) — BLINDADO
+# ============================================================
+
+@router.put(
+    "/post",
+    dependencies=[Depends(require_permission("hhrr", "generate"))]
+)
+def postear_planilla(
+    payload: dict,
+    user=Depends(get_current_user),
+    x_company_code: str | None = Header(None, alias="X-Company-Code"),
+    conn=Depends(get_db)
+):
+    cur = conn.cursor()
+    _ensure_payroll_company()
+    selected_company = company_code(header_value=x_company_code)
+
+    usuario = payload["usuario"]
+    year = payload["year"]
+    month = payload["month"]
+
+    # --------------------------------------------------------
+    # PDF PATH LÓGICO (NO ARCHIVO REAL EN BACKEND)
+    # --------------------------------------------------------
+    pdf_filename = f"COLILLA_{usuario}_{year}_{month}.pdf"
+    pdf_path_online = f"/LOCAL_USER_FILE/{pdf_filename}"
+
+    # --------------------------------------------------------
+    # INSERT / UPDATE COMPLETO (PAYROLL_RUNS)
+    # --------------------------------------------------------
+    cur.execute("""
+        INSERT INTO payroll_runs (
+            usuario,
+            year,
+            month,
+            salario_neto,
+            salario_bruto,
+            horas_extra,
+            monto_horas_extra,
+            pdf_path,
+            generado_por,
+            company_code
+        )
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+        ON CONFLICT (usuario, year, month)
+        DO UPDATE SET
+            salario_neto       = EXCLUDED.salario_neto,
+            salario_bruto      = EXCLUDED.salario_bruto,
+            horas_extra        = EXCLUDED.horas_extra,
+            monto_horas_extra  = EXCLUDED.monto_horas_extra,
+            pdf_path           = EXCLUDED.pdf_path,
+            generado_por       = EXCLUDED.generado_por,
+            company_code       = EXCLUDED.company_code
+    """, (
+        usuario,
+        year,
+        month,
+        payload["salario_neto"],
+        payload["salario_bruto"],
+        payload["horas_ot"],             # horas_extra
+        payload["pago_horas_extra"],     # monto_horas_extra
+        pdf_path_online,                 # referencia lógica
+        user["usuario"],
+        selected_company
+    ))
+
+    conn.commit()
+
+    return {
+        "status": "OK",
+        "message": "Planilla registrada correctamente"
+    }
+
+
+
+
+# ============================================================
+# LISTAR COLILLAS DE PAGO
+# ============================================================
+@router.get("/payslips")
+def listar_payslips(
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=100),
+    year: int | None = None,
+    month: int | None = None,
+    current_user=Depends(get_current_user),
+    x_company_code: str | None = Header(None, alias="X-Company-Code"),
+    conn=Depends(get_db)
+):
+
+    offset = (page - 1) * page_size
+    _ensure_payroll_company()
+    company = company_code(header_value=x_company_code)
+    conditions = ["company_code = %(company_code)s"]
+    params = {"company_code": company}
+
+    if not _can_view_all_payslips(current_user):
+        conditions.append("usuario = %(usuario)s")
+        params["usuario"] = _target_payslip_user(current_user)
+
+    if year is not None:
+        conditions.append("year = %(year)s")
+        params["year"] = year
+
+    if month is not None:
+        conditions.append("month = %(month)s")
+        params["month"] = month
+
+    where_sql = ""
+    if conditions:
+        where_sql = "WHERE " + " AND ".join(conditions)
+
+    cur = conn.cursor(cursor_factory=RealDictCursor)
+
+    cur.execute(
+        f"""
+        SELECT
+            id,
+            usuario,
+            year,
+            month,
+            salario_neto,
+            salario_bruto,
+            horas_extra,
+            monto_horas_extra,
+            pdf_path,
+            generado_por,
+            creado_en
+        FROM payroll_runs
+        {where_sql}
+        ORDER BY year DESC, month DESC
+        LIMIT %(limit)s OFFSET %(offset)s
+        """,
+        {**params, "limit": page_size, "offset": offset}
+    )
+
+    rows = cur.fetchall()
+
+    cur.execute(
+        f"SELECT COUNT(*) FROM payroll_runs {where_sql}",
+        params
+    )
+
+    total = cur.fetchone()["count"]
+
+    return {
+        "page": page,
+        "page_size": page_size,
+        "total": total,
+        "data": rows
+    }
+
+
+@router.put(
+    "/runs/{run_id}",
+    dependencies=[Depends(require_permission("hhrr", "generate"))]
+)
+def actualizar_payroll_run(
+    run_id: int,
+    payload: dict,
+    user=Depends(get_current_user),
+    conn=Depends(get_db)
+):
+    cur = conn.cursor(cursor_factory=RealDictCursor)
+    cur.execute(
+        """
+        SELECT id, usuario, year, month, salario_bruto, salario_neto, monto_horas_extra
+        FROM payroll_runs
+        WHERE id = %s
+        LIMIT 1
+        """,
+        (run_id,),
+    )
+    run = cur.fetchone()
+    if not run:
+        raise HTTPException(404, "Planilla no encontrada")
+
+    cur.execute(
+        """
+        SELECT salario, pago
+        FROM empleados
+        WHERE usuario = %s
+        LIMIT 1
+        """,
+        (run["usuario"],),
+    )
+    emp = cur.fetchone() or {}
+    try:
+        salario_bruto = round(float(payload.get("salario_bruto")), 2)
+    except Exception:
+        raise HTTPException(400, "Salario bruto invalido")
+    if salario_bruto <= 0:
+        raise HTTPException(400, "Salario bruto debe ser mayor a cero")
+
+    pago = (emp.get("pago") or "").upper()
+    deduccion_rate, patronal_rate, is_quincenal = _payroll_rates(pago)
+    impuesto_renta = calcular_renta(salario_bruto)
+    deducciones_trabajador = round(salario_bruto * deduccion_rate, 2)
+    salario_neto = round(salario_bruto - deducciones_trabajador - impuesto_renta, 2)
+    monto_horas_extra = round(float(payload.get("pago_horas_extra", run.get("monto_horas_extra") or 0) or 0), 2)
+
+    cur.execute(
+        """
+        UPDATE payroll_runs
+           SET salario_bruto = %s,
+               salario_neto = %s,
+               monto_horas_extra = %s,
+               generado_por = %s
+         WHERE id = %s
+        RETURNING id, usuario, year, month, salario_neto, salario_bruto, horas_extra, monto_horas_extra, generado_por
+        """,
+        (salario_bruto, salario_neto, monto_horas_extra, user["usuario"], run_id),
+    )
+    updated = cur.fetchone()
+    adjustment_entry_id = _insert_payroll_adjustment_entry(
+        cur=cur,
+        run=run,
+        before=run,
+        after=updated,
+        user_name=user["usuario"],
+        deduccion_rate=deduccion_rate,
+        patronal_rate=patronal_rate,
+    )
+    conn.commit()
+    return {
+        "status": "ok",
+        "data": updated,
+        "adjustment_entry_id": adjustment_entry_id,
+        "deducciones_trabajador": deducciones_trabajador,
+        "impuesto_renta": impuesto_renta,
+        "cargas_patronales": round(salario_bruto * patronal_rate, 2),
+        "is_quincenal": is_quincenal,
+    }
+
+
+
+# ============================================================
+# 4️⃣ DESCARGAR COLILLA (RECONSTRUCCIÓN ON-DEMAND)
+# (NO DEPENDE DE Modulos/  |  GENERA PDF EN MEMORIA)
+# ============================================================
+
+from io import BytesIO
+from datetime import date
+import os
+
+from fastapi import Depends, HTTPException
+from fastapi.responses import StreamingResponse
+from psycopg2.extras import RealDictCursor
+
+# ReportLab (backend-only)
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, Image
+from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+from reportlab.lib.pagesizes import LETTER, landscape
+from reportlab.lib.enums import TA_LEFT, TA_RIGHT
+from reportlab.lib import colors
+from reportlab.lib.units import cm
+
+
+def _fmt(valor: float) -> str:
+    try:
+        return f"{float(valor):,.2f}"
+    except Exception:
+        return str(valor)
+
+
+def _resolve_header_path() -> str | None:
+    """
+    Encuentra backend_api/assets/header.png de forma robusta.
+
+    payroll.py vive en: backend_api/routers/payroll.py
+    assets vive en:     backend_api/assets/header.png
+    """
+    # 1) Relativo a routers/payroll.py -> ../assets/header.png
+    p1 = os.path.abspath(
+        os.path.join(
+            os.path.dirname(__file__),  # .../backend_api/routers
+            "..",                       # .../backend_api
+            "assets",
+            "header.png"
+        )
+    )
+    if os.path.exists(p1):
+        return p1
+
+    # 2) Fallback usando BASE_DIR si existe en el módulo
+    try:
+        p2 = os.path.abspath(os.path.join(BASE_DIR, "assets", "header.png"))
+        if os.path.exists(p2):
+            return p2
+    except Exception:
+        pass
+
+    return None
+
+
+def _generar_colilla_pdf_bytes(data: dict, year: int, month: int) -> bytes:
+    """
+    Genera el PDF en memoria (bytes) con el mismo formato que tu payroll_pdf.
+    No usa Modulos/. No depende de filesystem del usuario.
+    """
+    buffer = BytesIO()
+
+    doc = SimpleDocTemplate(
+        buffer,
+        pagesize=landscape(LETTER),
+        rightMargin=36,
+        leftMargin=36,
+        topMargin=36,
+        bottomMargin=36
+    )
+
+    styles = getSampleStyleSheet()
+    elements = []
+
+    # ---------------------------------------------------------
+    # HEADER (backend_api/assets/header.png)
+    # ---------------------------------------------------------
+    assets_path = _resolve_header_path()
+
+    if assets_path:
+        header = Image(
+            assets_path,
+            width=8 * cm,
+            height=2.2 * cm,
+            hAlign="LEFT"
+        )
+        elements.append(header)
+        elements.append(Spacer(1, 8))
+
+    # ---------------------------------------------------------
+    # TÍTULO
+    # ---------------------------------------------------------
+    title_style = ParagraphStyle(
+        "TitleStyle",
+        fontSize=13,
+        leading=15,
+        alignment=TA_LEFT,
+        spaceAfter=10
+    )
+
+    elements.append(
+        Paragraph(
+            f"<b>Comprobante de Pago</b><br/>"
+            f"Periodo: {month}/{year}<br/>"
+            f"Empresa: MSL Marine Surveyors and Logistics Group SRL",
+            title_style
+        )
+    )
+
+    elements.append(Spacer(1, 10))
+
+    # ---------------------------------------------------------
+    # DATOS DEL EMPLEADO
+    # ---------------------------------------------------------
+    info_table = Table(
+        [
+            ["Empleado:", f"{data['nombre']} {data['apellidos']}"],
+            ["Cédula:", data.get("cedula_id", "N/D")],
+            ["Usuario:", data["usuario"]],
+            ["Jornada:", data["jornada"]],
+            ["Tipo de pago:", data["pago"]],
+            ["Fecha emisión:", date.today().strftime("%d/%m/%Y")]
+        ],
+        colWidths=[6 * cm, 16 * cm]
+    )
+
+    info_table.setStyle(
+        TableStyle([
+            ("GRID", (0, 0), (-1, -1), 0.5, colors.grey),
+            ("BACKGROUND", (0, 0), (0, -1), colors.whitesmoke),
+            ("FONT", (0, 0), (-1, -1), "Helvetica", 9),
+            ("LEFTPADDING", (0, 0), (-1, -1), 6),
+            ("RIGHTPADDING", (0, 0), (-1, -1), 6),
+            ("TOPPADDING", (0, 0), (-1, -1), 4),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+        ])
+    )
+
+    elements.append(info_table)
+    elements.append(Spacer(1, 12))
+
+    # =========================================================
+    # RESUMEN DE DEVENGOS
+    # =========================================================
+    devengos_rows = [
+        ["Resumen de Devengos", "Detalle", "Monto"],
+        ["Salario Base", "", _fmt(data["salario_base"])],
+        ["Horas Extra", f"{data.get('horas_ot', 0)} horas", _fmt(data.get("pago_horas_extra", 0.0))],
+        ["Total Devengado", "", _fmt(data["salario_bruto"])]
+    ]
+
+    devengos_table = Table(devengos_rows, colWidths=[8 * cm, 4 * cm, 6 * cm])
+    devengos_table.setStyle(
+        TableStyle([
+            ("GRID", (0, 0), (-1, -1), 0.5, colors.grey),
+            ("BACKGROUND", (0, 0), (-1, 0), colors.lightgrey),
+            ("FONT", (0, 0), (-1, 0), "Helvetica-Bold", 9),
+            ("ALIGN", (2, 1), (-1, -1), "RIGHT"),
+            ("FONT", (0, -1), (-1, -1), "Helvetica-Bold", 9),
+        ])
+    )
+
+    elements.append(devengos_table)
+    elements.append(Spacer(1, 12))
+
+    salario_bruto = float(data["salario_bruto"])
+
+    # ---------------------------------------------------------
+    # DEDUCCIONES TRABAJADOR
+    # ---------------------------------------------------------
+    ded_rows = [["Deducción Trabajador", "%", "Monto"]]
+
+    for k, tasa in DEDUCCIONES_TRABAJADOR.items():
+        ded_rows.append([
+            k,
+            f"{tasa * 100:.2f} %",
+            _fmt(salario_bruto * tasa)
+        ])
+
+    ded_rows.append([
+        "Total Deducciones",
+        "",
+        _fmt(data["deducciones_trabajador"])
+    ])
+
+    ded_table = Table(ded_rows, colWidths=[8 * cm, 4 * cm, 6 * cm])
+    ded_table.setStyle(TableStyle([
+        ("GRID", (0, 0), (-1, -1), 0.5, colors.grey),
+        ("BACKGROUND", (0, 0), (-1, 0), colors.lightgrey),
+        ("FONT", (0, 0), (-1, 0), "Helvetica-Bold", 9),
+        ("ALIGN", (1, 1), (-1, -1), "RIGHT"),
+        ("FONT", (0, -1), (-1, -1), "Helvetica-Bold", 9),
+    ]))
+
+    elements.append(ded_table)
+    elements.append(Spacer(1, 10))
+
+    # ---------------------------------------------------------
+    # RENTA
+    # ---------------------------------------------------------
+    renta_tramo = 0.0
+    for limite, tasa in TRAMOS_RENTA:
+        if salario_bruto <= limite:
+            renta_tramo = tasa
+            break
+
+    renta_table = Table(
+        [
+            ["Impuesto Renta", "% Aplicado", "Monto"],
+            ["Renta", f"{renta_tramo * 100:.2f} %", _fmt(data["impuesto_renta"])]
+        ],
+        colWidths=[8 * cm, 4 * cm, 6 * cm]
+    )
+
+    renta_table.setStyle(TableStyle([
+        ("GRID", (0, 0), (-1, -1), 0.5, colors.grey),
+        ("BACKGROUND", (0, 0), (-1, 0), colors.lightgrey),
+        ("FONT", (0, 0), (-1, 0), "Helvetica-Bold", 9),
+        ("ALIGN", (1, 1), (-1, -1), "RIGHT"),
+    ]))
+
+    elements.append(renta_table)
+    elements.append(Spacer(1, 10))
+
+    # ---------------------------------------------------------
+    # CARGAS PATRONALES (INFORMATIVO)
+    # ---------------------------------------------------------
+    patronal_rows = [["Carga Patronal", "%", "Monto"]]
+
+    total_patronal = 0.0
+    for k, tasa in CARGAS_PATRONALES.items():
+        monto = salario_bruto * tasa
+        total_patronal += monto
+        patronal_rows.append([
+            k,
+            f"{tasa * 100:.2f} %",
+            _fmt(monto)
+        ])
+
+    patronal_rows.append([
+        "Total Cargas Patronales",
+        "",
+        _fmt(total_patronal)
+    ])
+
+    patronal_table = Table(patronal_rows, colWidths=[8 * cm, 4 * cm, 6 * cm])
+    patronal_table.setStyle(TableStyle([
+        ("GRID", (0, 0), (-1, -1), 0.5, colors.grey),
+        ("BACKGROUND", (0, 0), (-1, 0), colors.whitesmoke),
+        ("FONT", (0, 0), (-1, 0), "Helvetica-Bold", 9),
+        ("ALIGN", (1, 1), (-1, -1), "RIGHT"),
+        ("FONT", (0, -1), (-1, -1), "Helvetica-Bold", 9),
+    ]))
+
+    elements.append(patronal_table)
+    elements.append(Spacer(1, 12))
+
+    # ---------------------------------------------------------
+    # NETO A PAGAR
+    # ---------------------------------------------------------
+    neto_style = ParagraphStyle(
+        "NetoStyle",
+        fontSize=12,
+        leading=14,
+        alignment=TA_RIGHT
+    )
+
+    elements.append(
+        Paragraph(
+            f"<b>Neto a pagar: {_fmt(data['salario_neto'])}</b>",
+            neto_style
+        )
+    )
+
+    doc.build(elements)
+    buffer.seek(0)
+    return buffer.read()
+
+
+@router.get(
+    "/payslips/{year}/{month}/pdf",
+    dependencies=[Depends(require_permission("hhrr", "payslips"))]
+)
+def descargar_colilla_pdf(
+    year: int,
+    month: int,
+    usuario: str | None = None,
+    current_user=Depends(get_current_user),
+    x_company_code: str | None = Header(None, alias="X-Company-Code"),
+    conn=Depends(get_db)
+):
+    """
+    Reconstruye la colilla PDF en tiempo real a partir de:
+    - payroll_runs (datos cerrados)
+    - empleados (datos maestros)
+    """
+    cur = conn.cursor(cursor_factory=RealDictCursor)
+
+    _ensure_payroll_company()
+    company = company_code(header_value=x_company_code)
+    usuario_solicitado = _target_payslip_user(current_user, usuario)
+
+    # --------------------------------------------------------
+    # PAYROLL RUN (FUENTE DE VERDAD)
+    # --------------------------------------------------------
+    cur.execute("""
+        SELECT
+            usuario,
+            year,
+            month,
+            salario_neto,
+            salario_bruto,
+            horas_extra,
+            monto_horas_extra
+        FROM payroll_runs
+        WHERE usuario = %s
+          AND year = %s
+          AND month = %s
+          AND company_code = %s
+        LIMIT 1
+    """, (usuario_solicitado, year, month, company))
+
+    run = cur.fetchone()
+    if not run:
+        raise HTTPException(404, "Colilla no encontrada")
+
+    # --------------------------------------------------------
+    # DATOS DEL EMPLEADO
+    # --------------------------------------------------------
+    cur.execute("""
+        SELECT
+            nombre,
+            apellidos,
+            cedula_id,
+            jornada,
+            salario,
+            pago
+        FROM empleados
+        WHERE usuario = %s
+        LIMIT 1
+    """, (usuario_solicitado,))
+
+    emp = cur.fetchone()
+    if not emp:
+        raise HTTPException(404, "Empleado no encontrado")
+
+    # --------------------------------------------------------
+    # RECONSTRUCCIÓN DETERMINÍSTICA
+    # --------------------------------------------------------
+    salario_bruto = float(run["salario_bruto"] or 0)
+    monto_horas_extra = float(run["monto_horas_extra"] or 0)
+    salario_base = salario_bruto - monto_horas_extra
+
+    salario_mensual = float(emp["salario"] or 0)
+    deduccion_rate, patronal_rate, is_quincenal = _payroll_rates_for_stored_run(
+        salario_bruto,
+        salario_mensual,
+        emp["pago"],
+    )
+    deducciones_trabajador = round(salario_bruto * deduccion_rate, 2)
+    impuesto_renta = _income_tax_for_period(salario_bruto, salario_mensual, is_quincenal)
+    cargas_patronales = round(salario_bruto * patronal_rate, 2)
+
+    data = {
+        "usuario": run["usuario"],
+        "nombre": emp["nombre"],
+        "apellidos": emp["apellidos"],
+        "cedula_id": emp["cedula_id"],
+        "jornada": emp["jornada"],
+        "pago": emp["pago"],
+
+        "year": run["year"],
+        "month": run["month"],
+
+        "salario_base": round(salario_base, 2),
+        "horas_ot": float(run["horas_extra"] or 0),
+        "pago_horas_extra": round(monto_horas_extra, 2),
+        "salario_bruto": round(salario_bruto, 2),
+
+        "deducciones_trabajador": deducciones_trabajador,
+        "impuesto_renta": impuesto_renta,
+        "salario_neto": float(run["salario_neto"] or 0),
+        "cargas_patronales": cargas_patronales,
+        "costo_total_empresa": round(salario_bruto + cargas_patronales, 2)
+    }
+
+    # --------------------------------------------------------
+    # GENERAR PDF (BYTES) Y RESPONDER
+    # --------------------------------------------------------
+    pdf_bytes = _generar_colilla_pdf_bytes(data=data, year=year, month=month)
+    filename = f"COLILLA_{run['usuario']}_{year}_{month}.pdf"
+
+    return StreamingResponse(
+        BytesIO(pdf_bytes),
+        media_type="application/pdf",
+        headers={"Content-Disposition": f"attachment; filename={filename}"}
+    )
+
+
+@router.get("/hr-mobile-payslip-pdf/{year}/{month}")
+@router.get("/mobile-payslip-pdf/{year}/{month}")
+def descargar_colilla_pdf_mobile_v2(
+    year: int,
+    month: int,
+    request_user: str,
+    request_role: str,
+    target_user: str | None = None,
+    conn=Depends(get_db)
+):
+    """
+    Descarga mobile: Linking.openURL no puede enviar headers X-User/X-Role.
+    Se valida usuario/rol contra BD y se aplica la misma regla: admin/master
+    puede descargar de otros; usuario normal solo la propia.
+    """
+    cur = conn.cursor(cursor_factory=RealDictCursor)
+    _ensure_payroll_company()
+    company = company_code()
+    usuario_actual = (request_user or "").strip().lower()
+    usuario_solicitado = (target_user or usuario_actual).strip().lower()
+
+    cur.execute("""
+        SELECT usuario, rol, activo
+        FROM usuarios
+        WHERE LOWER(TRIM(usuario)) = %s
+        LIMIT 1
+    """, (usuario_actual,))
+    auth_user = cur.fetchone()
+
+    if not auth_user:
+        raise HTTPException(401, "Usuario no existe")
+    if not bool(auth_user.get("activo")):
+        raise HTTPException(403, "Usuario inactivo")
+
+    usuario_solicitado = _target_payslip_user(
+        {
+            "usuario": auth_user.get("usuario"),
+            "rol": auth_user.get("rol") or request_role,
+        },
+        usuario_solicitado,
+    )
+
+    cur.execute("""
+        SELECT
+            usuario,
+            year,
+            month,
+            salario_neto,
+            salario_bruto,
+            horas_extra,
+            monto_horas_extra
+        FROM payroll_runs
+        WHERE usuario = %s
+          AND year = %s
+          AND month = %s
+          AND company_code = %s
+        LIMIT 1
+    """, (usuario_solicitado, year, month, company))
+
+    run = cur.fetchone()
+    if not run:
+        raise HTTPException(404, "Colilla no encontrada")
+
+    cur.execute("""
+        SELECT
+            nombre,
+            apellidos,
+            cedula_id,
+            jornada,
+            salario,
+            pago
+        FROM empleados
+        WHERE usuario = %s
+        LIMIT 1
+    """, (usuario_solicitado,))
+
+    emp = cur.fetchone()
+    if not emp:
+        raise HTTPException(404, "Empleado no encontrado")
+
+    salario_bruto = float(run["salario_bruto"] or 0)
+    monto_horas_extra = float(run["monto_horas_extra"] or 0)
+    salario_base = salario_bruto - monto_horas_extra
+    salario_mensual = float(emp["salario"] or 0)
+    deduccion_rate, patronal_rate, is_quincenal = _payroll_rates_for_stored_run(
+        salario_bruto,
+        salario_mensual,
+        emp["pago"],
+    )
+    deducciones_trabajador = round(salario_bruto * deduccion_rate, 2)
+    impuesto_renta = _income_tax_for_period(salario_bruto, salario_mensual, is_quincenal)
+    cargas_patronales = round(salario_bruto * patronal_rate, 2)
+
+    data = {
+        "usuario": run["usuario"],
+        "nombre": emp["nombre"],
+        "apellidos": emp["apellidos"],
+        "cedula_id": emp["cedula_id"],
+        "jornada": emp["jornada"],
+        "pago": emp["pago"],
+        "year": run["year"],
+        "month": run["month"],
+        "salario_base": round(salario_base, 2),
+        "horas_ot": float(run["horas_extra"] or 0),
+        "pago_horas_extra": round(monto_horas_extra, 2),
+        "salario_bruto": round(salario_bruto, 2),
+        "deducciones_trabajador": deducciones_trabajador,
+        "impuesto_renta": impuesto_renta,
+        "salario_neto": float(run["salario_neto"] or 0),
+        "cargas_patronales": cargas_patronales,
+        "costo_total_empresa": round(salario_bruto + cargas_patronales, 2)
+    }
+
+    pdf_bytes = _generar_colilla_pdf_bytes(data=data, year=year, month=month)
+    filename = f"COLILLA_{run['usuario']}_{year}_{month}.pdf"
+
+    return StreamingResponse(
+        BytesIO(pdf_bytes),
+        media_type="application/pdf",
+        headers={"Content-Disposition": f"attachment; filename={filename}"}
+    )
+
+
+@router.get("/payslips/{year}/{month}/pdf-mobile")
+def descargar_colilla_pdf_mobile(
+    year: int,
+    month: int,
+    usuario: str,
+    rol: str,
+    target_usuario: str | None = None,
+    conn=Depends(get_db)
+):
+    return descargar_colilla_pdf_mobile_v2(
+        year=year,
+        month=month,
+        request_user=usuario,
+        request_role=rol,
+        target_user=target_usuario,
+        conn=conn
+    )

@@ -1,0 +1,1940 @@
+[
+  {
+    "file": "Modulos\\Informes\\__init__.py",
+    "area": "Informes",
+    "errors": [],
+    "classes": [],
+    "api_functions": []
+  },
+  {
+    "file": "Modulos\\Informes\\container_report_form.py",
+    "area": "Informes",
+    "errors": [],
+    "classes": [
+      {
+        "name": "ContainerReportForm",
+        "signature": "(parent, usuario=None, rol=None, on_back=None)"
+      }
+    ],
+    "api_functions": [
+      "api_request",
+      "create_container_report_api"
+    ]
+  },
+  {
+    "file": "Modulos\\Informes\\crane_inspection\\__init__.py",
+    "area": "Informes",
+    "errors": [],
+    "classes": [],
+    "api_functions": []
+  },
+  {
+    "file": "Modulos\\Informes\\crane_inspection\\crane_inspection_form.py",
+    "area": "Informes",
+    "errors": [],
+    "classes": [
+      {
+        "name": "CraneInspectionForm",
+        "signature": "(parent, usuario=None, rol=None, on_back=None)"
+      }
+    ],
+    "api_functions": [
+      "update_crane_inspection_api",
+      "create_crane_inspection_api"
+    ]
+  },
+  {
+    "file": "Modulos\\Informes\\crane_inspection\\crane_inspection_table.py",
+    "area": "Informes",
+    "errors": [],
+    "classes": [
+      {
+        "name": "CraneInspectionTable",
+        "signature": "(parent, usuario=None, rol=None)"
+      }
+    ],
+    "api_functions": [
+      "get_crane_inspections_api",
+      "get_crane_inspection_api",
+      "update_crane_inspection_api",
+      "approve_crane_inspection_api",
+      "generate_crane_inspection_word_api"
+    ]
+  },
+  {
+    "file": "Modulos\\Informes\\crane_inspection\\popup_ai_crane_inspection_control.py",
+    "area": "Informes",
+    "errors": [],
+    "classes": [
+      {
+        "name": "PopupAICraneInspectionControl",
+        "signature": "(parent, form_instance, on_execute)"
+      }
+    ],
+    "api_functions": []
+  },
+  {
+    "file": "Modulos\\Informes\\crane_inspection\\popup_crane_inspection_presentation.py",
+    "area": "Informes",
+    "errors": [],
+    "classes": [
+      {
+        "name": "PopupCraneInspectionPresentation",
+        "signature": "(parent, record_id: int)"
+      }
+    ],
+    "api_functions": [
+      "get_crane_inspection_api",
+      "generate_crane_inspection_presentation_api"
+    ]
+  },
+  {
+    "file": "Modulos\\Informes\\date_utils.py",
+    "area": "Informes",
+    "errors": [],
+    "classes": [],
+    "api_functions": []
+  },
+  {
+    "file": "Modulos\\Informes\\informes_home_ui.py",
+    "area": "Informes",
+    "errors": [],
+    "classes": [
+      {
+        "name": "InformesHomeUI",
+        "signature": "(parent, usuario, rol, callbacks=None, logra_only=False)"
+      }
+    ],
+    "api_functions": []
+  },
+  {
+    "file": "Modulos\\Informes\\informes_table.py",
+    "area": "Informes",
+    "errors": [],
+    "classes": [
+      {
+        "name": "InformesTable",
+        "signature": "(parent)"
+      }
+    ],
+    "api_functions": [
+      "get_vessel_grain_sampling_list_api",
+      "api_request",
+      "get_container_report_excel_api",
+      "get_container_report_statuses_api",
+      "generate_container_report_pdf_api"
+    ]
+  },
+  {
+    "file": "Modulos\\Informes\\informes_vessel_grain_table.py",
+    "area": "Informes",
+    "errors": [],
+    "classes": [
+      {
+        "name": "VesselGrainSamplingTable",
+        "signature": "(parent)"
+      }
+    ],
+    "api_functions": [
+      "get_vessel_grain_sampling_list_api",
+      "get_vessel_grain_sampling_by_id_api",
+      "generate_grain_sampling_word_api",
+      "approve_vessel_grain_sampling_api"
+    ]
+  },
+  {
+    "file": "Modulos\\Informes\\lashing_certificate\\lashing_certificate_form.py",
+    "area": "Informes",
+    "errors": [],
+    "classes": [
+      {
+        "name": "LashingCertificateForm",
+        "signature": "(parent, usuario=None, rol=None, record=None, on_back=None)"
+      }
+    ],
+    "api_functions": [
+      "create_lashing_certificate_api",
+      "update_lashing_certificate_api",
+      "get_lashing_certificate_api"
+    ]
+  },
+  {
+    "file": "Modulos\\Informes\\lashing_certificate\\lashing_certificates_table.py",
+    "area": "Informes",
+    "errors": [],
+    "classes": [
+      {
+        "name": "LashingCertificatesTable",
+        "signature": "(parent)"
+      }
+    ],
+    "api_functions": [
+      "get_lashing_certificates_api",
+      "get_lashing_certificate_api",
+      "update_lashing_certificate_api",
+      "generate_lashing_certificate_word_api",
+      "generate_lashing_certificate_pdf_api"
+    ]
+  },
+  {
+    "file": "Modulos\\Informes\\logra_questionnaires_data.py",
+    "area": "Informes",
+    "errors": [],
+    "classes": [],
+    "api_functions": []
+  },
+  {
+    "file": "Modulos\\Informes\\logra_questionnaires_form.py",
+    "area": "Informes",
+    "errors": [],
+    "classes": [
+      {
+        "name": "LograQuestionnairesForm",
+        "signature": "(parent, usuario=None, rol=None, on_back=None, review_mode=False)"
+      },
+      {
+        "name": "PopupLograOpen",
+        "signature": "(parent, form_instance)"
+      },
+      {
+        "name": "PopupLograAgenda",
+        "signature": "(parent, form_instance)"
+      },
+      {
+        "name": "PopupLograAgendaSearch",
+        "signature": "(parent, agenda_popup)"
+      },
+      {
+        "name": "PopupLograPortia",
+        "signature": "(parent, form_instance)"
+      }
+    ],
+    "api_functions": [
+      "list_logra_attachments_api",
+      "update_logra_answer_api",
+      "save_logra_report_api",
+      "upload_logra_attachment_api",
+      "open_logra_attachment_api",
+      "delete_logra_attachment_api",
+      "get_logra_report_api",
+      "list_logra_reports_api",
+      "list_logra_reports_api",
+      "update_logra_agenda_item_api",
+      "save_logra_agenda_api",
+      "list_logra_reports_api",
+      "get_logra_report_api",
+      "improve_logra_text_api",
+      "update_logra_agenda_item_api",
+      "save_logra_report_api",
+      "list_logra_attachments_api",
+      "delete_logra_agenda_item_api"
+    ]
+  },
+  {
+    "file": "Modulos\\Informes\\logra_reports_table.py",
+    "area": "Informes",
+    "errors": [],
+    "classes": [
+      {
+        "name": "LograReportsTable",
+        "signature": "(parent)"
+      }
+    ],
+    "api_functions": [
+      "list_logra_reports_api",
+      "get_logra_report_api",
+      "download_logra_ai_report_api"
+    ]
+  },
+  {
+    "file": "Modulos\\Informes\\popup\\__init__.py",
+    "area": "Informes",
+    "errors": [],
+    "classes": [],
+    "api_functions": []
+  },
+  {
+    "file": "Modulos\\Informes\\popup\\popup_ai_compare.py",
+    "area": "Informes",
+    "errors": [],
+    "classes": [
+      {
+        "name": "PopupAICompare",
+        "signature": "(parent, original_text, ai_text, on_accept=None, on_retry=None)"
+      }
+    ],
+    "api_functions": []
+  },
+  {
+    "file": "Modulos\\Informes\\popup\\popup_certificate_report_selector.py",
+    "area": "Informes",
+    "errors": [],
+    "classes": [
+      {
+        "name": "PopupCertificateReportSelector",
+        "signature": "(parent, usuario=None, rol=None)"
+      }
+    ],
+    "api_functions": []
+  },
+  {
+    "file": "Modulos\\Informes\\popup\\popup_container_report_preview.py",
+    "area": "Informes",
+    "errors": [],
+    "classes": [
+      {
+        "name": "PopupContainerReportPreview",
+        "signature": "(parent, report: dict)"
+      }
+    ],
+    "api_functions": [
+      "get_container_report_by_id_api",
+      "update_container_report_api"
+    ]
+  },
+  {
+    "file": "Modulos\\Informes\\popup\\popup_container_report_selector.py",
+    "area": "Informes",
+    "errors": [],
+    "classes": [
+      {
+        "name": "PopupContainerReportSelector",
+        "signature": "(parent, on_select)"
+      }
+    ],
+    "api_functions": [
+      "get_container_report_filters_api",
+      "get_container_report_months_api",
+      "get_container_report_vessels_api",
+      "get_container_reports_by_servicio_api"
+    ]
+  },
+  {
+    "file": "Modulos\\Informes\\popup\\popup_generate_container_presentation.py",
+    "area": "Informes",
+    "errors": [],
+    "classes": [
+      {
+        "name": "PopupGenerateContainerPresentation",
+        "signature": "(parent, container_report_id: int)"
+      }
+    ],
+    "api_functions": [
+      "get_container_presentation_data_api",
+      "generate_container_presentation_pdf_api",
+      "generate_container_unified_pdf_api"
+    ]
+  },
+  {
+    "file": "Modulos\\Informes\\popup\\popup_grain_service_selector.py",
+    "area": "Informes",
+    "errors": [],
+    "classes": [
+      {
+        "name": "PopupGrainServiceSelector",
+        "signature": "(parent, on_select=None)"
+      }
+    ],
+    "api_functions": [
+      "get_services_for_grain_sampling_api"
+    ]
+  },
+  {
+    "file": "Modulos\\Informes\\popup\\popup_proyecto_calculadora.py",
+    "area": "Informes",
+    "errors": [],
+    "classes": [
+      {
+        "name": "PopupProyectoCalculadora",
+        "signature": "(parent)"
+      }
+    ],
+    "api_functions": [
+      "create_proyecto_calculo_api"
+    ]
+  },
+  {
+    "file": "Modulos\\Informes\\popup\\popup_vessel_final_report.py",
+    "area": "Informes",
+    "errors": [],
+    "classes": [
+      {
+        "name": "PopupVesselFinalReport",
+        "signature": "(parent, report_id)"
+      }
+    ],
+    "api_functions": [
+      "get_vessel_presentation_data_api",
+      "generate_vessel_presentation_pdf_api",
+      "generate_vessel_unified_pdf_api"
+    ]
+  },
+  {
+    "file": "Modulos\\Informes\\popup\\popup_vessel_grain_sampling_preview.py",
+    "area": "Informes",
+    "errors": [],
+    "classes": [
+      {
+        "name": "PopupVesselGrainSamplingPreview",
+        "signature": "(parent, report_id: int)"
+      }
+    ],
+    "api_functions": [
+      "get_vessel_grain_sampling_by_id_api",
+      "update_vessel_grain_sampling_api"
+    ]
+  },
+  {
+    "file": "Modulos\\Informes\\popup\\popup_vessel_report_selector.py",
+    "area": "Informes",
+    "errors": [],
+    "classes": [
+      {
+        "name": "PopupVesselReportSelector",
+        "signature": "(parent, usuario=None, rol=None)"
+      }
+    ],
+    "api_functions": []
+  },
+  {
+    "file": "Modulos\\Informes\\port_captancy\\popup_ai_maritime_control_port_captancy.py",
+    "area": "Informes",
+    "errors": [],
+    "classes": [
+      {
+        "name": "PopupAIMaritimeControlPortCaptancy",
+        "signature": "(parent, form_instance)"
+      }
+    ],
+    "api_functions": [
+      "improve_port_captancy_api"
+    ]
+  },
+  {
+    "file": "Modulos\\Informes\\port_captancy\\popup_pdf_merge_port_captancy.py",
+    "area": "Informes",
+    "errors": [],
+    "classes": [
+      {
+        "name": "PopupPDFMergePortCaptancy",
+        "signature": "(parent, record_id: int)"
+      }
+    ],
+    "api_functions": [
+      "get_port_captancy_report_by_id_api",
+      "generate_port_captancy_presentation_api"
+    ]
+  },
+  {
+    "file": "Modulos\\Informes\\port_captancy\\port_captancy_form.py",
+    "area": "Informes",
+    "errors": [],
+    "classes": [
+      {
+        "name": "PortCaptancyForm",
+        "signature": "(parent, usuario=None, rol=None, on_back=None)"
+      }
+    ],
+    "api_functions": [
+      "create_port_captancy_report_api",
+      "update_port_captancy_report_api"
+    ]
+  },
+  {
+    "file": "Modulos\\Informes\\port_captancy\\port_captancy_table.py",
+    "area": "Informes",
+    "errors": [],
+    "classes": [
+      {
+        "name": "PortCaptancyTable",
+        "signature": "(parent)"
+      }
+    ],
+    "api_functions": [
+      "get_all_port_captancy_reports_api",
+      "get_port_captancy_report_api",
+      "update_port_captancy_report_api",
+      "generate_port_captancy_word_api"
+    ]
+  },
+  {
+    "file": "Modulos\\Informes\\proyectos_calculo_ui.py",
+    "area": "Informes",
+    "errors": [],
+    "classes": [
+      {
+        "name": "ProyectosCalculoUI",
+        "signature": "(parent, usuario=None, rol=None, on_back=None)"
+      }
+    ],
+    "api_functions": [
+      "get_proyectos_calculo_api",
+      "get_proyecto_calculo_by_nombre_api",
+      "update_proyecto_calculo_api",
+      "delete_proyecto_calculo_api"
+    ]
+  },
+  {
+    "file": "Modulos\\Informes\\report_type_selector.py",
+    "area": "Informes",
+    "errors": [],
+    "classes": [
+      {
+        "name": "ReportTypeSelector",
+        "signature": "(parent, on_container_report=None, on_vessel_report=None, on_back=None, usuario=None, rol=None)"
+      }
+    ],
+    "api_functions": []
+  },
+  {
+    "file": "Modulos\\Informes\\sampling_certificate\\sampling_certificate_form.py",
+    "area": "Informes",
+    "errors": [],
+    "classes": [
+      {
+        "name": "SamplingCertificateForm",
+        "signature": "(parent, usuario=None, rol=None, record=None, on_back=None)"
+      }
+    ],
+    "api_functions": [
+      "update_sampling_certificate_api",
+      "get_sampling_certificate_api",
+      "update_sampling_certificate_api",
+      "create_sampling_certificate_api",
+      "create_sampling_certificate_api",
+      "update_sampling_certificate_api"
+    ]
+  },
+  {
+    "file": "Modulos\\Informes\\sampling_certificate\\sampling_certificate_table.py",
+    "area": "Informes",
+    "errors": [],
+    "classes": [
+      {
+        "name": "SamplingCertificatesTable",
+        "signature": "(parent)"
+      }
+    ],
+    "api_functions": [
+      "get_sampling_certificates_api",
+      "get_sampling_certificate_api",
+      "update_sampling_certificate_api",
+      "generate_sampling_excel_api",
+      "generate_sampling_pdf_api"
+    ]
+  },
+  {
+    "file": "Modulos\\Informes\\sealing_certificate\\sealing_certificate_form.py",
+    "area": "Informes",
+    "errors": [],
+    "classes": [
+      {
+        "name": "SealingCertificateForm",
+        "signature": "(parent, usuario=None, rol=None, record=None, on_back=None)"
+      }
+    ],
+    "api_functions": [
+      "create_sealing_certificate_api",
+      "update_sealing_certificate_api",
+      "get_sealing_certificate_api"
+    ]
+  },
+  {
+    "file": "Modulos\\Informes\\sealing_certificate\\sealing_certificate_table.py",
+    "area": "Informes",
+    "errors": [],
+    "classes": [
+      {
+        "name": "SealingCertificatesTable",
+        "signature": "(parent)"
+      }
+    ],
+    "api_functions": [
+      "get_sealing_certificates_api",
+      "get_sealing_certificate_api",
+      "update_sealing_certificate_api",
+      "generate_sealing_excel_api",
+      "generate_sealing_pdf_api"
+    ]
+  },
+  {
+    "file": "Modulos\\Informes\\status_informes_table.py",
+    "area": "Informes",
+    "errors": [],
+    "classes": [
+      {
+        "name": "StatusInformesTable",
+        "signature": "(parent)"
+      }
+    ],
+    "api_functions": [
+      "get_status_informes_api",
+      "get_status_informes_statuses_api"
+    ]
+  },
+  {
+    "file": "Modulos\\Informes\\vessel\\vessel_grain_sampling_form.py",
+    "area": "Informes",
+    "errors": [],
+    "classes": [
+      {
+        "name": "GrainSamplingVesselForm",
+        "signature": "(parent, usuario=None, rol=None, on_back=None)"
+      }
+    ],
+    "api_functions": [
+      "improve_grain_sampling_api",
+      "create_vessel_grain_sampling_api"
+    ]
+  },
+  {
+    "file": "Modulos\\Informes\\vessel_bunker\\__init__.py",
+    "area": "Informes",
+    "errors": [],
+    "classes": [],
+    "api_functions": []
+  },
+  {
+    "file": "Modulos\\Informes\\vessel_bunker\\popup_vessel_bunker_pdf.py",
+    "area": "Informes",
+    "errors": [],
+    "classes": [
+      {
+        "name": "PopupVesselBunkerPDF",
+        "signature": "(parent, report_id: int)"
+      }
+    ],
+    "api_functions": [
+      "get_vessel_bunker_report_api",
+      "generate_vessel_bunker_pdf_api",
+      "get_vessel_bunker_presentation_pdf"
+    ]
+  },
+  {
+    "file": "Modulos\\Informes\\vessel_bunker\\vessel_bunker_form.py",
+    "area": "Informes",
+    "errors": [],
+    "classes": [
+      {
+        "name": "VesselBunkerReportForm",
+        "signature": "(parent, usuario=None, rol=None, on_back=None)"
+      }
+    ],
+    "api_functions": [
+      "create_vessel_bunker_report_api",
+      "update_vessel_bunker_report_api",
+      "preview_vessel_bunker_excel_api"
+    ]
+  },
+  {
+    "file": "Modulos\\Informes\\vessel_bunker\\vessel_bunker_table.py",
+    "area": "Informes",
+    "errors": [],
+    "classes": [
+      {
+        "name": "VesselBunkerTable",
+        "signature": "(parent)"
+      }
+    ],
+    "api_functions": [
+      "get_all_vessel_bunker_reports_api",
+      "get_vessel_bunker_report_api",
+      "update_vessel_bunker_report_api",
+      "generate_vessel_bunker_excel_api"
+    ]
+  },
+  {
+    "file": "Modulos\\Informes\\vessel_cargo_condition_survey\\__init__.py",
+    "area": "Informes",
+    "errors": [],
+    "classes": [],
+    "api_functions": []
+  },
+  {
+    "file": "Modulos\\Informes\\vessel_cargo_condition_survey\\popup_ai_maritime_control.py",
+    "area": "Informes",
+    "errors": [],
+    "classes": [
+      {
+        "name": "PopupAIMaritimeControl",
+        "signature": "(parent, form_instance, on_execute)"
+      }
+    ],
+    "api_functions": []
+  },
+  {
+    "file": "Modulos\\Informes\\vessel_cargo_condition_survey\\popup_vessel_cargo_condition_word.py",
+    "area": "Informes",
+    "errors": [],
+    "classes": [
+      {
+        "name": "PopupVesselCargoConditionWord",
+        "signature": "(parent, record_id: int)"
+      }
+    ],
+    "api_functions": [
+      "get_vessel_cargo_condition_by_id_api",
+      "download_vessel_cargo_condition_presentation_pdf"
+    ]
+  },
+  {
+    "file": "Modulos\\Informes\\vessel_cargo_condition_survey\\vessel_cargo_condition_survey_form.py",
+    "area": "Informes",
+    "errors": [],
+    "classes": [
+      {
+        "name": "VesselCargoConditionSurveyForm",
+        "signature": "(parent, usuario=None, rol=None, on_back=None)"
+      }
+    ],
+    "api_functions": [
+      "update_vessel_cargo_condition_api",
+      "improve_cargo_condition_ai_api",
+      "create_vessel_cargo_condition_api"
+    ]
+  },
+  {
+    "file": "Modulos\\Informes\\vessel_cargo_condition_survey\\vessel_cargo_condition_table.py",
+    "area": "Informes",
+    "errors": [],
+    "classes": [
+      {
+        "name": "VesselCargoConditionTable",
+        "signature": "(parent)"
+      }
+    ],
+    "api_functions": [
+      "get_all_vessel_cargo_condition_api",
+      "get_vessel_cargo_condition_by_id_api",
+      "update_vessel_cargo_condition_api",
+      "generate_vessel_cargo_condition_word_api"
+    ]
+  },
+  {
+    "file": "Modulos\\Informes\\vessel_condition_survey\\__init__.py",
+    "area": "Informes",
+    "errors": [],
+    "classes": [],
+    "api_functions": []
+  },
+  {
+    "file": "Modulos\\Informes\\vessel_condition_survey\\popup_pdf_merge.py",
+    "area": "Informes",
+    "errors": [],
+    "classes": [
+      {
+        "name": "PopupPDFMerge",
+        "signature": "(parent, record_id: int)"
+      }
+    ],
+    "api_functions": [
+      "get_vessel_condition_survey_by_id_api",
+      "generate_vessel_condition_presentation_api"
+    ]
+  },
+  {
+    "file": "Modulos\\Informes\\vessel_condition_survey\\vessel_condition_survey_form.py",
+    "area": "Informes",
+    "errors": [],
+    "classes": [
+      {
+        "name": "VesselConditionSurveyForm",
+        "signature": "(parent, usuario=None, rol=None, on_back=None)"
+      }
+    ],
+    "api_functions": [
+      "improve_vessel_condition_text_api",
+      "create_vessel_condition_survey_api",
+      "update_vessel_condition_survey_api",
+      "get_vessel_condition_survey_api"
+    ]
+  },
+  {
+    "file": "Modulos\\Informes\\vessel_condition_survey\\vessel_condition_survey_table.py",
+    "area": "Informes",
+    "errors": [],
+    "classes": [
+      {
+        "name": "VesselConditionSurveyTable",
+        "signature": "(parent)"
+      }
+    ],
+    "api_functions": [
+      "get_all_vessel_condition_surveys_api",
+      "get_vessel_condition_survey_api",
+      "get_vessel_condition_survey_by_id_api",
+      "update_vessel_condition_survey_api",
+      "download_vessel_condition_survey_word"
+    ]
+  },
+  {
+    "file": "Modulos\\Informes\\Vessel_Draft_Survey\\__init__.py",
+    "area": "Informes",
+    "errors": [],
+    "classes": [],
+    "api_functions": []
+  },
+  {
+    "file": "Modulos\\Informes\\Vessel_Draft_Survey\\draft_survey_form.py",
+    "area": "Informes",
+    "errors": [],
+    "classes": [
+      {
+        "name": "DraftSurveyForm",
+        "signature": "(parent, usuario=None, rol=None, on_back=None, mode='create', draft_report_number=None)"
+      }
+    ],
+    "api_functions": [
+      "create_draft_survey_api",
+      "update_draft_survey_api",
+      "create_draft_survey_ballast_api",
+      "update_draft_survey_ballast_api",
+      "create_draft_survey_word_api",
+      "update_draft_survey_word_api",
+      "get_full_draft_survey_api"
+    ]
+  },
+  {
+    "file": "Modulos\\Informes\\Vessel_Draft_Survey\\draft_survey_table.py",
+    "area": "Informes",
+    "errors": [],
+    "classes": [
+      {
+        "name": "DraftSurveyTable",
+        "signature": "(parent)"
+      }
+    ],
+    "api_functions": [
+      "get_draft_survey_headers_api",
+      "update_draft_survey_status_api",
+      "generate_draft_survey_excel_pdf_api",
+      "get_full_draft_survey_api",
+      "generate_draft_survey_final_pdf_api"
+    ]
+  },
+  {
+    "file": "Modulos\\Informes\\Vessel_Draft_Survey\\popup_draft_survey_presentation.py",
+    "area": "Informes",
+    "errors": [],
+    "classes": [
+      {
+        "name": "PopupDraftSurveyPresentation",
+        "signature": "(parent, draft_report_number)"
+      }
+    ],
+    "api_functions": [
+      "get_full_draft_survey_api",
+      "generate_draft_survey_presentation_pdf_api",
+      "generate_draft_survey_final_pdf_api",
+      "generate_draft_survey_unified_pdf_api",
+      "generate_draft_survey_word_pdf_api"
+    ]
+  },
+  {
+    "file": "Modulos\\Informes\\Vessel_Draft_Survey\\popup_draft_survey_selector.py",
+    "area": "Informes",
+    "errors": [],
+    "classes": [
+      {
+        "name": "PopupDraftSurveySelector",
+        "signature": "(parent, on_select=None)"
+      }
+    ],
+    "api_functions": [
+      "get_draft_survey_filters_api",
+      "get_full_draft_survey_api"
+    ]
+  },
+  {
+    "file": "Modulos\\Informes\\Vessel_Draft_Survey\\popup_servicio_draft_selector.py",
+    "area": "Informes",
+    "errors": [],
+    "classes": [
+      {
+        "name": "PopupServicioDraftSelector",
+        "signature": "(parent, on_select=None)"
+      }
+    ],
+    "api_functions": [
+      "filter_servicios_draft_api"
+    ]
+  },
+  {
+    "file": "Modulos\\Informes\\vessel_holds_inspection_certificate\\vessel_holds_inspection_certificate_form.py",
+    "area": "Informes",
+    "errors": [],
+    "classes": [
+      {
+        "name": "VesselHoldsInspectionCertificateForm",
+        "signature": "(parent, usuario=None, rol=None, on_back=None, record_id=None)"
+      }
+    ],
+    "api_functions": [
+      "create_vessel_holds_certificate_api",
+      "update_vessel_holds_certificate_api",
+      "get_vessel_holds_certificate_api"
+    ]
+  },
+  {
+    "file": "Modulos\\Informes\\vessel_holds_inspection_certificate\\vessel_holds_inspection_certificate_table.py",
+    "area": "Informes",
+    "errors": [],
+    "classes": [
+      {
+        "name": "VesselHoldsInspectionCertificateTable",
+        "signature": "(parent)"
+      }
+    ],
+    "api_functions": [
+      "get_vessel_holds_certificates_api",
+      "get_vessel_holds_certificate_api",
+      "update_vessel_holds_certificate_api",
+      "generate_holds_excel_api",
+      "generate_vessel_holds_pdf_api"
+    ]
+  },
+  {
+    "file": "Modulos\\Informes\\vessel_truck_supervision\\__init__.py",
+    "area": "Informes",
+    "errors": [],
+    "classes": [],
+    "api_functions": []
+  },
+  {
+    "file": "Modulos\\Informes\\vessel_truck_supervision\\popup_servicio_selector.py",
+    "area": "Informes",
+    "errors": [],
+    "classes": [
+      {
+        "name": "PopupServicioSelector",
+        "signature": "(parent, on_select=None)"
+      }
+    ],
+    "api_functions": [
+      "filter_servicios_vessel_truck_api"
+    ]
+  },
+  {
+    "file": "Modulos\\Informes\\vessel_truck_supervision\\popup_truck_supervision_final_report.py",
+    "area": "Informes",
+    "errors": [],
+    "classes": [
+      {
+        "name": "PopupTruckSupervisionFinalReport",
+        "signature": "(parent, report_id)"
+      }
+    ],
+    "api_functions": [
+      "get_vessel_truck_supervision_by_id_api",
+      "generate_truck_presentation_pdf_api",
+      "generate_truck_unified_pdf_api"
+    ]
+  },
+  {
+    "file": "Modulos\\Informes\\vessel_truck_supervision\\popup_vessel_truck_supervision_review.py",
+    "area": "Informes",
+    "errors": [],
+    "classes": [
+      {
+        "name": "PopupVesselTruckSupervisionReview",
+        "signature": "(parent, report_id: int)"
+      }
+    ],
+    "api_functions": [
+      "get_vessel_truck_supervision_by_id_api",
+      "update_vessel_truck_supervision_api"
+    ]
+  },
+  {
+    "file": "Modulos\\Informes\\vessel_truck_supervision\\vessel_truck_supervision_form.py",
+    "area": "Informes",
+    "errors": [],
+    "classes": [
+      {
+        "name": "VesselTruckSupervisionForm",
+        "signature": "(parent, usuario=None, rol=None, on_back=None, mode='create')"
+      }
+    ],
+    "api_functions": [
+      "create_vessel_truck_supervision_api",
+      "update_vessel_truck_supervision_api",
+      "get_vessel_truck_supervision_by_id_api",
+      "improve_truck_supervision_api"
+    ]
+  },
+  {
+    "file": "Modulos\\Informes\\vessel_truck_supervision\\vessel_truck_supervision_table.py",
+    "area": "Informes",
+    "errors": [],
+    "classes": [
+      {
+        "name": "VesselTruckSupervisionTable",
+        "signature": "(parent)"
+      }
+    ],
+    "api_functions": [
+      "get_vessel_truck_supervision_list_api",
+      "update_vessel_truck_supervision_api",
+      "approve_vessel_truck_supervision_api"
+    ]
+  },
+  {
+    "file": "Modulos\\Informes\\weight_certificate\\weight_certificate_form.py",
+    "area": "Informes",
+    "errors": [],
+    "classes": [
+      {
+        "name": "WeightCertificateForm",
+        "signature": "(parent, usuario=None, rol=None, on_back=None)"
+      }
+    ],
+    "api_functions": [
+      "create_weight_certificate_api",
+      "update_weight_certificate_api"
+    ]
+  },
+  {
+    "file": "Modulos\\Informes\\weight_certificate\\weight_certificate_table.py",
+    "area": "Informes",
+    "errors": [],
+    "classes": [
+      {
+        "name": "WeightCertificateTable",
+        "signature": "(parent)"
+      }
+    ],
+    "api_functions": [
+      "get_weight_certificates_api",
+      "get_weight_certificate_api",
+      "update_weight_certificate_api",
+      "generate_weight_certificate_word_api",
+      "generate_weight_certificate_pdf_api"
+    ]
+  },
+  {
+    "file": "Modulos\\Comercial\\comercial_client_analytics_ui.py",
+    "area": "Comercial",
+    "errors": [],
+    "classes": [
+      {
+        "name": "ComercialClientAnalyticsUI",
+        "signature": "(parent, usuario=None, rol=None, on_back=None)"
+      }
+    ],
+    "api_functions": [
+      "get_comercial_client_view_api"
+    ]
+  },
+  {
+    "file": "Modulos\\Comercial\\comercial_cotizaciones_ui.py",
+    "area": "Comercial",
+    "errors": [],
+    "classes": [
+      {
+        "name": "ComercialCotizacionesUI",
+        "signature": "(parent, usuario=None, rol=None, on_back=None)"
+      }
+    ],
+    "api_functions": [
+      "get_comercial_cotizaciones_api",
+      "get_comercial_cotizacion_api",
+      "download_comercial_cotizacion_export_api",
+      "delete_comercial_cotizacion_api",
+      "put_comercial_cotizacion_api",
+      "get_comercial_cotizaciones_kpis_api"
+    ]
+  },
+  {
+    "file": "Modulos\\Comercial\\comercial_home_ui.py",
+    "area": "Comercial",
+    "errors": [],
+    "classes": [
+      {
+        "name": "ComercialHomeUI",
+        "signature": "(parent, usuario=None, rol=None, callbacks=None)"
+      }
+    ],
+    "api_functions": [
+      "get_comercial_board_api"
+    ]
+  },
+  {
+    "file": "Modulos\\Comercial\\comercial_ports_analytics_ui.py",
+    "area": "Comercial",
+    "errors": [],
+    "classes": [
+      {
+        "name": "ComercialPortsAnalyticsUI",
+        "signature": "(parent, usuario=None, rol=None, on_back=None)"
+      }
+    ],
+    "api_functions": [
+      "get_comercial_ports_analytics_api",
+      "get_comercial_ports_kpis_api",
+      "get_comercial_ports_filters_api"
+    ]
+  },
+  {
+    "file": "Modulos\\Comercial\\comercial_precios_ui.py",
+    "area": "Comercial",
+    "errors": [],
+    "classes": [
+      {
+        "name": "ComercialPreciosUI",
+        "signature": "(parent, usuario=None, rol=None, on_back=None)"
+      }
+    ],
+    "api_functions": [
+      "get_comercial_precios_meta_api",
+      "get_comercial_precios_api",
+      "post_comercial_precio_api",
+      "put_comercial_precio_api",
+      "delete_comercial_precio_api"
+    ]
+  },
+  {
+    "file": "Modulos\\Comercial\\comercial_servicios_analytics_ui.py",
+    "area": "Comercial",
+    "errors": [],
+    "classes": [
+      {
+        "name": "ComercialServiciosAnalyticsUI",
+        "signature": "(parent, usuario=None, rol=None, on_back=None)"
+      }
+    ],
+    "api_functions": [
+      "get_comercial_servicios_by_servicio_api",
+      "get_comercial_servicios_kpis_api",
+      "get_comercial_servicios_no_ofrecidos_api",
+      "get_comercial_costos_surveyor_pareto_api"
+    ]
+  },
+  {
+    "file": "Modulos\\Comercial\\date_utils.py",
+    "area": "Comercial",
+    "errors": [],
+    "classes": [],
+    "api_functions": []
+  },
+  {
+    "file": "Modulos\\Comercial\\exporters\\cotizacion_pdf_exporter.py",
+    "area": "Comercial",
+    "errors": [],
+    "classes": [],
+    "api_functions": []
+  },
+  {
+    "file": "Modulos\\Comercial\\exporters\\cotizacion_word_exporter.py",
+    "area": "Comercial",
+    "errors": [],
+    "classes": [],
+    "api_functions": []
+  },
+  {
+    "file": "Modulos\\Comercial\\popup\\popup_agregar_precio.py",
+    "area": "Comercial",
+    "errors": [],
+    "classes": [
+      {
+        "name": "PopupAgregarPrecio",
+        "signature": "(parent, on_success=None)"
+      }
+    ],
+    "api_functions": [
+      "get_comercial_precios_meta_api",
+      "post_comercial_precio_api"
+    ]
+  },
+  {
+    "file": "Modulos\\Comercial\\popup\\popup_cliente_detalle.py",
+    "area": "Comercial",
+    "errors": [],
+    "classes": [
+      {
+        "name": "PopupClienteDetalle",
+        "signature": "(parent, cliente_id=None, codigo=None, nombre=None)"
+      }
+    ],
+    "api_functions": [
+      "get_comercial_clientes_api"
+    ]
+  },
+  {
+    "file": "Modulos\\Comercial\\popup\\popup_costos_surveyor.py",
+    "area": "Comercial",
+    "errors": [],
+    "classes": [
+      {
+        "name": "PopupCostosSurveyor",
+        "signature": "(parent, data, filters=None)"
+      }
+    ],
+    "api_functions": []
+  },
+  {
+    "file": "Modulos\\Comercial\\popup\\popup_editar_precio.py",
+    "area": "Comercial",
+    "errors": [],
+    "classes": [
+      {
+        "name": "PopupEditarPrecio",
+        "signature": "(parent, precio_data: dict, on_success=None)"
+      }
+    ],
+    "api_functions": [
+      "get_comercial_precios_meta_api",
+      "put_comercial_precio_api"
+    ]
+  },
+  {
+    "file": "Modulos\\Comercial\\popup\\popup_nueva_cotizacion.py",
+    "area": "Comercial",
+    "errors": [],
+    "classes": [
+      {
+        "name": "PopupNuevaCotizacion",
+        "signature": "(parent, on_success=None, on_preview=None)"
+      }
+    ],
+    "api_functions": [
+      "get_comercial_precios_api",
+      "post_comercial_cotizacion_api",
+      "get_comercial_next_quotation_number_api"
+    ]
+  },
+  {
+    "file": "Modulos\\Comercial\\popup\\popup_ports_coverage.py",
+    "area": "Comercial",
+    "errors": [],
+    "classes": [
+      {
+        "name": "PopupPortsCoverage",
+        "signature": "(parent, year_from=None, year_to=None, cliente=None)"
+      }
+    ],
+    "api_functions": [
+      "get_comercial_ports_coverage_api"
+    ]
+  },
+  {
+    "file": "Modulos\\Comercial\\popup\\popup_servicios_no_ofrecidos.py",
+    "area": "Comercial",
+    "errors": [],
+    "classes": [
+      {
+        "name": "PopupServiciosNoOfrecidos",
+        "signature": "(parent, data=None, filters=None)"
+      }
+    ],
+    "api_functions": [
+      "get_comercial_servicios_no_ofrecidos_api"
+    ]
+  },
+  {
+    "file": "Modulos\\Servicios\\date_utils.py",
+    "area": "Servicios",
+    "errors": [],
+    "classes": [],
+    "api_functions": []
+  },
+  {
+    "file": "Modulos\\Servicios\\popup_servicio.py",
+    "area": "Servicios",
+    "errors": [],
+    "classes": [
+      {
+        "name": "PopupServicio",
+        "signature": "(parent, on_success)"
+      }
+    ],
+    "api_functions": [
+      "post_servicio",
+      "check_order_to_cash_credit_api",
+      "get_clientes_api",
+      "get_continentes_cpp_api",
+      "get_paises_cpp_api",
+      "get_puertos_cpp_api",
+      "get_surveyores_full_api",
+      "get_surveyores_display_api",
+      "get_serviciosmd_api"
+    ]
+  },
+  {
+    "file": "Modulos\\Servicios\\Popup_servicios\\__init__.py",
+    "area": "Servicios",
+    "errors": [],
+    "classes": [],
+    "api_functions": []
+  },
+  {
+    "file": "Modulos\\Servicios\\Popup_servicios\\popup_cancelar_servicio.py",
+    "area": "Servicios",
+    "errors": [],
+    "classes": [
+      {
+        "name": "PopupCancelarServicio",
+        "signature": "(parent, consec, on_success)"
+      }
+    ],
+    "api_functions": [
+      "cancelar_servicio_api"
+    ]
+  },
+  {
+    "file": "Modulos\\Servicios\\Popup_servicios\\popup_demoras.py",
+    "area": "Servicios",
+    "errors": [],
+    "classes": [
+      {
+        "name": "LineaDemora",
+        "signature": "(parent, remove_callback)"
+      },
+      {
+        "name": "PopupDemoras",
+        "signature": "(parent, consec, on_success)"
+      }
+    ],
+    "api_functions": [
+      "actualizar_demoras_api"
+    ]
+  },
+  {
+    "file": "Modulos\\Servicios\\Popup_servicios\\popup_editar_servicio.py",
+    "area": "Servicios",
+    "errors": [],
+    "classes": [
+      {
+        "name": "PopupEditarServicio",
+        "signature": "(parent, consec, on_success)"
+      }
+    ],
+    "api_functions": [
+      "get_servicio_api",
+      "editar_servicio_api",
+      "get_servicio_surveyors_api",
+      "get_clientes_api",
+      "get_continentes_cpp_api",
+      "get_paises_cpp_api",
+      "get_puertos_cpp_api",
+      "get_serviciosmd_api",
+      "get_filtros_servicios_api",
+      "get_puertos_all_api"
+    ]
+  },
+  {
+    "file": "Modulos\\Servicios\\Popup_servicios\\popup_finalizar_servicio.py",
+    "area": "Servicios",
+    "errors": [],
+    "classes": [
+      {
+        "name": "PopupFinalizarServicio",
+        "signature": "(parent, consec, on_success=None)"
+      }
+    ],
+    "api_functions": [
+      "get_servicio_api",
+      "cerrar_operacion_api",
+      "finalizar_servicio_api"
+    ]
+  },
+  {
+    "file": "Modulos\\Servicios\\Popup_servicios\\popup_generar_consecutivo.py",
+    "area": "Servicios",
+    "errors": [],
+    "classes": [
+      {
+        "name": "PopupGenerarConsecutivo",
+        "signature": "(parent, consec, valores, callback)"
+      }
+    ],
+    "api_functions": [
+      "confirmar_servicio_api",
+      "get_servicio_api"
+    ]
+  },
+  {
+    "file": "Modulos\\Servicios\\Popup_servicios\\popup_surveyors_servicio.py",
+    "area": "Servicios",
+    "errors": [],
+    "classes": [
+      {
+        "name": "PopupSurveyorsServicio",
+        "signature": "(parent, consec, modo='view', on_saved=None)"
+      }
+    ],
+    "api_functions": [
+      "get_servicio_surveyors_api",
+      "save_servicio_surveyors_api",
+      "get_surveyors_catalog_api"
+    ]
+  },
+  {
+    "file": "Modulos\\Servicios\\Popup_servicios\\popup_ver_servicio.py",
+    "area": "Servicios",
+    "errors": [],
+    "classes": [
+      {
+        "name": "PopupVerServicio",
+        "signature": "(parent, data)"
+      }
+    ],
+    "api_functions": []
+  },
+  {
+    "file": "Modulos\\Servicios\\Popup_servicios\\popup_vista_informe.py",
+    "area": "Servicios",
+    "errors": [],
+    "classes": [
+      {
+        "name": "PopupVistaInforme",
+        "signature": "(parent, consec)"
+      }
+    ],
+    "api_functions": [
+      "get_servicio_api",
+      "finalizar_servicio_api"
+    ]
+  },
+  {
+    "file": "Modulos\\Servicios\\tabla_servicios.py",
+    "area": "Servicios",
+    "errors": [],
+    "classes": [
+      {
+        "name": "TablaServiciosUI",
+        "signature": "(parent, on_back=None)"
+      }
+    ],
+    "api_functions": [
+      "BASE_URL",
+      "api_request"
+    ]
+  },
+  {
+    "file": "Modulos\\Servicios\\ui_servicios.py",
+    "area": "Servicios",
+    "errors": [],
+    "classes": [
+      {
+        "name": "ServiciosUI",
+        "signature": "(parent)"
+      }
+    ],
+    "api_functions": [
+      "get_clientes_api",
+      "get_serviciosmd_api",
+      "get_filtros_servicios_api"
+    ]
+  },
+  {
+    "file": "Modulos\\Servicios\\vista_servicios.py",
+    "area": "Servicios",
+    "errors": [],
+    "classes": [
+      {
+        "name": "VistaServicios",
+        "signature": "(parent, filtros, on_back)"
+      }
+    ],
+    "api_functions": [
+      "BASE_URL",
+      "api_request",
+      "get_dashboard_servicios_api",
+      "delete_servicio"
+    ]
+  },
+  {
+    "file": "Modulos\\Servicios\\widgets\\__init__.py",
+    "area": "Servicios",
+    "errors": [],
+    "classes": [],
+    "api_functions": []
+  },
+  {
+    "file": "Modulos\\Servicios\\widgets\\date_picker.py",
+    "area": "Servicios",
+    "errors": [],
+    "classes": [
+      {
+        "name": "DatePicker",
+        "signature": "(parent, entry_widget, output_format='%Y-%m-%d', on_select=None)"
+      }
+    ],
+    "api_functions": []
+  },
+  {
+    "file": "Modulos\\Servicios\\widgets\\time_picker.py",
+    "area": "Servicios",
+    "errors": [],
+    "classes": [
+      {
+        "name": "TimePicker",
+        "signature": "(parent, entry_widget)"
+      }
+    ],
+    "api_functions": []
+  },
+  {
+    "file": "Modulos\\HHRR\\__init__.py",
+    "area": "HHRR",
+    "errors": [],
+    "classes": [],
+    "api_functions": []
+  },
+  {
+    "file": "Modulos\\HHRR\\date_utils.py",
+    "area": "HHRR",
+    "errors": [],
+    "classes": [],
+    "api_functions": []
+  },
+  {
+    "file": "Modulos\\HHRR\\home_ui.py",
+    "area": "HHRR",
+    "errors": [],
+    "classes": [
+      {
+        "name": "HHRRHomeUI",
+        "signature": "(parent, usuario, rol, callbacks)"
+      }
+    ],
+    "api_functions": [
+      "hr_obtener_ultima_noticia",
+      "hr_publicar_noticias"
+    ]
+  },
+  {
+    "file": "Modulos\\HHRR\\popups\\__init__.py",
+    "area": "HHRR",
+    "errors": [],
+    "classes": [],
+    "api_functions": []
+  },
+  {
+    "file": "Modulos\\HHRR\\popups\\popup_aprobacion.py",
+    "area": "HHRR",
+    "errors": [],
+    "classes": [
+      {
+        "name": "PopupAprobacion",
+        "signature": "(parent, evento: dict, usuario_actual: str, on_success=None)"
+      }
+    ],
+    "api_functions": [
+      "actualizar_estado_evento_hr"
+    ]
+  },
+  {
+    "file": "Modulos\\HHRR\\popups\\popup_aprobacion_solicitudes.py",
+    "area": "HHRR",
+    "errors": [],
+    "classes": [
+      {
+        "name": "PopupAprobacion",
+        "signature": "(parent, row_id, on_approve=None, on_reject=None)"
+      }
+    ],
+    "api_functions": [
+      "aprobar_evento_hr",
+      "rechazar_evento_hr"
+    ]
+  },
+  {
+    "file": "Modulos\\HHRR\\popups\\popup_colilla_pago.py",
+    "area": "HHRR",
+    "errors": [],
+    "classes": [
+      {
+        "name": "PopupColillaPago",
+        "signature": "(parent, empleado_row: dict)"
+      }
+    ],
+    "api_functions": [
+      "hr_calculate_payroll",
+      "hr_post_payroll"
+    ]
+  },
+  {
+    "file": "Modulos\\HHRR\\popups\\popup_empleado.py",
+    "area": "HHRR",
+    "errors": [],
+    "classes": [
+      {
+        "name": "PopupEmpleado",
+        "signature": "(parent, modo: str = 'nuevo', empleado: dict | None = None, codigo_generado: str | None = None, on_save=None)"
+      }
+    ],
+    "api_functions": []
+  },
+  {
+    "file": "Modulos\\HHRR\\popups\\popup_lector_politica.py",
+    "area": "HHRR",
+    "errors": [],
+    "classes": [
+      {
+        "name": "PopupLectorPolitica",
+        "signature": "(parent, titulo: str, categoria: str, articulo_ref: str, contenido: str)"
+      }
+    ],
+    "api_functions": []
+  },
+  {
+    "file": "Modulos\\HHRR\\popups\\popup_liquidacion.py",
+    "area": "HHRR",
+    "errors": [],
+    "classes": [
+      {
+        "name": "PopupLiquidacion",
+        "signature": "(parent, empleado_id=None, usuario=None)"
+      }
+    ],
+    "api_functions": [
+      "crear_evento_hr",
+      "hr_listar_empleados"
+    ]
+  },
+  {
+    "file": "Modulos\\HHRR\\popups\\popup_noticias.py",
+    "area": "HHRR",
+    "errors": [],
+    "classes": [
+      {
+        "name": "PopupNoticias",
+        "signature": "(parent, on_save)"
+      }
+    ],
+    "api_functions": []
+  },
+  {
+    "file": "Modulos\\HHRR\\popups\\popup_ot_detalle_admin.py",
+    "area": "HHRR",
+    "errors": [],
+    "classes": [
+      {
+        "name": "PopupDetalleOTAdmin",
+        "signature": "(parent, data: dict, on_success=None)"
+      }
+    ],
+    "api_functions": [
+      "hr_update_ot_status"
+    ]
+  },
+  {
+    "file": "Modulos\\HHRR\\popups\\popup_ot_log.py",
+    "area": "HHRR",
+    "errors": [],
+    "classes": [
+      {
+        "name": "PopupRegistroHoras",
+        "signature": "(parent, usuario, on_success=None)"
+      }
+    ],
+    "api_functions": [
+      "crear_ot_log"
+    ]
+  },
+  {
+    "file": "Modulos\\HHRR\\popups\\popup_politica_crud.py",
+    "area": "HHRR",
+    "errors": [],
+    "classes": [
+      {
+        "name": "PopupPoliticaCRUD",
+        "signature": "(parent, modo='crear', data=None, on_success=None)"
+      }
+    ],
+    "api_functions": [
+      "crear_politica_hr",
+      "actualizar_politica_hr"
+    ]
+  },
+  {
+    "file": "Modulos\\HHRR\\popups\\popup_registro_horas.py",
+    "area": "HHRR",
+    "errors": [],
+    "classes": [
+      {
+        "name": "PopupRegistroHoras",
+        "signature": "(parent, on_success=None, data=None, duplicate=False)"
+      }
+    ],
+    "api_functions": [
+      "crear_ot_log",
+      "hr_update_ot_log"
+    ]
+  },
+  {
+    "file": "Modulos\\HHRR\\popups\\popup_solicitud.py",
+    "area": "HHRR",
+    "errors": [],
+    "classes": [
+      {
+        "name": "PopupSolicitud",
+        "signature": "(parent, usuario, rol, on_success)"
+      }
+    ],
+    "api_functions": [
+      "crear_evento_hr",
+      "obtener_vacaciones_disponibles"
+    ]
+  },
+  {
+    "file": "Modulos\\HHRR\\popups\\popup_solicitudes.py",
+    "area": "HHRR",
+    "errors": [],
+    "classes": [
+      {
+        "name": "PopupSolicitudesHHRR",
+        "signature": "(parent, empleado_id, usuario, rol, on_success=None)"
+      }
+    ],
+    "api_functions": [
+      "crear_evento_hr"
+    ]
+  },
+  {
+    "file": "Modulos\\HHRR\\reports\\payroll_pdf.py",
+    "area": "HHRR",
+    "errors": [],
+    "classes": [],
+    "api_functions": []
+  },
+  {
+    "file": "Modulos\\HHRR\\ui_hhrre.py",
+    "area": "HHRR",
+    "errors": [],
+    "classes": [
+      {
+        "name": "HHRRUI",
+        "signature": "(parent, usuario, rol, empleado_id=None, on_back=None)"
+      }
+    ],
+    "api_functions": [
+      "hr_publicar_noticias"
+    ]
+  },
+  {
+    "file": "Modulos\\HHRR\\ui_lazy_table.py",
+    "area": "HHRR",
+    "errors": [],
+    "classes": [
+      {
+        "name": "TablaLazy",
+        "signature": "(parent, columnas, ancho_columnas=None, alto=15)"
+      }
+    ],
+    "api_functions": []
+  },
+  {
+    "file": "Modulos\\HHRR\\views\\__init__.py",
+    "area": "HHRR",
+    "errors": [],
+    "classes": [],
+    "api_functions": []
+  },
+  {
+    "file": "Modulos\\HHRR\\views\\ui_payslips.py",
+    "area": "HHRR",
+    "errors": [],
+    "classes": [
+      {
+        "name": "VistaColillasEmployee",
+        "signature": "(parent, empleado_id=None, rol=None)"
+      }
+    ],
+    "api_functions": [
+      "get_payslips_api",
+      "hr_download_payslip_pdf",
+      "hr_update_payroll_run"
+    ]
+  },
+  {
+    "file": "Modulos\\HHRR\\views\\ui_policies.py",
+    "area": "HHRR",
+    "errors": [],
+    "classes": [
+      {
+        "name": "VistaPoliticasHHRR",
+        "signature": "(parent)"
+      }
+    ],
+    "api_functions": [
+      "listar_politicas_hr",
+      "eliminar_politica_hr"
+    ]
+  },
+  {
+    "file": "Modulos\\HHRR\\views\\view_admin.py",
+    "area": "HHRR",
+    "errors": [],
+    "classes": [
+      {
+        "name": "VistaAdminHHRR",
+        "signature": "(parent, rol_usuario, usuario_actual)"
+      }
+    ],
+    "api_functions": [
+      "listar_eventos_hr"
+    ]
+  },
+  {
+    "file": "Modulos\\HHRR\\views\\view_employee.py",
+    "area": "HHRR",
+    "errors": [],
+    "classes": [
+      {
+        "name": "VistaEmployee",
+        "signature": "(parent, usuario, empleado_id)"
+      }
+    ],
+    "api_functions": [
+      "listar_ot_logs",
+      "listar_eventos_hr"
+    ]
+  },
+  {
+    "file": "Modulos\\HHRR\\views\\view_employee_colillas.py",
+    "area": "HHRR",
+    "errors": [],
+    "classes": [
+      {
+        "name": "VistaColillasEmployee",
+        "signature": "(parent, empleado_id=None, rol=None)"
+      }
+    ],
+    "api_functions": [
+      "listar_eventos_hr",
+      "hr_download_payslip_pdf"
+    ]
+  },
+  {
+    "file": "Modulos\\HHRR\\views\\view_medical_network.py",
+    "area": "HHRR",
+    "errors": [],
+    "classes": [
+      {
+        "name": "VistaRedMedicaHHRR",
+        "signature": "(parent, usuario=None, rol=None)"
+      }
+    ],
+    "api_functions": [
+      "hr_medical_network_filters_api",
+      "hr_medical_network_search_api"
+    ]
+  },
+  {
+    "file": "Modulos\\HHRR\\views\\view_payroll_admin.py",
+    "area": "HHRR",
+    "errors": [],
+    "classes": [
+      {
+        "name": "VistaPayrollAdmin",
+        "signature": "(parent, usuario, rol)"
+      }
+    ],
+    "api_functions": [
+      "hr_list_payroll_employees"
+    ]
+  },
+  {
+    "file": "Modulos\\HHRR\\views\\view_registro_horas.py",
+    "area": "HHRR",
+    "errors": [],
+    "classes": [
+      {
+        "name": "VistaRegistroHoras",
+        "signature": "(parent, usuario, rol, on_back)"
+      }
+    ],
+    "api_functions": [
+      "hr_get_my_summary",
+      "hr_list_ot_logs",
+      "hr_delete_ot_log"
+    ]
+  },
+  {
+    "file": "Modulos\\HHRR\\views\\view_registro_horas_admin.py",
+    "area": "HHRR",
+    "errors": [],
+    "classes": [
+      {
+        "name": "VistaRegistroHorasAdmin",
+        "signature": "(parent, usuario, rol, on_back)"
+      }
+    ],
+    "api_functions": [
+      "hr_get_hours_summary",
+      "hr_list_ot_logs",
+      "hr_delete_ot_log",
+      "hr_update_ot_status"
+    ]
+  },
+  {
+    "file": "Modulos\\HHRR\\views\\view_salary_calculator.py",
+    "area": "HHRR",
+    "errors": [],
+    "classes": [
+      {
+        "name": "VistaCalculadoraSalarial",
+        "signature": "(parent, usuario=None, rol=None)"
+      }
+    ],
+    "api_functions": [
+      "hr_salary_calculator_calculate_api",
+      "hr_salary_calculator_compare_api",
+      "hr_salary_calculator_history_api",
+      "hr_salary_calculator_rules_api"
+    ]
+  },
+  {
+    "file": "Modulos\\HHRR\\views\\vista_empleados.py",
+    "area": "HHRR",
+    "errors": [],
+    "classes": [
+      {
+        "name": "VistaEmpleadosHHRR",
+        "signature": "(parent, rol_usuario)"
+      }
+    ],
+    "api_functions": [
+      "hr_listar_empleados",
+      "hr_crear_empleado",
+      "hr_actualizar_empleado"
+    ]
+  },
+  {
+    "file": "Modulos\\HHRR\\views\\vista_solicitudes.py",
+    "area": "HHRR",
+    "errors": [],
+    "classes": [
+      {
+        "name": "VistaSolicitudesHHRR",
+        "signature": "(parent, usuario, rol_usuario: str, on_back=None, can_create: bool | None = None, **kwargs)"
+      }
+    ],
+    "api_functions": [
+      "listar_eventos_hr",
+      "aprobar_evento_hr",
+      "rechazar_evento_hr"
+    ]
+  },
+  {
+    "file": "Modulos\\HHRR\\widgets\\__init__.py",
+    "area": "HHRR",
+    "errors": [],
+    "classes": [],
+    "api_functions": []
+  },
+  {
+    "file": "Modulos\\HHRR\\widgets\\badge.py",
+    "area": "HHRR",
+    "errors": [],
+    "classes": [
+      {
+        "name": "Badge",
+        "signature": "(parent, texto='', bg='#d32f2f', fg='white')"
+      }
+    ],
+    "api_functions": []
+  }
+]

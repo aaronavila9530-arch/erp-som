@@ -28,7 +28,8 @@ class PopupFinalizarServicio(tk.Toplevel):
         self.grab_set()
 
         self._cargar_datos()
-        self._build_ui()
+        if self.winfo_exists():
+            self._build_ui()
 
     # ============================================================
     # DATA

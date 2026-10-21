@@ -1,0 +1,32 @@
+[
+  {
+    "function": "get_lashing_certificates_api",
+    "method": "GET",
+    "path": "/lashing-certificates",
+    "params": {}
+  },
+  {
+    "function": "get_serviciosmd_api",
+    "method": "GET",
+    "path": "/servicios_md",
+    "params": {}
+  },
+  {
+    "function": "get_surveyores_display_api",
+    "method": "GET",
+    "path": "/surveyores",
+    "params": {}
+  },
+  {
+    "function": "get_surveyores_full_api",
+    "method": "GET",
+    "path": "/surveyores",
+    "params": {}
+  },
+  {
+    "function": "get_surveyors_catalog_api",
+    "method": "GET",
+    "path": "/surveyores",
+    "params": {}
+  }
+]

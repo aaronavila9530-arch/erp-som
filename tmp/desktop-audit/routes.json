@@ -1,0 +1,1123 @@
+[
+  {
+    "function": "actualizar_demoras_api",
+    "method": "PUT",
+    "path": "/servicios/demoras/1",
+    "params": {}
+  },
+  {
+    "function": "actualizar_estado_evento_hr",
+    "method": "POST",
+    "path": "/hr/events/1/status",
+    "params": {}
+  },
+  {
+    "function": "actualizar_politica_hr",
+    "method": "PUT",
+    "path": "/hr/policies/1",
+    "params": {}
+  },
+  {
+    "function": "approve_crane_inspection_api",
+    "method": "PUT",
+    "path": "/vessel-crane-inspection/1",
+    "params": {}
+  },
+  {
+    "function": "approve_vessel_grain_sampling_api",
+    "method": "PUT",
+    "path": "/vessel-grain-sampling/1/approve",
+    "params": {}
+  },
+  {
+    "function": "approve_vessel_truck_supervision_api",
+    "method": "POST",
+    "path": "/vessel-truck-supervision/1/approve",
+    "params": {}
+  },
+  {
+    "function": "aprobar_evento_hr",
+    "method": "PATCH",
+    "path": "/hr/events/1/approve",
+    "params": {}
+  },
+  {
+    "function": "cancelar_servicio_api",
+    "method": "PUT",
+    "path": "/servicios/cancelar/1",
+    "params": {}
+  },
+  {
+    "function": "cerrar_operacion_api",
+    "method": "PUT",
+    "path": "/servicios/cerrar/1",
+    "params": {}
+  },
+  {
+    "function": "check_order_to_cash_credit_api",
+    "method": "POST",
+    "path": "/cliente-credito/order-to-cash/check",
+    "params": {}
+  },
+  {
+    "function": "confirmar_servicio_api",
+    "method": "PUT",
+    "path": "/servicios/confirmar/1",
+    "params": {}
+  },
+  {
+    "function": "crear_ot_log",
+    "method": "POST",
+    "path": "/hr/ot-log/",
+    "params": {}
+  },
+  {
+    "function": "crear_politica_hr",
+    "method": "POST",
+    "path": "/hr/policies",
+    "params": {}
+  },
+  {
+    "function": "create_container_report_api",
+    "method": "POST",
+    "path": "/container-reports",
+    "params": {}
+  },
+  {
+    "function": "create_draft_survey_api",
+    "method": "POST",
+    "path": "/draft-survey/",
+    "params": {}
+  },
+  {
+    "function": "create_draft_survey_ballast_api",
+    "method": "POST",
+    "path": "/draft-survey-extra/ballast/1",
+    "params": {}
+  },
+  {
+    "function": "create_draft_survey_word_api",
+    "method": "POST",
+    "path": "/draft-survey-extra/word/1",
+    "params": {}
+  },
+  {
+    "function": "create_vessel_bunker_report_api",
+    "method": "POST",
+    "path": "/vessel-bunker-reports/",
+    "params": {}
+  },
+  {
+    "function": "create_vessel_condition_survey_api",
+    "method": "POST",
+    "path": "/vessel-condition-surveys",
+    "params": {}
+  },
+  {
+    "function": "create_vessel_holds_certificate_api",
+    "method": "POST",
+    "path": "/vessel-holds-inspection-certificates",
+    "params": {}
+  },
+  {
+    "function": "create_vessel_truck_supervision_api",
+    "method": "POST",
+    "path": "/vessel-truck-supervision/",
+    "params": {}
+  },
+  {
+    "function": "create_weight_certificate_api",
+    "method": "POST",
+    "path": "/weight-certificates",
+    "params": {}
+  },
+  {
+    "function": "delete_comercial_cotizacion_api",
+    "method": "DELETE",
+    "path": "/comercial/cotizaciones/1",
+    "params": {}
+  },
+  {
+    "function": "delete_comercial_precio_api",
+    "method": "DELETE",
+    "path": "/comercial/precios/1",
+    "params": {}
+  },
+  {
+    "function": "delete_proyecto_calculo_api",
+    "method": "DELETE",
+    "path": "/proyectos-calculo/1",
+    "params": {}
+  },
+  {
+    "function": "delete_servicio",
+    "method": "DELETE",
+    "path": "/servicios/1",
+    "params": {}
+  },
+  {
+    "function": "download_vessel_condition_survey_word",
+    "method": "GET",
+    "path": "/vessel-condition-surveys/word/1",
+    "params": {}
+  },
+  {
+    "function": "editar_servicio_api",
+    "method": "PUT",
+    "path": "/servicios/editar/1",
+    "params": {}
+  },
+  {
+    "function": "eliminar_politica_hr",
+    "method": "DELETE",
+    "path": "/hr/policies/1",
+    "params": {}
+  },
+  {
+    "function": "filter_servicios_draft_api",
+    "method": "GET",
+    "path": "/draft-survey/servicios/filter",
+    "params": {}
+  },
+  {
+    "function": "filter_servicios_vessel_truck_api",
+    "method": "GET",
+    "path": "/vessel-truck-supervision/servicios-filter",
+    "params": {}
+  },
+  {
+    "function": "finalizar_servicio_api",
+    "method": "PUT",
+    "path": "/servicios/generar_informe/1",
+    "params": {}
+  },
+  {
+    "function": "generate_container_presentation_pdf_api",
+    "method": "GET",
+    "path": "/container-presentation-pdf/1/presentation",
+    "params": {}
+  },
+  {
+    "function": "generate_container_report_pdf_api",
+    "method": "POST",
+    "path": "/container-reports/1/generate-pdf",
+    "params": {}
+  },
+  {
+    "function": "generate_container_unified_pdf_api",
+    "method": "GET",
+    "path": "/container-presentation-pdf/1/unified",
+    "params": {}
+  },
+  {
+    "function": "generate_crane_inspection_word_api",
+    "method": "GET",
+    "path": "/vessel-crane-inspection-reports/1/generate-word",
+    "params": {}
+  },
+  {
+    "function": "generate_draft_survey_excel_pdf_api",
+    "method": "GET",
+    "path": "/draft-survey-excel/generate-pdf/1",
+    "params": {}
+  },
+  {
+    "function": "generate_draft_survey_final_pdf_api",
+    "method": "GET",
+    "path": "/draft-survey-final/generate/1",
+    "params": {}
+  },
+  {
+    "function": "generate_draft_survey_presentation_pdf_api",
+    "method": "GET",
+    "path": "/draft-survey-word/presentation/1",
+    "params": {}
+  },
+  {
+    "function": "generate_draft_survey_unified_pdf_api",
+    "method": "GET",
+    "path": "/draft-survey-final/unified/1",
+    "params": {}
+  },
+  {
+    "function": "generate_draft_survey_word_pdf_api",
+    "method": "GET",
+    "path": "/draft-survey-word/generate/1",
+    "params": {}
+  },
+  {
+    "function": "generate_grain_sampling_word_api",
+    "method": "POST",
+    "path": "/vessel-grain-sampling/1/generate-word",
+    "params": {}
+  },
+  {
+    "function": "generate_holds_excel_api",
+    "method": "GET",
+    "path": "/vessel-holds-inspection-certificates/1/excel",
+    "params": {}
+  },
+  {
+    "function": "generate_lashing_certificate_pdf_api",
+    "method": "GET",
+    "path": "/lashing-certificates/1/pdf",
+    "params": {}
+  },
+  {
+    "function": "generate_lashing_certificate_word_api",
+    "method": "GET",
+    "path": "/lashing-certificates/1/word",
+    "params": {}
+  },
+  {
+    "function": "generate_port_captancy_word_api",
+    "method": "GET",
+    "path": "/port-captancy-reports/1/word",
+    "params": {}
+  },
+  {
+    "function": "generate_sampling_excel_api",
+    "method": "GET",
+    "path": "/sampling-certificates/1/excel",
+    "params": {}
+  },
+  {
+    "function": "generate_sampling_pdf_api",
+    "method": "GET",
+    "path": "/sampling-certificates/1/pdf",
+    "params": {}
+  },
+  {
+    "function": "generate_sealing_excel_api",
+    "method": "GET",
+    "path": "/sealing-certificates/1/excel",
+    "params": {}
+  },
+  {
+    "function": "generate_sealing_pdf_api",
+    "method": "GET",
+    "path": "/sealing-certificates/1/pdf",
+    "params": {}
+  },
+  {
+    "function": "generate_truck_presentation_pdf_api",
+    "method": "GET",
+    "path": "/vessel-truck-supervision/1/presentation",
+    "params": {}
+  },
+  {
+    "function": "generate_truck_unified_pdf_api",
+    "method": "GET",
+    "path": "/vessel-truck-supervision/1/unified",
+    "params": {}
+  },
+  {
+    "function": "generate_vessel_bunker_excel_api",
+    "method": "GET",
+    "path": "/vessel-bunker-excel/generate/1",
+    "params": {}
+  },
+  {
+    "function": "generate_vessel_bunker_pdf_api",
+    "method": "GET",
+    "path": "/vessel-bunker-excel/generate-pdf/1",
+    "params": {}
+  },
+  {
+    "function": "generate_vessel_cargo_condition_word_api",
+    "method": "GET",
+    "path": "/vessel-cargo-condition-surveys/word/1",
+    "params": {}
+  },
+  {
+    "function": "generate_vessel_holds_pdf_api",
+    "method": "GET",
+    "path": "/vessel-holds-inspection-certificates/1/pdf",
+    "params": {}
+  },
+  {
+    "function": "generate_vessel_presentation_pdf_api",
+    "method": "POST",
+    "path": "/vessel-grain-sampling/1/presentation-pdf",
+    "params": {}
+  },
+  {
+    "function": "generate_vessel_unified_pdf_api",
+    "method": "POST",
+    "path": "/vessel-grain-sampling/1/unified-pdf",
+    "params": {}
+  },
+  {
+    "function": "generate_weight_certificate_pdf_api",
+    "method": "GET",
+    "path": "/weight-certificates/1/pdf",
+    "params": {}
+  },
+  {
+    "function": "generate_weight_certificate_word_api",
+    "method": "GET",
+    "path": "/weight-certificates/1/word",
+    "params": {}
+  },
+  {
+    "function": "get_all_port_captancy_reports_api",
+    "method": "GET",
+    "path": "/port-captancy-reports",
+    "params": {}
+  },
+  {
+    "function": "get_all_vessel_bunker_reports_api",
+    "method": "GET",
+    "path": "/vessel-bunker-reports/",
+    "params": {
+      "limit": 200,
+      "offset": 0
+    }
+  },
+  {
+    "function": "get_all_vessel_cargo_condition_api",
+    "method": "GET",
+    "path": "/vessel-cargo-condition-surveys/",
+    "params": {}
+  },
+  {
+    "function": "get_all_vessel_condition_surveys_api",
+    "method": "GET",
+    "path": "/vessel-condition-surveys",
+    "params": {}
+  },
+  {
+    "function": "get_clientes_api",
+    "method": "GET",
+    "path": "/clientes",
+    "params": {}
+  },
+  {
+    "function": "get_comercial_board_api",
+    "method": "GET",
+    "path": "/comercial/board",
+    "params": {}
+  },
+  {
+    "function": "get_comercial_client_view_api",
+    "method": "GET",
+    "path": "/comercial/client-view",
+    "params": {}
+  },
+  {
+    "function": "get_comercial_clientes_api",
+    "method": "GET",
+    "path": "/comercial/clientes",
+    "params": {}
+  },
+  {
+    "function": "get_comercial_costos_surveyor_pareto_api",
+    "method": "GET",
+    "path": "/comercial/analytics/servicios/costos-surveyor-pareto",
+    "params": {}
+  },
+  {
+    "function": "get_comercial_cotizacion_api",
+    "method": "GET",
+    "path": "/comercial/cotizaciones/1/detail",
+    "params": {}
+  },
+  {
+    "function": "get_comercial_cotizaciones_api",
+    "method": "GET",
+    "path": "/comercial/cotizaciones",
+    "params": {}
+  },
+  {
+    "function": "get_comercial_cotizaciones_kpis_api",
+    "method": "GET",
+    "path": "/comercial/cotizaciones/kpis",
+    "params": {}
+  },
+  {
+    "function": "get_comercial_next_quotation_number_api",
+    "method": "GET",
+    "path": "/comercial/cotizaciones/next-quotation-number",
+    "params": {}
+  },
+  {
+    "function": "get_comercial_ports_analytics_api",
+    "method": "GET",
+    "path": "/comercial/analytics/puertos",
+    "params": {}
+  },
+  {
+    "function": "get_comercial_ports_coverage_api",
+    "method": "GET",
+    "path": "/comercial/ports-coverage",
+    "params": {
+      "min_ops": 3
+    }
+  },
+  {
+    "function": "get_comercial_ports_filters_api",
+    "method": "GET",
+    "path": "/comercial/analytics/puertos/filtros",
+    "params": {}
+  },
+  {
+    "function": "get_comercial_ports_kpis_api",
+    "method": "GET",
+    "path": "/comercial/analytics/puertos/kpis",
+    "params": {}
+  },
+  {
+    "function": "get_comercial_precios_api",
+    "method": "GET",
+    "path": "/comercial/precios",
+    "params": {}
+  },
+  {
+    "function": "get_comercial_precios_meta_api",
+    "method": "GET",
+    "path": "/comercial/precios/meta",
+    "params": {}
+  },
+  {
+    "function": "get_comercial_servicios_by_servicio_api",
+    "method": "GET",
+    "path": "/comercial/analytics/servicios/by-servicio",
+    "params": {}
+  },
+  {
+    "function": "get_comercial_servicios_kpis_api",
+    "method": "GET",
+    "path": "/comercial/analytics/servicios/kpis",
+    "params": {}
+  },
+  {
+    "function": "get_comercial_servicios_no_ofrecidos_api",
+    "method": "GET",
+    "path": "/comercial/analytics/servicios/not-offered",
+    "params": {}
+  },
+  {
+    "function": "get_container_presentation_data_api",
+    "method": "GET",
+    "path": "/container-presentation/1",
+    "params": {}
+  },
+  {
+    "function": "get_container_report_by_id_api",
+    "method": "GET",
+    "path": "/container-reports/1",
+    "params": {}
+  },
+  {
+    "function": "get_container_report_excel_api",
+    "method": "GET",
+    "path": "/container-reports/1/excel",
+    "params": {}
+  },
+  {
+    "function": "get_container_report_filters_api",
+    "method": "GET",
+    "path": "/container-reports/filters",
+    "params": {}
+  },
+  {
+    "function": "get_container_report_statuses_api",
+    "method": "GET",
+    "path": "/container-reports/statuses",
+    "params": {}
+  },
+  {
+    "function": "get_continentes_cpp_api",
+    "method": "GET",
+    "path": "/cpp/continentes",
+    "params": {}
+  },
+  {
+    "function": "get_crane_inspection_api",
+    "method": "GET",
+    "path": "/vessel-crane-inspection/1",
+    "params": {}
+  },
+  {
+    "function": "get_crane_inspections_api",
+    "method": "GET",
+    "path": "/vessel-crane-inspection",
+    "params": {}
+  },
+  {
+    "function": "get_dashboard_servicios_api",
+    "method": "GET",
+    "path": "/dashboard/servicios",
+    "params": {}
+  },
+  {
+    "function": "get_draft_survey_filters_api",
+    "method": "GET",
+    "path": "/draft-survey-filters/",
+    "params": {}
+  },
+  {
+    "function": "get_draft_survey_headers_api",
+    "method": "GET",
+    "path": "/draft-survey-headers/",
+    "params": {}
+  },
+  {
+    "function": "get_filtros_servicios_api",
+    "method": "GET",
+    "path": "/servicios/_meta/filtros",
+    "params": {}
+  },
+  {
+    "function": "get_full_draft_survey_api",
+    "method": "GET",
+    "path": "/draft-survey/unified/1",
+    "params": {}
+  },
+  {
+    "function": "get_lashing_certificate_api",
+    "method": "GET",
+    "path": "/lashing-certificates/1",
+    "params": {}
+  },
+  {
+    "function": "get_lashing_certificates_api",
+    "method": "GET",
+    "path": "/lashing-certificates",
+    "params": {}
+  },
+  {
+    "function": "get_paises_cpp_api",
+    "method": "GET",
+    "path": "/cpp/paises",
+    "params": {
+      "continente": 1
+    }
+  },
+  {
+    "function": "get_payslips_api",
+    "method": "GET",
+    "path": "/hr/payroll/payslips",
+    "params": {
+      "page": 1,
+      "page_size": 20
+    }
+  },
+  {
+    "function": "get_port_captancy_report_api",
+    "method": "GET",
+    "path": "/port-captancy-reports/1",
+    "params": {}
+  },
+  {
+    "function": "get_proyecto_calculo_by_nombre_api",
+    "method": "GET",
+    "path": "/proyectos-calculo/1",
+    "params": {}
+  },
+  {
+    "function": "get_proyectos_calculo_api",
+    "method": "GET",
+    "path": "/proyectos-calculo",
+    "params": {}
+  },
+  {
+    "function": "get_puertos_all_api",
+    "method": "GET",
+    "path": "/cpp/puertos_all",
+    "params": {}
+  },
+  {
+    "function": "get_puertos_cpp_api",
+    "method": "GET",
+    "path": "/cpp/puertos",
+    "params": {
+      "pais": 1
+    }
+  },
+  {
+    "function": "get_sampling_certificate_api",
+    "method": "GET",
+    "path": "/sampling-certificates/1",
+    "params": {}
+  },
+  {
+    "function": "get_sampling_certificates_api",
+    "method": "GET",
+    "path": "/sampling-certificates",
+    "params": {}
+  },
+  {
+    "function": "get_sealing_certificate_api",
+    "method": "GET",
+    "path": "/sealing-certificates/1",
+    "params": {}
+  },
+  {
+    "function": "get_sealing_certificates_api",
+    "method": "GET",
+    "path": "/sealing-certificates",
+    "params": {}
+  },
+  {
+    "function": "get_services_for_grain_sampling_api",
+    "method": "GET",
+    "path": "/vessel-grain-sampling/services-selector",
+    "params": {}
+  },
+  {
+    "function": "get_servicio_api",
+    "method": "GET",
+    "path": "/servicios/1",
+    "params": {}
+  },
+  {
+    "function": "get_servicio_surveyors_api",
+    "method": "GET",
+    "path": "/servicios-surveyors/1",
+    "params": {}
+  },
+  {
+    "function": "get_serviciosmd_api",
+    "method": "GET",
+    "path": "/servicios_md",
+    "params": {}
+  },
+  {
+    "function": "get_status_informes_api",
+    "method": "GET",
+    "path": "/status-informes",
+    "params": {}
+  },
+  {
+    "function": "get_status_informes_statuses_api",
+    "method": "GET",
+    "path": "/status-informes/statuses",
+    "params": {}
+  },
+  {
+    "function": "get_surveyores_display_api",
+    "method": "GET",
+    "path": "/surveyores",
+    "params": {}
+  },
+  {
+    "function": "get_surveyores_full_api",
+    "method": "GET",
+    "path": "/surveyores",
+    "params": {}
+  },
+  {
+    "function": "get_surveyors_catalog_api",
+    "method": "GET",
+    "path": "/servicios-surveyors/catalogo/lista",
+    "params": {}
+  },
+  {
+    "function": "get_surveyors_catalog_api",
+    "method": "GET",
+    "path": "/surveyores",
+    "params": {}
+  },
+  {
+    "function": "get_vessel_bunker_presentation_pdf",
+    "method": "GET",
+    "path": "/vessel-bunker-reports/presentation/1",
+    "params": {}
+  },
+  {
+    "function": "get_vessel_bunker_report_api",
+    "method": "GET",
+    "path": "/vessel-bunker-reports/1",
+    "params": {}
+  },
+  {
+    "function": "get_vessel_cargo_condition_by_id_api",
+    "method": "GET",
+    "path": "/vessel-cargo-condition-surveys/1",
+    "params": {}
+  },
+  {
+    "function": "get_vessel_condition_survey_api",
+    "method": "GET",
+    "path": "/vessel-condition-surveys/1",
+    "params": {}
+  },
+  {
+    "function": "get_vessel_condition_survey_by_id_api",
+    "method": "GET",
+    "path": "/vessel-condition-surveys/id/1",
+    "params": {}
+  },
+  {
+    "function": "get_vessel_grain_sampling_by_id_api",
+    "method": "GET",
+    "path": "/vessel-grain-sampling/1",
+    "params": {}
+  },
+  {
+    "function": "get_vessel_grain_sampling_list_api",
+    "method": "GET",
+    "path": "/vessel-grain-sampling",
+    "params": {}
+  },
+  {
+    "function": "get_vessel_holds_certificate_api",
+    "method": "GET",
+    "path": "/vessel-holds-inspection-certificates/1",
+    "params": {}
+  },
+  {
+    "function": "get_vessel_holds_certificates_api",
+    "method": "GET",
+    "path": "/vessel-holds-inspection-certificates",
+    "params": {}
+  },
+  {
+    "function": "get_vessel_presentation_data_api",
+    "method": "GET",
+    "path": "/vessel-grain-sampling/1/presentation-data",
+    "params": {}
+  },
+  {
+    "function": "get_vessel_truck_supervision_by_id_api",
+    "method": "GET",
+    "path": "/vessel-truck-supervision/1",
+    "params": {}
+  },
+  {
+    "function": "get_vessel_truck_supervision_list_api",
+    "method": "GET",
+    "path": "/vessel-truck-supervision/",
+    "params": {}
+  },
+  {
+    "function": "get_weight_certificate_api",
+    "method": "GET",
+    "path": "/weight-certificates/1",
+    "params": {}
+  },
+  {
+    "function": "get_weight_certificates_api",
+    "method": "GET",
+    "path": "/weight-certificates",
+    "params": {}
+  },
+  {
+    "function": "hr_actualizar_empleado",
+    "method": "PUT",
+    "path": "/hr/employees/1",
+    "params": {}
+  },
+  {
+    "function": "hr_calculate_payroll",
+    "method": "GET",
+    "path": "/hr/payroll/calculate",
+    "params": {
+      "usuario": "surveyor01",
+      "year": 2026,
+      "month": 10
+    }
+  },
+  {
+    "function": "hr_crear_empleado",
+    "method": "POST",
+    "path": "/hr/employees",
+    "params": {}
+  },
+  {
+    "function": "hr_delete_ot_log",
+    "method": "DELETE",
+    "path": "/hr/ot-log/1",
+    "params": {}
+  },
+  {
+    "function": "hr_download_payslip_pdf",
+    "method": "GET",
+    "path": "/hr/payroll/payslips/2026/10/pdf",
+    "params": {}
+  },
+  {
+    "function": "hr_get_hours_summary",
+    "method": "GET",
+    "path": "/hr/ot-log/summary",
+    "params": {}
+  },
+  {
+    "function": "hr_get_my_summary",
+    "method": "GET",
+    "path": "/hr/ot-log/me/summary",
+    "params": {}
+  },
+  {
+    "function": "hr_list_ot_logs",
+    "method": "GET",
+    "path": "/hr/ot-log",
+    "params": {
+      "page": 1,
+      "page_size": 50
+    }
+  },
+  {
+    "function": "hr_list_payroll_employees",
+    "method": "GET",
+    "path": "/hr/payroll/employees",
+    "params": {}
+  },
+  {
+    "function": "hr_listar_empleados",
+    "method": "GET",
+    "path": "/hr/employees",
+    "params": {
+      "page": 1,
+      "page_size": 50
+    }
+  },
+  {
+    "function": "hr_medical_network_filters_api",
+    "method": "GET",
+    "path": "/hr/medical-network/filters",
+    "params": {}
+  },
+  {
+    "function": "hr_medical_network_search_api",
+    "method": "GET",
+    "path": "/hr/medical-network/search",
+    "params": {}
+  },
+  {
+    "function": "hr_obtener_ultima_noticia",
+    "method": "GET",
+    "path": "/noticias/latest",
+    "params": {}
+  },
+  {
+    "function": "hr_post_payroll",
+    "method": "PUT",
+    "path": "/hr/payroll/post",
+    "params": {}
+  },
+  {
+    "function": "hr_publicar_noticias",
+    "method": "POST",
+    "path": "/noticias",
+    "params": {}
+  },
+  {
+    "function": "hr_salary_calculator_calculate_api",
+    "method": "POST",
+    "path": "/hr/salary-calculator/calculate",
+    "params": {}
+  },
+  {
+    "function": "hr_salary_calculator_compare_api",
+    "method": "POST",
+    "path": "/hr/salary-calculator/compare",
+    "params": {}
+  },
+  {
+    "function": "hr_salary_calculator_history_api",
+    "method": "GET",
+    "path": "/hr/salary-calculator/history",
+    "params": {
+      "limit": 50
+    }
+  },
+  {
+    "function": "hr_salary_calculator_rules_api",
+    "method": "GET",
+    "path": "/hr/salary-calculator/rules",
+    "params": {}
+  },
+  {
+    "function": "hr_update_ot_log",
+    "method": "PUT",
+    "path": "/hr/ot-log/1",
+    "params": {}
+  },
+  {
+    "function": "hr_update_ot_status",
+    "method": "PUT",
+    "path": "/hr/ot-log/1/estado",
+    "params": {}
+  },
+  {
+    "function": "hr_update_payroll_run",
+    "method": "PUT",
+    "path": "/hr/payroll/runs/1",
+    "params": {}
+  },
+  {
+    "function": "improve_truck_supervision_api",
+    "method": "POST",
+    "path": "/reports/ai/improve/truck",
+    "params": {}
+  },
+  {
+    "function": "improve_vessel_condition_text_api",
+    "method": "POST",
+    "path": "/reports/ai/improve/vessel-condition",
+    "params": {}
+  },
+  {
+    "function": "listar_eventos_hr",
+    "method": "GET",
+    "path": "/hr/events/",
+    "params": {}
+  },
+  {
+    "function": "listar_ot_logs",
+    "method": "GET",
+    "path": "/hr/ot-log",
+    "params": {
+      "page": 1,
+      "page_size": 50
+    }
+  },
+  {
+    "function": "listar_politicas_hr",
+    "method": "GET",
+    "path": "/hr/policies",
+    "params": {
+      "solo_activas": true
+    }
+  },
+  {
+    "function": "post_comercial_cotizacion_api",
+    "method": "POST",
+    "path": "/comercial/cotizaciones",
+    "params": {}
+  },
+  {
+    "function": "post_comercial_precio_api",
+    "method": "POST",
+    "path": "/comercial/precios",
+    "params": {}
+  },
+  {
+    "function": "post_servicio",
+    "method": "POST",
+    "path": "/servicios/add",
+    "params": {}
+  },
+  {
+    "function": "preview_vessel_bunker_excel_api",
+    "method": "POST",
+    "path": "/vessel-bunker-preview/excel",
+    "params": {}
+  },
+  {
+    "function": "put_comercial_precio_api",
+    "method": "PUT",
+    "path": "/comercial/precios/1",
+    "params": {}
+  },
+  {
+    "function": "rechazar_evento_hr",
+    "method": "PATCH",
+    "path": "/hr/events/1/reject",
+    "params": {}
+  },
+  {
+    "function": "save_servicio_surveyors_api",
+    "method": "PUT",
+    "path": "/servicios-surveyors/1",
+    "params": {}
+  },
+  {
+    "function": "update_container_report_api",
+    "method": "PUT",
+    "path": "/container-reports/1",
+    "params": {}
+  },
+  {
+    "function": "update_crane_inspection_api",
+    "method": "PUT",
+    "path": "/vessel-crane-inspection/1",
+    "params": {}
+  },
+  {
+    "function": "update_draft_survey_api",
+    "method": "PUT",
+    "path": "/draft-survey/unified/1",
+    "params": {}
+  },
+  {
+    "function": "update_draft_survey_ballast_api",
+    "method": "PUT",
+    "path": "/draft-survey-extra/ballast/1",
+    "params": {}
+  },
+  {
+    "function": "update_draft_survey_word_api",
+    "method": "PUT",
+    "path": "/draft-survey-extra/word/1",
+    "params": {}
+  },
+  {
+    "function": "update_lashing_certificate_api",
+    "method": "PUT",
+    "path": "/lashing-certificates/1",
+    "params": {}
+  },
+  {
+    "function": "update_port_captancy_report_api",
+    "method": "PUT",
+    "path": "/port-captancy-reports/1",
+    "params": {}
+  },
+  {
+    "function": "update_sampling_certificate_api",
+    "method": "PUT",
+    "path": "/sampling-certificates/1",
+    "params": {}
+  },
+  {
+    "function": "update_sealing_certificate_api",
+    "method": "PUT",
+    "path": "/sealing-certificates/1",
+    "params": {}
+  },
+  {
+    "function": "update_vessel_bunker_report_api",
+    "method": "PUT",
+    "path": "/vessel-bunker-reports/1",
+    "params": {}
+  },
+  {
+    "function": "update_vessel_cargo_condition_api",
+    "method": "PUT",
+    "path": "/vessel-cargo-condition-surveys/1",
+    "params": {}
+  },
+  {
+    "function": "update_vessel_condition_survey_api",
+    "method": "PUT",
+    "path": "/vessel-condition-surveys/id/1",
+    "params": {}
+  },
+  {
+    "function": "update_vessel_grain_sampling_api",
+    "method": "PUT",
+    "path": "/vessel-grain-sampling/1",
+    "params": {}
+  },
+  {
+    "function": "update_vessel_holds_certificate_api",
+    "method": "PUT",
+    "path": "/vessel-holds-inspection-certificates/1",
+    "params": {}
+  },
+  {
+    "function": "update_vessel_truck_supervision_api",
+    "method": "PUT",
+    "path": "/vessel-truck-supervision/1",
+    "params": {}
+  },
+  {
+    "function": "update_weight_certificate_api",
+    "method": "PUT",
+    "path": "/weight-certificates/1",
+    "params": {}
+  }
+]

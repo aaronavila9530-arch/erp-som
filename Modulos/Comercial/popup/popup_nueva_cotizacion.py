@@ -59,7 +59,12 @@ class PopupNuevaCotizacion(tk.Toplevel):
         self.quotation_number = ""
 
         self._build_ui()
-        self._load_precios()
+        try:
+            self._load_precios()
+        except Exception as exc:
+            messagebox.showerror("Cotización", f"No se pudieron cargar los precios.\n{exc}", parent=self)
+            self.destroy()
+            return
         self._load_quotation_number()
 
 

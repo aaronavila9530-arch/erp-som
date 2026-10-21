@@ -53,6 +53,8 @@ def generate_final_pdf(
             filename=f"{draft_report_number}_FINAL.pdf"
         )
 
+    except HTTPException:
+        raise
     except Exception as e:
         logger.exception("Unexpected error generating FINAL PDF")
         raise HTTPException(status_code=500, detail=f"Error generating FINAL PDF: {e}")
@@ -142,6 +144,8 @@ def generate_unified_final_pdf(
             filename=f"{draft_report_number}_UNIFIED.pdf"
         )
 
+    except HTTPException:
+        raise
     except Exception as e:
         logger.exception("Unexpected error generating UNIFIED PDF")
         raise HTTPException(

@@ -248,6 +248,8 @@ def get_vessel_cargo_condition(record_id: int, conn=Depends(get_db)):
 
         return {"success": True, "data": dict(zip(columns, row))}
 
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 

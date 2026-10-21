@@ -1,0 +1,565 @@
+from __future__ import annotations
+
+from fastapi import APIRouter, Query
+
+
+router = APIRouter(prefix="/accounting/legal-library", tags=["Accounting Legal Library"])
+
+
+LEGAL_ITEMS = [
+    {
+        "code": "CR-TAX-9635",
+        "category": "Hacienda",
+        "title": "Ley de Fortalecimiento de las Finanzas Publicas",
+        "norm_type": "Ley vigente consolidada",
+        "number": "9635",
+        "issuer": "Asamblea Legislativa",
+        "date": "2018-12-03",
+        "summary": "Ley marco moderna que introdujo el IVA y reformas fiscales relevantes para renta, reglas fiscales y cumplimiento tributario.",
+        "erp_relevance": "Referencia prioritaria para IVA, cierre fiscal, conciliacion tributaria, reportes ejecutivos y controles de cumplimiento.",
+        "keywords": ["iva", "renta", "finanzas publicas", "hacienda", "cumplimiento", "ley 9635", "vigente"],
+        "official_url": "https://pgrweb.go.cr/scij/Busqueda/Normativa/Normas/nrm_texto_completo.aspx?nValor1=1&nValor2=87720&nValor3=143345&param1=NRTC&strTipM=TC",
+    },
+    {
+        "code": "CR-CPA-45505-A",
+        "category": "Contable",
+        "title": "Reglamento de la Ley N. 1038 de la Profesion de Contador Publico",
+        "norm_type": "Decreto Ejecutivo vigente",
+        "number": "45505-A",
+        "issuer": "Poder Ejecutivo",
+        "date": "2025-11-20",
+        "summary": "Reglamento moderno de la profesion de Contador Publico en Costa Rica, vigente desde 2026, con reglas profesionales, responsabilidades y marco de actuacion.",
+        "erp_relevance": "Soporta controles de auditoria, responsabilidades de preparacion/revision, evidencia de cambios y segregacion de funciones en Accounting.",
+        "key_points": [
+            "Usar auditoria por usuario para conservar evidencia de quien preparo, reviso, aprobo o modifico.",
+            "Separar preparacion y aprobacion cuando haya asientos sensibles o cierres mensuales.",
+            "Mantener soportes y razon de cambio para ajustes contables."
+        ],
+        "erp_controls": [
+            "Auditoria obligatoria para cambios de cuenta contable, bancos, ITP, Collections y cierre.",
+            "Bloqueo de periodo cerrado salvo reapertura controlada.",
+            "Trazabilidad de before/after en modificaciones contables."
+        ],
+        "practical_use": "Uselo como referencia de gobierno profesional contable: quien hizo que, con que evidencia, y por que razon.",
+        "keywords": ["contador publico", "cpa", "auditoria", "responsabilidad", "contable", "vigente"],
+        "official_url": "https://pgrweb.go.cr/scij/Busqueda/Normativa/Normas/nrm_norma.aspx?nValor1=1&nValor2=106528&nValor3=150022&param1=NRM&strTipM=FN",
+    },
+    {
+        "code": "CR-CPA-1038",
+        "category": "Contable",
+        "title": "Ley de Creacion del Colegio de Contadores Publicos",
+        "norm_type": "Ley vigente consolidada",
+        "number": "1038",
+        "issuer": "Asamblea Legislativa",
+        "date": "1947-08-19",
+        "summary": "Marco legal de la profesion de Contador Publico y del Colegio de Contadores Publicos de Costa Rica.",
+        "erp_relevance": "Base de independencia, responsabilidad profesional, certificacion, auditoria y soporte de estados financieros.",
+        "key_points": [
+            "Define el ejercicio profesional de la contaduria publica.",
+            "Relaciona preparacion, certificacion y revision de informacion contable o financiera.",
+            "Sirve como soporte de criterios de independencia y responsabilidad."
+        ],
+        "erp_controls": [
+            "Bitacora de cambios por usuario y rol.",
+            "Evidencia documental para reportes, cierres y ajustes.",
+            "Aprobacion separada de ajustes y asientos manuales."
+        ],
+        "practical_use": "Sirve para respaldar por que el ERP exige trazabilidad, evidencia y controles de aprobacion.",
+        "keywords": ["contador publico", "colegio", "auditoria", "certificacion", "contabilidad"],
+        "official_url": "https://pgrweb.go.cr/scij/Busqueda/Normativa/Normas/nrm_texto_completo.aspx?nValor1=1&nValor2=37400",
+    },
+    {
+        "code": "CR-CPA-ETHICS-22",
+        "category": "Contable",
+        "title": "Codigo de etica profesional del Colegio de Contadores Publicos",
+        "norm_type": "Reglamento profesional",
+        "number": "Reglamento 22",
+        "issuer": "Colegio de Contadores Publicos",
+        "date": "2022-11-08",
+        "summary": "Codigo de etica profesional aplicable a personas contadoras publicas autorizadas.",
+        "erp_relevance": "Apoya controles de integridad, objetividad, diligencia, evidencia y revision independiente dentro del modulo contable.",
+        "key_points": [
+            "La informacion financiera debe ser preparada con integridad y diligencia.",
+            "Los cambios relevantes deben quedar explicados y respaldados.",
+            "Las revisiones y aprobaciones deben ser rastreables."
+        ],
+        "erp_controls": [
+            "Motivo obligatorio en ajustes sensibles.",
+            "PORTIA contable como apoyo explicativo, no como aprobador automatico.",
+            "Registro de usuario, rol, before/after y fecha de cada cambio."
+        ],
+        "practical_use": "Use esta referencia cuando Accounting pida razon de cambio, evidencia o aprobacion de un tercero.",
+        "keywords": ["etica", "contador publico", "integridad", "diligencia", "auditoria"],
+        "official_url": "https://pgrweb.go.cr/scij/Busqueda/Normativa/Normas/nrm_articulo.aspx?nValor1=1&nValor2=98494&nValor3=134016&nValor4=-1&nValor5=2&nValor6=08%2F11%2F2022&param1=NRA&strTipM=FA",
+    },
+    {
+        "code": "CR-FIN-8131",
+        "category": "Contable",
+        "title": "Ley de la Administracion Financiera de la Republica y Presupuestos Publicos",
+        "norm_type": "Ley vigente consolidada",
+        "number": "8131",
+        "issuer": "Asamblea Legislativa",
+        "date": "2001-09-18",
+        "summary": "Marco de administracion financiera publica. Aunque su enfoque es sector publico, aporta principios de control, presupuesto, registro y rendicion de cuentas.",
+        "erp_relevance": "Referencia de buenas practicas de control financiero, cierre, evidencia, rendicion y trazabilidad.",
+        "key_points": [
+            "Refuerza la disciplina de control financiero y rendicion de cuentas.",
+            "Ayuda a estructurar cierres y reportes con evidencia verificable.",
+            "Es util como referencia de gobierno financiero, aunque MSL opere como privado."
+        ],
+        "erp_controls": [
+            "Cierre mensual guiado con checklist.",
+            "Alertas de descuadre antes del cierre.",
+            "Reportes ejecutivos con datos de cierre."
+        ],
+        "practical_use": "Sirve como guia de control para disenar cierres y reportes financieros mas disciplinados.",
+        "keywords": ["administracion financiera", "control", "cierre", "presupuesto", "rendicion"],
+        "official_url": "https://pgrweb.go.cr/scij/Busqueda/Normativa/Normas/nrm_texto_completo.aspx?nValor1=1&nValor2=47258&nValor3=141198&param1=NRTC&strTipM=TC",
+    },
+    {
+        "code": "CR-VAT-41779-H",
+        "category": "Hacienda",
+        "title": "Reglamento de la Ley del Impuesto sobre el Valor Agregado",
+        "norm_type": "Decreto Ejecutivo vigente consolidado",
+        "number": "41779-H",
+        "issuer": "Poder Ejecutivo / Ministerio de Hacienda",
+        "date": "2019-06-07",
+        "summary": "Reglamento operativo del IVA: hecho generador, tarifas, exenciones, creditos fiscales, documentacion y reglas de aplicacion.",
+        "erp_relevance": "Base de trabajo para Centro fiscal, libros de compras/ventas, credito fiscal, D-150 y revision documental.",
+        "keywords": ["iva", "reglamento iva", "credito fiscal", "exenciones", "d150", "hacienda", "vigente"],
+        "official_url": "https://pgrweb.go.cr/scij/Busqueda/Normativa/Normas/nrm_texto_completo.aspx?nValor1=1&nValor2=88953&nValor3=138939&param1=NRTC&strTipM=TC",
+    },
+    {
+        "code": "CR-TAX-10386",
+        "category": "Hacienda",
+        "title": "Reforma a Ley de Fortalecimiento de las Finanzas Publicas",
+        "norm_type": "Ley",
+        "number": "10386",
+        "issuer": "Asamblea Legislativa",
+        "date": "2023-09-26",
+        "summary": "Reforma reciente vinculada con la Ley 9635 y su marco de responsabilidad fiscal.",
+        "erp_relevance": "Referencia para mantener actualizada la biblioteca legal y separar normativa historica de reformas recientes.",
+        "keywords": ["reforma", "ley 9635", "finanzas publicas", "responsabilidad fiscal", "vigente"],
+        "official_url": "https://pgrweb.go.cr/scij/Busqueda/Normativa/Normas/nrm_texto_completo.aspx?nValor1=1&nValor2=100319&nValor3=137721&param1=NRTC",
+    },
+    {
+        "code": "CR-COM-3284",
+        "category": "Comercial",
+        "title": "Codigo de Comercio",
+        "norm_type": "Ley",
+        "number": "3284",
+        "issuer": "Asamblea Legislativa",
+        "date": "1964-04-30",
+        "summary": "Marco mercantil general de Costa Rica: actos de comercio, sociedades, obligaciones de comerciantes, libros, documentos y conservacion de comprobantes.",
+        "erp_relevance": "Soporta obligaciones comerciales, facturacion, sociedades, conservacion documental y controles contables basicos.",
+        "keywords": ["comercio", "sociedades", "contabilidad", "libros", "facturas", "comprobantes", "mercantil"],
+        "official_url": "https://pgrweb.go.cr/scij/Busqueda/Normativa/Normas/nrm_texto_completo.aspx?nValor1=1&nValor2=6239&nValor3=113791&param1=NRTC&strTipM=TC",
+    },
+    {
+        "code": "CR-COM-3284-234",
+        "category": "Contable",
+        "title": "Codigo de Comercio - obligaciones contables del comerciante",
+        "norm_type": "Ley / Articulo",
+        "number": "3284 art. 234",
+        "issuer": "Asamblea Legislativa",
+        "date": "1964-04-30",
+        "summary": "Referencia especifica sobre llevar contabilidad del negocio en orden y conservar libros, correspondencia, facturas y comprobantes.",
+        "erp_relevance": "Base legal para auditoria documental, archivo de soportes, anexos, comprobantes y trazabilidad de Accounting.",
+        "keywords": ["contabilidad", "libros", "facturas", "comprobantes", "conservar", "archivo", "soportes"],
+        "official_url": "https://pgrweb.go.cr/scij/Busqueda/Normativa/normas/nrm_articulo.aspx?nValor1=1&nValor2=6239&nValor3=100547&nValor5=34367&param1=NRA",
+    },
+    {
+        "code": "CR-TAX-4755",
+        "category": "Hacienda",
+        "title": "Codigo de Normas y Procedimientos Tributarios",
+        "norm_type": "Ley",
+        "number": "4755",
+        "issuer": "Asamblea Legislativa",
+        "date": "1971-05-03",
+        "summary": "Codigo Tributario: normas generales, potestades de fiscalizacion, deberes formales, procedimientos, infracciones y sanciones tributarias.",
+        "erp_relevance": "Base para controles de cumplimiento, auditoria fiscal, obligaciones formales y evidencia ante Hacienda.",
+        "keywords": ["tributario", "hacienda", "fiscalizacion", "sanciones", "deberes formales", "procedimiento"],
+        "official_url": "https://pgrweb.go.cr/scij/Busqueda/Normativa/Normas/nrm_texto_completo.aspx?nValor1=1&nValor2=6530&nValor3=100658&param1=NRTC&strTipM=TC",
+    },
+    {
+        "code": "CR-TAX-7092",
+        "category": "Hacienda",
+        "title": "Ley del Impuesto sobre la Renta",
+        "norm_type": "Ley",
+        "number": "7092",
+        "issuer": "Asamblea Legislativa",
+        "date": "1988-04-21",
+        "summary": "Regula el impuesto sobre utilidades y rentas de fuente costarricense, gastos deducibles, pagos parciales, retenciones y obligaciones conexas.",
+        "erp_relevance": "Relacionada con D-101, cierre anual, gastos deducibles, conciliacion fiscal y analisis de resultados.",
+        "keywords": ["renta", "utilidades", "deducible", "d101", "retenciones", "periodo fiscal"],
+        "official_url": "https://pgrweb.go.cr/scij/Busqueda/Normativa/Normas/nrm_texto_completo.aspx?nValor1=1&nValor2=10969&nValor3=148975&param1=NRTC&strTipM=TC",
+    },
+    {
+        "code": "CR-TAX-43198-H",
+        "category": "Hacienda",
+        "title": "Reglamento de la Ley del Impuesto sobre la Renta",
+        "norm_type": "Decreto Ejecutivo",
+        "number": "43198-H",
+        "issuer": "Poder Ejecutivo / Ministerio de Hacienda",
+        "date": "2021-07-22",
+        "summary": "Desarrolla reglas reglamentarias de renta, administracion, fiscalizacion y obligaciones asociadas.",
+        "erp_relevance": "Referencia para clasificacion de gastos, soporte fiscal, comprobantes y controles del cierre.",
+        "keywords": ["reglamento renta", "hacienda", "gastos", "fiscalizacion", "comprobantes"],
+        "official_url": "https://pgrweb.go.cr/scij/Busqueda/Normativa/Normas/nrm_texto_completo.aspx?nValor1=1&nValor2=95992&nValor3=139872&param1=NRTC&strTipM=TC",
+    },
+    {
+        "code": "CR-VAT-6826",
+        "category": "Hacienda",
+        "title": "Ley de Impuesto al Valor Agregado",
+        "norm_type": "Ley",
+        "number": "6826",
+        "issuer": "Asamblea Legislativa",
+        "date": "1982-11-08",
+        "summary": "Regula el IVA aplicable a venta de bienes y prestacion de servicios en Costa Rica, creditos fiscales, tarifas y obligaciones.",
+        "erp_relevance": "Base legal para IVA, D-104/D-150, libro de ventas/compras, credito fiscal y conciliacion tributaria.",
+        "keywords": ["iva", "valor agregado", "credito fiscal", "ventas", "servicios", "d104", "d150"],
+        "official_url": "https://pgrweb.go.cr/scij/Busqueda/Normativa/normas/nrm_articulo.aspx?nValor1=1&nValor2=32526&nValor3=119207&nValor5=147797&param1=NRA&strTipM=FA",
+    },
+    {
+        "code": "CR-EINV-44739-H",
+        "category": "Hacienda",
+        "title": "Reglamento de comprobantes electronicos para efectos tributarios",
+        "norm_type": "Decreto Ejecutivo",
+        "number": "44739-H",
+        "issuer": "Poder Ejecutivo / Ministerio de Hacienda",
+        "date": "2024-10-02",
+        "summary": "Regula comprobantes electronicos autorizados por Tributacion, XML, requisitos, eficacia juridica, fuerza probatoria y sistemas de emision.",
+        "erp_relevance": "Base para XML, factura electronica, validacion de Hacienda, soportes fiscales y evidencia digital.",
+        "keywords": ["comprobantes electronicos", "xml", "factura electronica", "hacienda", "recibo electronico", "fuerza probatoria"],
+        "official_url": "https://pgrweb.go.cr/scij/Busqueda/Normativa/Normas/nrm_texto_completo.aspx?nValor1=1&nValor2=103206",
+    },
+    {
+        "code": "CR-EINV-DGT-0027-2024",
+        "category": "Hacienda",
+        "title": "Disposiciones tecnicas de comprobantes electronicos version 4.4",
+        "norm_type": "Resolucion",
+        "number": "DGT 0027-2024",
+        "issuer": "Direccion General de Tributacion",
+        "date": "2024-11-13",
+        "summary": "Anexos y estructuras tecnicas para emision de comprobantes electronicos, incluyendo version 4.4.",
+        "erp_relevance": "Referencia tecnica para XML, estructura de comprobantes, validaciones y campos obligatorios del ERP.",
+        "keywords": ["xml", "version 4.4", "estructura", "comprobantes electronicos", "factura", "tributacion"],
+        "official_url": "https://pgrweb.go.cr/scij/Busqueda/Normativa/Normas/nrm_articulo.aspx?nValor1=1&nValor2=103276&nValor3=144883&nValor5=20&param1=NRA&strTipM=FA",
+    },
+    {
+        "code": "CR-HACIENDA-NORMATIVA",
+        "category": "Hacienda",
+        "title": "Ministerio de Hacienda - Normativa tributaria",
+        "norm_type": "Portal oficial",
+        "number": "Portal",
+        "issuer": "Ministerio de Hacienda",
+        "date": "",
+        "summary": "Portal oficial para normativa, resoluciones, avisos, comprobantes electronicos y recursos tributarios publicados por Hacienda.",
+        "erp_relevance": "Acceso rapido a normativa operativa actualizada y avisos oficiales de implementacion.",
+        "keywords": ["hacienda", "normativa", "resoluciones", "avisos", "tributacion", "portal"],
+        "official_url": "https://www.hacienda.go.cr/",
+        "is_current": False,
+    },
+]
+
+
+LEGAL_EXTRACTS = {
+    "CR-TAX-9635": [
+        "Transforma el impuesto general sobre las ventas en un esquema de IVA con debito y credito fiscal, por lo que ERP-SOM debe separar IVA cobrado, IVA acreditable y diferencias antes de declarar.",
+        "Reforma reglas del impuesto sobre la renta y disciplina fiscal; los cierres deben distinguir ingresos gravables, gastos deducibles, soportes y ajustes.",
+        "Exige trazabilidad de base imponible, tarifa, exenciones y documentacion de soporte para justificar declaraciones y reportes.",
+    ],
+    "CR-VAT-6826": [
+        "Regula el IVA aplicable a ventas de bienes y prestacion de servicios; cada factura debe conservar base, tarifa, impuesto, total y contraparte.",
+        "El credito fiscal solo debe reconocerse si el documento de compra es valido, esta vinculado a la actividad y cuenta con soporte fiscal suficiente.",
+        "La declaracion periodica debe conciliar ventas, compras, notas, exenciones y saldos de IVA antes de presentar.",
+    ],
+    "CR-VAT-41779-H": [
+        "Aterriza reglas operativas del IVA: determinacion de la base, tarifas, exenciones, credito fiscal, documentacion y requisitos de control.",
+        "El Centro fiscal debe marcar XML faltante, CAByS faltante, claves repetidas, respuesta de Hacienda pendiente y diferencias contra contabilidad.",
+        "La conciliacion debe separar debito fiscal por ventas, credito fiscal por compras y neto documental contra cuentas contables de IVA.",
+    ],
+    "CR-TAX-7092": [
+        "Define el impuesto sobre utilidades y rentas de fuente costarricense; los ingresos, costos y gastos deben quedar clasificados para cierre fiscal.",
+        "Los gastos deben tener soporte, razonabilidad, vinculacion con la actividad y tratamiento correcto para deducibilidad.",
+        "ERP-SOM debe conservar evidencia de pagos, proveedores, facturas, retenciones y reclasificaciones que impacten renta.",
+    ],
+    "CR-TAX-4755": [
+        "Establece deberes formales, facultades de fiscalizacion, infracciones, sanciones y procedimientos tributarios.",
+        "Justifica alertas por declaraciones pendientes, documentos incompletos, respuestas de Hacienda no adjuntas y cambios sin auditoria.",
+        "Todo ajuste sensible debe conservar usuario, fecha, motivo, antes/despues y soporte documental.",
+    ],
+    "CR-EINV-44739-H": [
+        "Regula comprobantes electronicos como soporte tributario: factura, nota de credito, nota de debito, tiquete y documentos autorizados.",
+        "Cada comprobante debe conservar clave electronica, XML, PDF cuando exista, emisor, receptor, lineas, impuestos y estado ante Hacienda.",
+        "ERP-SOM no debe considerar listo el libro fiscal si faltan XML, respuesta de Hacienda, clave o detalle de lineas.",
+    ],
+    "CR-EINV-DGT-0027-2024": [
+        "Actualiza disposiciones tecnicas de comprobantes electronicos y version operativa para validacion de documentos.",
+        "El sistema debe validar estructura, clave, receptor/emisor, moneda, impuesto, CAByS y estado documental.",
+        "Los cambios de version deben quedar parametrizados para evitar mezclar documentos antiguos con reglas nuevas.",
+    ],
+    "CR-COM-3284": [
+        "El Codigo de Comercio exige orden documental y respaldo de actos mercantiles; clientes, proveedores, servicios, facturas y pagos deben ser trazables.",
+        "Los registros comerciales deben permitir reconstruir operaciones, obligaciones, cobros y pagos por contraparte.",
+        "La evidencia comercial alimenta contabilidad, facturacion, auxiliares y reportes ejecutivos.",
+    ],
+    "CR-COM-3284-234": [
+        "Refuerza obligaciones contables del comerciante: llevar registros, conservar libros/documentos y permitir verificacion de operaciones.",
+        "ERP-SOM debe mantener asientos, auxiliares, documentos fuente, auditoria de cambios y cierres mensuales reproducibles.",
+        "La edicion de cuenta contable, banco, cliente o proveedor debe dejar rastro auditable.",
+    ],
+    "CR-CPA-45505-A": [
+        "Ordena responsabilidad profesional, diligencia, documentacion y trazabilidad en trabajos contables.",
+        "Soporta controles de preparacion, revision, aprobacion, evidencia y motivo obligatorio en ajustes sensibles.",
+        "PORTIA puede asistir con explicaciones, pero no sustituye el juicio ni la aprobacion profesional.",
+    ],
+    "CR-CPA-ETHICS-22": [
+        "Exige integridad, objetividad, competencia profesional, confidencialidad y comportamiento profesional.",
+        "La informacion financiera debe ser verificable, completa y no inducir a error.",
+        "Los cambios deben documentarse para proteger independencia, revision y evidencia.",
+    ],
+    "CR-CPA-1038": [
+        "Da marco legal a la profesion contable y al rol de certificacion/revision profesional.",
+        "Respalda segregacion de funciones, bitacora por usuario y control de modificaciones contables.",
+        "Los reportes financieros deben poder sustentarse con registros y evidencia suficiente.",
+    ],
+}
+
+
+LEGAL_ARTICLES = {
+    "CR-TAX-9635": [
+        {
+            "article": "Articulo 1",
+            "title": "Reforma integral de la Ley 6826",
+            "source": "SCIJ/PGR - Ley 9635, texto completo vigente",
+            "text": (
+                "Se reforma, de forma integral, la Ley N. 6826, Ley de Impuesto General "
+                "sobre las Ventas, de 8 de noviembre de 1982. El texto es el siguiente: "
+                "Ley del Impuesto sobre el Valor Agregado."
+            ),
+        },
+        {
+            "article": "Articulo 1 - Ley del IVA",
+            "title": "Objeto del impuesto",
+            "source": "SCIJ/PGR - Ley 9635, titulo I, articulo 1 reproducido",
+            "text": (
+                "Se establece un impuesto sobre el valor agregado en la venta de bienes "
+                "y en la prestacion de servicios, independientemente del medio por el que "
+                "sean prestados, realizados en el territorio de la Republica."
+            ),
+        },
+    ],
+    "CR-TAX-10386": [
+        {
+            "article": "Articulo 1",
+            "title": "Modificacion del titulo IV de la Ley 9635",
+            "source": "SCIJ/PGR - Ley 10386, articulo 1",
+            "text": (
+                "Se adicionan los incisos l), m), n), n), o), p), q), r), s), t), u), v), w) "
+                "al articulo 6 del titulo IV, Responsabilidad Fiscal de la Republica, "
+                "capitulo 1 Disposiciones Generales, de la Ley 9635."
+            ),
+        },
+        {
+            "article": "Articulo 2",
+            "title": "Promedio de crecimiento del PIB",
+            "source": "SCIJ/PGR - Ley 10386, articulo 2",
+            "text": (
+                "Se reforma el inciso e) del articulo 8 del titulo IV de la Ley 9635. "
+                "Promedio de crecimiento del PIB se refiere al promedio de la tasa de "
+                "crecimiento interanual del PIB nominal de los cuatro anos previos al ano "
+                "en que se formula el presupuesto."
+            ),
+        },
+    ],
+    "CR-VAT-6826": [
+        {
+            "article": "Articulo 1",
+            "title": "Objeto del impuesto",
+            "source": "SCIJ/PGR - Ley 6826, articulo 1, version vigente",
+            "text": (
+                "1. Se establece un impuesto sobre el valor agregado en la venta de bienes y en la "
+                "prestacion de servicios, independientemente del medio por el que sean prestados, "
+                "realizados en el territorio de la Republica."
+            ),
+        },
+    ],
+    "CR-TAX-7092": [
+        {
+            "article": "Articulo 1",
+            "title": "Impuesto que comprende la ley, hecho generador y materia imponible",
+            "source": "SCIJ/PGR - Ley 7092, articulo 1, version vigente",
+            "text": (
+                "Se establece un impuesto sobre las utilidades de las personas fisicas, juridicas "
+                "y entes colectivos sin personalidad juridica, domiciliados en el pais, que "
+                "desarrollen actividades lucrativas de fuente costarricense."
+            ),
+        },
+        {
+            "article": "Articulo 1",
+            "title": "Hecho generador",
+            "source": "SCIJ/PGR - Ley 7092, articulo 1, version vigente",
+            "text": (
+                "El hecho generador del impuesto sobre las utilidades es la percepcion o devengo "
+                "de rentas en dinero o en especie, continuas u ocasionales, procedentes de "
+                "actividades lucrativas de fuente costarricense."
+            ),
+        },
+    ],
+    "CR-COM-3284": [
+        {
+            "article": "Articulo 234",
+            "title": "Obligaciones comunes a los que ejercen el comercio",
+            "source": "SCIJ/PGR - Codigo de Comercio, articulo 234",
+            "text": (
+                "Los que ejercen el comercio contraen las siguientes obligaciones: a) Inscribir "
+                "en el Registro Mercantil los documentos que se indican en el capitulo siguiente; "
+                "b) Distinguir su establecimiento con su nombre; c) Llevar la contabilidad del "
+                "negocio en orden y de conformidad con las disposiciones de este Codigo."
+            ),
+        },
+        {
+            "article": "Articulo 234",
+            "title": "Conservacion documental",
+            "source": "SCIJ/PGR - Codigo de Comercio, articulo 234",
+            "text": (
+                "Conservar los libros de contabilidad desde que se inician hasta cuatro anos "
+                "despues del cierre del negocio, y conservar igualmente la correspondencia, las "
+                "facturas y los demas comprobantes, por un periodo no menor de cuatro anos."
+            ),
+        },
+    ],
+    "CR-COM-3284-234": [
+        {
+            "article": "Articulo 234",
+            "title": "Contabilidad y comprobantes del comerciante",
+            "source": "SCIJ/PGR - Codigo de Comercio, articulo 234",
+            "text": (
+                "Llevar la contabilidad del negocio en orden y de conformidad con las disposiciones "
+                "de este Codigo; y conservar los libros de contabilidad, la correspondencia, las "
+                "facturas y los demas comprobantes."
+            ),
+        },
+    ],
+    "CR-TAX-4755": [
+        {
+            "article": "Articulo 128",
+            "title": "Obligaciones de los particulares",
+            "source": "SCIJ/PGR - Codigo de Normas y Procedimientos Tributarios, articulo 128",
+            "text": (
+                "Los contribuyentes y responsables estan obligados a facilitar las tareas de "
+                "determinacion, fiscalizacion e investigacion que realice la Administracion Tributaria."
+            ),
+        },
+        {
+            "article": "Articulo 128",
+            "title": "Libros, declaraciones y conservacion",
+            "source": "SCIJ/PGR - Codigo de Normas y Procedimientos Tributarios, articulo 128",
+            "text": (
+                "Cuando lo requieran las leyes o los reglamentos o lo exija dicha Administracion, "
+                "deben llevar los libros y registros especiales, inscribirse en los registros "
+                "pertinentes, presentar las declaraciones que correspondan y conservar en forma "
+                "ordenada los documentos y antecedentes de las operaciones."
+            ),
+        },
+    ],
+    "CR-VAT-41779-H": [
+        {
+            "article": "Articulo 1",
+            "title": "Definiciones",
+            "source": "SCIJ/PGR - Decreto Ejecutivo 41779-H, articulo 1",
+            "text": (
+                "Para los efectos del Reglamento de la Ley del Impuesto sobre el Valor Agregado, "
+                "se establecen definiciones aplicables a la Administracion Tributaria y a la "
+                "gestion y fiscalizacion de los tributos."
+            ),
+        },
+    ],
+}
+
+
+def _enrich_item(item):
+    enriched = dict(item)
+    enriched.setdefault("is_current", True)
+    enriched.setdefault("current_status", "Vigente segun fuente oficial indicada; validar reformas en SCIJ/PGR antes de uso legal final.")
+    enriched.setdefault("legal_articles", LEGAL_ARTICLES.get(enriched.get("code"), []))
+    enriched.setdefault("legal_extracts", LEGAL_EXTRACTS.get(enriched.get("code"), [
+        "Referencia normativa vigente para consulta operativa; revisar el texto oficial antes de emitir criterio legal o tributario final.",
+        "Mantener evidencia, controles, trazabilidad y conciliaciones en ERP-SOM segun la naturaleza de la obligacion.",
+    ]))
+    if not enriched.get("key_points"):
+        if enriched.get("category") == "Hacienda":
+            enriched["key_points"] = [
+                "Mantener XML, PDF, clave electronica y respuesta de Hacienda como evidencia documental.",
+                "Conciliar IVA documental contra cuentas contables antes de declarar.",
+                "Conservar trazabilidad de cambios, ajustes y reclasificaciones tributarias.",
+            ]
+            enriched["erp_controls"] = [
+                "Centro fiscal: XML faltante, CAByS faltante, clave repetida y estado Hacienda.",
+                "Alertas contables: IVA, descuadres y cuentas no activas.",
+                "Auditoria por usuario para cambios de cuentas, pagos y documentos fiscales.",
+            ]
+        elif enriched.get("category") == "Comercial":
+            enriched["key_points"] = [
+                "Respaldar facturas, contratos, cotizaciones y comunicaciones comerciales.",
+                "Mantener datos de cliente, contacto, moneda, pais, puerto y detalle operativo completos.",
+                "Conservar evidencia de obligaciones y documentos mercantiles.",
+            ]
+            enriched["erp_controls"] = [
+                "Master Data y Servicios como fuente de datos comerciales.",
+                "Documentos adjuntos y trazabilidad de ediciones.",
+                "Reportes y facturacion vinculados al cliente correcto.",
+            ]
+        else:
+            enriched["key_points"] = [
+                "Separar preparacion, revision y aprobacion de cambios sensibles.",
+                "Registrar usuario, fecha, motivo y antes/despues de cada cambio contable.",
+                "Conservar evidencia suficiente para auditoria, cierre y reportes financieros.",
+            ]
+            enriched["erp_controls"] = [
+                "Auditoria por usuario.",
+                "Cierre mensual guiado.",
+                "PORTIA contable como asistente de explicacion, no como aprobador automatico.",
+            ]
+        enriched.setdefault("practical_use", "Use esta norma como referencia operativa para revisar datos, soportes, aprobaciones y cumplimiento dentro de ERP-SOM.")
+    return enriched
+
+
+@router.get("")
+def list_legal_library(
+    category: str | None = None,
+    q: str | None = Query(None, min_length=1),
+):
+    query = (q or "").strip().lower()
+    selected_category = (category or "").strip().lower()
+    rows = []
+    for item in LEGAL_ITEMS:
+        item = _enrich_item(item)
+        if not item.get("is_current", True):
+            continue
+        if selected_category and selected_category not in {"todos", "all"}:
+            if item["category"].lower() != selected_category:
+                continue
+        haystack = " ".join(
+            [
+                item["code"],
+                item["category"],
+                item["title"],
+                item["norm_type"],
+                item["number"],
+                item["issuer"],
+                item["summary"],
+                item["erp_relevance"],
+                " ".join(item["keywords"]),
+                " ".join(article.get("text", "") for article in item.get("legal_articles") or []),
+                " ".join(item.get("legal_extracts") or []),
+                " ".join(item.get("key_points") or []),
+            ]
+        ).lower()
+        if query and query not in haystack:
+            continue
+        rows.append(item)
+    rows.sort(key=lambda item: item.get("date") or "0000-00-00", reverse=True)
+    categories = sorted({item["category"] for item in map(_enrich_item, LEGAL_ITEMS) if item.get("is_current", True)})
+    return {"status": "ok", "categories": categories, "count": len(rows), "data": rows}

@@ -1,0 +1,192 @@
+[
+  {
+    "id": 116,
+    "numero": "2214",
+    "cliente": "NORDEN",
+    "total": 1000.0,
+    "termino_pago": 30,
+    "file": "MSL_116_Factura_2214.pdf",
+    "pages": 1,
+    "sha256": "1eeeb94baaf3e9f82df94ef55f4c3a3b09e1fd99b9b114f6b83134f22f240392"
+  },
+  {
+    "id": 110,
+    "numero": "2212",
+    "cliente": "NORDEN",
+    "total": 1100.0,
+    "termino_pago": 30,
+    "file": "MSL_110_Factura_2212.pdf",
+    "pages": 1,
+    "sha256": "072d40286948ca0b72e38bc1079685fc323213acf54205e16b23610713bb0629"
+  },
+  {
+    "id": 111,
+    "numero": "2213",
+    "cliente": "NORDEN",
+    "total": 1600.0,
+    "termino_pago": 30,
+    "file": "MSL_111_Factura_2213.pdf",
+    "pages": 1,
+    "sha256": "e7cf328890bbbfcf60c048eb2ed94a54e7ac46a0bdb20934b716e9ba52cd3456"
+  },
+  {
+    "id": 107,
+    "numero": "2211",
+    "cliente": "NORDEN",
+    "total": 1300.0,
+    "termino_pago": 30,
+    "file": "MSL_107_Factura_2211.pdf",
+    "pages": 1,
+    "sha256": "355e30780296a39311b703f116fdad25224fc608c9724da221afee67a4b8d406"
+  },
+  {
+    "id": 106,
+    "numero": "2210",
+    "cliente": "Deputy Claims Executive",
+    "total": 1800.0,
+    "termino_pago": 0,
+    "file": "MSL_106_Factura_2210.pdf",
+    "pages": 1,
+    "sha256": "1bd44f796c3205fdcf9305e1cce7d82fb3af657c124cee91246c760e9cd023f7"
+  },
+  {
+    "id": 105,
+    "numero": "2209",
+    "cliente": "NORDEN",
+    "total": 25000.0,
+    "termino_pago": 30,
+    "file": "MSL_105_Factura_2209.pdf",
+    "pages": 1,
+    "sha256": "46ca754090adb21aefe6e55fad057df87ac82a0afa54896ae7ec2fe20ffcb903"
+  },
+  {
+    "id": 97,
+    "numero": "2202",
+    "cliente": "THEMECO",
+    "total": 0.0,
+    "termino_pago": 0,
+    "file": "MSL_97_Factura_2202.pdf",
+    "pages": 1,
+    "sha256": "f47f9ff19dbf073b5e75275a2dfd61affc440aa05a4b6d63bc5d423e6980e3c8"
+  },
+  {
+    "id": 99,
+    "numero": "2204",
+    "cliente": "ZIS sas",
+    "total": 0.0,
+    "termino_pago": 0,
+    "file": "MSL_99_Factura_2204.pdf",
+    "pages": 1,
+    "sha256": "c0203d3bc5252672dd7fee354de036a3be8d8cfb84fc08bdb63f1fb481a49c98"
+  },
+  {
+    "id": 98,
+    "numero": "2203",
+    "cliente": "THEMECO",
+    "total": 0.0,
+    "termino_pago": 0,
+    "file": "MSL_98_Factura_2203.pdf",
+    "pages": 1,
+    "sha256": "7f4ea02958faf134b9926e1da8b77a3038479bd353f8f5060ed52b7d68e16112"
+  },
+  {
+    "id": 76,
+    "numero": "2201",
+    "cliente": "Pandi Costa Rica, S,A",
+    "total": 0.0,
+    "termino_pago": 30,
+    "file": "MSL_76_Factura_2201.pdf",
+    "pages": 1,
+    "sha256": "667668f4f36854ccb000d99ca29645437ab225b9457f1100593674d4b0b66ca9"
+  },
+  {
+    "id": 75,
+    "numero": "2200",
+    "cliente": "Pandi Costa Rica, S,A",
+    "total": 0.0,
+    "termino_pago": 30,
+    "file": "MSL_75_Factura_2200.pdf",
+    "pages": 1,
+    "sha256": "bec029682f5ea9db6220343ab00db641ee0319a13518cca2d4cb7cdba28b8606"
+  },
+  {
+    "id": 11,
+    "numero": "2201",
+    "cliente": "MAERSK A/S",
+    "total": 900.0,
+    "termino_pago": 15,
+    "file": "MSL_11_Factura_2201.pdf",
+    "pages": 1,
+    "sha256": "eb2904e1c075bf141d68b9b889e3e6ed54faf251ae200b998aa60adad47c1433"
+  },
+  {
+    "id": 17,
+    "numero": "2207",
+    "cliente": "NORDEN",
+    "total": 1300.0,
+    "termino_pago": 30,
+    "file": "MSL_17_Factura_2207.pdf",
+    "pages": 1,
+    "sha256": "5b0b289ad1e9c52302fec7240a23e39e0b48cd5e68e3dcd732bbfd16a6ae0af7"
+  },
+  {
+    "id": 16,
+    "numero": "2206",
+    "cliente": "NORDEN",
+    "total": 4327.0,
+    "termino_pago": 30,
+    "file": "MSL_16_Factura_2206.pdf",
+    "pages": 1,
+    "sha256": "8f609bb4274f33486b837a1c7be2592e3a9295f992130e6444b529137b56aa3b"
+  },
+  {
+    "id": 15,
+    "numero": "2205",
+    "cliente": "NORDEN",
+    "total": 1000.0,
+    "termino_pago": 30,
+    "file": "MSL_15_Factura_2205.pdf",
+    "pages": 1,
+    "sha256": "722793d0bf6c8de7f6575fe30c757a096516e5ada6c9daf730d362dbbb7dc01d"
+  },
+  {
+    "id": 14,
+    "numero": "2204",
+    "cliente": "NORDEN",
+    "total": 3000.0,
+    "termino_pago": 30,
+    "file": "MSL_14_Factura_2204.pdf",
+    "pages": 1,
+    "sha256": "cfa59b0866aabd6d9138bcaf5e19f58d2bbf00bec4cfc11c8b9b74eeb81ae3c9"
+  },
+  {
+    "id": 13,
+    "numero": "2203",
+    "cliente": "NORDEN",
+    "total": 9500.0,
+    "termino_pago": 30,
+    "file": "MSL_13_Factura_2203.pdf",
+    "pages": 1,
+    "sha256": "2a5224ea03b2fe0428b1beba29fdad6e40413198b406a39b9fc0b58b6b1571a8"
+  },
+  {
+    "id": 12,
+    "numero": "2202",
+    "cliente": "MAERSK A/S",
+    "total": 2000.0,
+    "termino_pago": 15,
+    "file": "MSL_12_Factura_2202.pdf",
+    "pages": 1,
+    "sha256": "65d2faf90a3a837b3299d2a39082f010405512cdb3ae6d5a49d6e00e9617ac65"
+  },
+  {
+    "id": 18,
+    "numero": "2208",
+    "cliente": "NORDEN",
+    "total": 1300.0,
+    "termino_pago": 30,
+    "file": "MSL_18_Factura_2208.pdf",
+    "pages": 1,
+    "sha256": "02a31e8f6c56956be5373bf20bb6a663a965f11724eeb34716fd743d1ea12ae1"
+  }
+]

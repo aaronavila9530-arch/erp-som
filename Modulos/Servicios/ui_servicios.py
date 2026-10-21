@@ -1,5 +1,5 @@
 import tkinter as tk
-from tkinter import ttk
+from tkinter import ttk, messagebox
 from datetime import date
 
 from api_client import (
@@ -32,6 +32,10 @@ class ServiciosUI(tk.Frame):
     # FILTROS
     # ============================================================
     def _build_filtros(self):
+        for flag in ("_status_loaded", "_anios_loaded", "_surveyores_loaded", "_clientes_loaded", "_operaciones_loaded"):
+            if hasattr(self, flag):
+                delattr(self, flag)
+        self._filtros_servicios = None
         for w in self.content.winfo_children():
             w.destroy()
 
@@ -165,33 +169,44 @@ class ServiciosUI(tk.Frame):
         return self._filtros_servicios
 
     def load_status(self):
-        if not hasattr(self, "_status_loaded"):
-            filtros = self._load_filtros_servicios()
-            self.cmb_status.config(values=filtros.get("status", []))
-            self._status_loaded = True
+        self._load_combo("_status_loaded", self.cmb_status,
+                         lambda: self._load_filtros_servicios().get("status", []))
 
     def load_anios(self):
-        if not hasattr(self, "_anios_loaded"):
-            filtros = self._load_filtros_servicios()
-            anios = [str(y) for y in filtros.get("year", [])]
-            self.cmb_anio.config(values=anios)
-            self._anios_loaded = True
+        self._load_combo("_anios_loaded", self.cmb_anio,
+                         lambda: [str(y) for y in self._load_filtros_servicios().get("year", [])])
 
     def load_surveyores(self):
-        if not hasattr(self, "_surveyores_loaded"):
-            filtros = self._load_filtros_servicios()
-            self.cmb_surveyor.config(values=filtros.get("surveyor", []))
-            self._surveyores_loaded = True
+        self._load_combo("_surveyores_loaded", self.cmb_surveyor,
+                         lambda: self._load_filtros_servicios().get("surveyor", []))
 
     # ============================================================
     # CATÁLOGOS EXISTENTES (LAZY)
     # ============================================================
     def load_clientes(self):
-        if not hasattr(self, "_clientes_loaded"):
-            self.cmb_cliente.config(values=get_clientes_api())
-            self._clientes_loaded = True
+        def names():
+            raw = get_clientes_api()
+            rows = raw.get("data", []) if isinstance(raw, dict) else raw or []
+            values = []
+            for row in rows:
+                name = (row.get("nombrecomercial") or row.get("nombrejuridico")
+                        or row.get("NombreComercial") or row.get("NombreJuridico")
+                        or row.get("codigo") or row.get("Codigo") or ""
+                        ) if isinstance(row, dict) else str(row)
+                if name:
+                    values.append(name)
+            return values
+        self._load_combo("_clientes_loaded", self.cmb_cliente, names)
 
     def load_operaciones(self):
-        if not hasattr(self, "_operaciones_loaded"):
-            self.cmb_operacion.config(values=get_serviciosmd_api())
-            self._operaciones_loaded = True
+        self._load_combo("_operaciones_loaded", self.cmb_operacion, get_serviciosmd_api)
+
+    def _load_combo(self, flag, combo, loader):
+        if hasattr(self, flag):
+            return
+        try:
+            combo.config(values=loader())
+        except Exception as exc:
+            messagebox.showerror("Servicios", f"No se pudo cargar el filtro.\n{exc}", parent=self)
+            return
+        setattr(self, flag, True)

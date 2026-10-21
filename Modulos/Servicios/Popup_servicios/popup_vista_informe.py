@@ -1,6 +1,6 @@
 import tkinter as tk
 from tkinter import ttk, messagebox
-from api_client import get_servicio_api, confirmar_informe_api
+from api_client import get_servicio_api, finalizar_servicio_api
 from Modulos.Servicios.date_utils import to_long_english_date
 
 
@@ -16,6 +16,10 @@ class PopupVistaInforme(tk.Toplevel):
         self.config(bg="white")
 
         self.data = get_servicio_api(consec)
+        if not self.data:
+            messagebox.showerror("Servicio", "No se pudo cargar el servicio.", parent=self)
+            self.destroy()
+            return
 
         # ==============================
         # CONTENEDOR CON SCROLL
@@ -130,7 +134,7 @@ class PopupVistaInforme(tk.Toplevel):
         ):
             return
 
-        resp = confirmar_informe_api(self.consec)
+        resp = finalizar_servicio_api(self.consec)
 
         if resp.get("status") == "ok":
             num = resp.get("num_informe", "")

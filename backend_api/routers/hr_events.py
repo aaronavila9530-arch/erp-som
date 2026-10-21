@@ -7,6 +7,7 @@ import json
 from database import get_db
 from security.auth import get_current_user
 from services.notifications import create_notification, create_notifications, get_admin_master_users
+from services.tenanting import company_code
 
 
 router = APIRouter(
@@ -130,7 +131,10 @@ def _notify_request_resolution(cur, row: dict, action_label: str, resolved_by: s
 @router.get("/")
 def listar_eventos(
     current_user=Depends(get_current_user),
-    conn=Depends(get_db)
+    conn=Depends(get_db),
+    event_type: str | None = None,
+    status: str | None = None,
+    empleado_id: int | None = None,
 ):
     cur = conn.cursor(cursor_factory=RealDictCursor)
 
@@ -191,17 +195,26 @@ def listar_eventos(
     # ---------------------------------------------------------
     rol = (rol or "").lower().strip()
 
+    conditions, params = [], []
     if rol not in ("admin", "master"):
-        base_sql += """
-            WHERE LOWER(e.created_by) = LOWER(%s)
-            ORDER BY e.created_at DESC
-        """
-        cur.execute(base_sql, (usuario,))
-    else:
-        base_sql += """
-            ORDER BY e.created_at DESC
-        """
-        cur.execute(base_sql)
+        conditions.append("LOWER(e.created_by) = LOWER(%s)")
+        params.append(usuario)
+    if event_type:
+        conditions.append("UPPER(e.event_type) = UPPER(%s)")
+        params.append(event_type)
+    if status:
+        conditions.append("UPPER(e.status) = UPPER(%s)")
+        params.append(status)
+    if empleado_id is not None:
+        conditions.append("""(e.payload->>'empleado_id' = %s OR (
+            NOT (COALESCE(e.payload, '{}'::jsonb) ? 'empleado_id') AND
+            LOWER(e.created_by) IN (SELECT LOWER(usuario) FROM empleados WHERE id = %s)
+        ))""")
+        params.extend((str(empleado_id), empleado_id))
+    if conditions:
+        base_sql += " WHERE " + " AND ".join(conditions)
+    base_sql += " ORDER BY e.created_at DESC"
+    cur.execute(base_sql, params)
 
     rows = cur.fetchall()   # 🔥 FALTABA ESTO
 
@@ -291,6 +304,22 @@ async def crear_evento(
     """, (usuario,))
 
     emp = cur.fetchone()
+
+    if event_type.strip().upper() == "LIQUIDATION":
+        if str(current_user.get("rol") or "").lower() not in {"admin", "master"}:
+            raise HTTPException(403, "No autorizado para registrar liquidaciones")
+        try:
+            employee_id = int(payload.get("empleado_id"))
+        except (TypeError, ValueError):
+            raise HTTPException(400, "Empleado requerido para la liquidacion")
+        cur.execute("""
+            SELECT nombre, apellidos, fecha_ingreso FROM empleados
+            WHERE id = %s AND company_code = %s
+        """, (employee_id, company_code(None, request.headers.get("X-Company-Code"))))
+        emp = cur.fetchone()
+        if not emp:
+            raise HTTPException(404, "Empleado no encontrado en la empresa seleccionada")
+        payload["empleado_id"] = employee_id
 
     # 🔥 SOLO CAMBIO: evitar 404 pero mantener control
     if not emp:

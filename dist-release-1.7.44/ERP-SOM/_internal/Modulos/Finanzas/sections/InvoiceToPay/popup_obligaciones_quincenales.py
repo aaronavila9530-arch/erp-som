@@ -1,0 +1,654 @@
+import tkinter as tk
+from tkinter import ttk, messagebox, filedialog, simpledialog
+from datetime import date
+from collections import defaultdict
+
+from openpyxl import Workbook
+from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+
+from api_client import (
+    get_itp_biweekly_obligations_preview_api,
+    post_itp_biweekly_obligations_apply_api,
+    post_itp_biweekly_obligations_save_draft_api,
+)
+
+
+CATEGORIES = [
+    "Planilla",
+    "CCSS",
+    "IVA",
+    "Surveyors",
+    "Viaticos",
+    "Tarjetas de credito",
+    "Alquiler",
+    "Internet",
+    "Telefonia",
+    "Otros",
+]
+
+BANK_ACCOUNT_OPTIONS = [
+    "1.1.02.02.01",
+    "1.1.02.02.02",
+    "1.1.02.04.01",
+    "2.1.02.10",
+]
+
+PAYMENT_METHOD_LABELS = {
+    "BANK": "Banco",
+    "CARD_BAC_3155": "Tarjeta empresarial BAC 3155",
+    "THIRD_PARTY_HAZEL": "Pagado por Hazel Barrantes",
+}
+PAYMENT_METHOD_CODES = {label: code for code, label in PAYMENT_METHOD_LABELS.items()}
+CARD_3155_CODE = "2.1.02.10"
+CARD_3155_NAME = "Tarjeta corporativa BAC por pagar"
+CARD_3155_LABEL = "Tarjeta empresarial BAC 3155"
+HAZEL_CODE = "3.1.99"
+HAZEL_NAME = "Aportes de terceros - Hazel Barrantes"
+HAZEL_LABEL = "Pagado por Hazel Barrantes"
+
+
+def _payment_label(row):
+    method = str(row.get("payment_method") or "").strip().upper()
+    if method == "CARD_BAC_3155" or str(row.get("payment_card_last4") or "").strip() == "3155":
+        return CARD_3155_LABEL
+    if method == "THIRD_PARTY_HAZEL":
+        return HAZEL_LABEL
+    return "Banco"
+
+
+class PopupObligacionesQuincenales(tk.Toplevel):
+    def __init__(self, parent):
+        super().__init__(parent)
+        self.title("Obligaciones quincenales")
+        self.geometry("1220x760")
+        self.minsize(1020, 620)
+        self.resizable(True, True)
+        self._maximized = False
+        self.rows = []
+        today = date.today()
+        self.period_var = tk.StringVar(value=f"{today.year:04d}-{today.month:02d}")
+        self.fortnight_var = tk.IntVar(value=1 if today.day <= 15 else 2)
+        self.total_var = tk.StringVar(value="CRC 0.00")
+        self.total_usd_var = tk.StringVar(value="USD 0.00")
+        self.count_var = tk.StringVar(value="0 lineas")
+        self.suppressed_keys = set()
+        self._build_ui()
+        self._load_preview()
+        self.lift()
+        self.focus_set()
+
+    def _build_ui(self):
+        self.columnconfigure(0, weight=1)
+        self.rowconfigure(2, weight=1)
+
+        header = ttk.Frame(self, padding=(10, 8))
+        header.grid(row=0, column=0, sticky="ew")
+        header.columnconfigure(10, weight=1)
+        ttk.Label(header, text="Obligaciones quincenales", font=("Segoe UI", 15, "bold")).grid(row=0, column=0, columnspan=2, sticky="w")
+        ttk.Label(header, text="Periodo").grid(row=1, column=0, sticky="w", pady=(8, 0))
+        ttk.Entry(header, textvariable=self.period_var, width=10).grid(row=1, column=1, sticky="w", padx=(4, 14), pady=(8, 0))
+        ttk.Label(header, text="Quincena").grid(row=1, column=2, sticky="w", pady=(8, 0))
+        ttk.Combobox(header, textvariable=self.fortnight_var, values=[1, 2], state="readonly", width=5).grid(row=1, column=3, sticky="w", padx=(4, 14), pady=(8, 0))
+        ttk.Button(header, text="Generar automatico", command=lambda: self._load_preview(force=True)).grid(row=1, column=4, padx=4, pady=(8, 0))
+        ttk.Button(header, text="Guardar borrador", command=self._save_draft).grid(row=1, column=5, padx=4, pady=(8, 0))
+        ttk.Button(header, text="Exportar Excel", command=self._export_excel).grid(row=1, column=6, padx=4, pady=(8, 0))
+        ttk.Button(header, text="Aplicar pagos y crear asientos", command=self._save_and_post).grid(row=1, column=7, padx=4, pady=(8, 0))
+        ttk.Button(header, text="Aplicar seleccion", command=self._save_and_post_selected).grid(row=1, column=8, padx=4, pady=(8, 0))
+        ttk.Button(header, text="Cerrar", command=self.destroy).grid(row=1, column=9, padx=4, pady=(8, 0))
+        ttk.Label(header, textvariable=self.total_var, font=("Segoe UI", 12, "bold")).grid(row=0, column=10, sticky="e")
+        ttk.Label(header, textvariable=self.total_usd_var, font=("Segoe UI", 11, "bold")).grid(row=1, column=10, sticky="e", padx=(0, 90))
+        ttk.Label(header, textvariable=self.count_var).grid(row=1, column=10, sticky="e")
+
+        tools = ttk.LabelFrame(self, text="Agregar / ajustar lineas")
+        tools.grid(row=1, column=0, sticky="ew", padx=10, pady=(0, 8))
+        for idx, category in enumerate(["Planilla", "CCSS", "Surveyors", "Viaticos", "Telefonia", "Otros"]):
+            ttk.Button(tools, text=f"+ {category}", command=lambda c=category: self._add_line(c)).grid(row=0, column=idx, padx=4, pady=6)
+        ttk.Button(tools, text="Editar linea", command=self._edit_selected).grid(row=0, column=7, padx=(18, 4), pady=6)
+        ttk.Button(tools, text="Quitar linea(s)", command=self._delete_selected).grid(row=0, column=8, padx=4, pady=6)
+        ttk.Label(
+            tools,
+            text="Para aplicar una linea pagada: comprobante, fecha y cuenta contable. Las demas quedan pendientes en borrador.",
+            foreground="#7f1d1d",
+            font=("Segoe UI", 9, "bold"),
+        ).grid(row=1, column=0, columnspan=9, sticky="w", padx=6, pady=(0, 6))
+
+        pane = ttk.Panedwindow(self, orient="vertical")
+        pane.grid(row=2, column=0, sticky="nsew", padx=10, pady=(0, 10))
+
+        detail = ttk.Frame(pane)
+        detail.columnconfigure(0, weight=1)
+        detail.rowconfigure(0, weight=1)
+        pane.add(detail, weight=4)
+
+        columns = ("category", "name", "amount", "currency", "payment_status", "payment_method", "bank_account", "bank_accounting_code", "bank_voucher", "due_date", "obligation_id", "reference", "balance", "source", "notes")
+        self.tree = ttk.Treeview(detail, columns=columns, show="headings", selectmode="extended", height=17)
+        labels = {
+            "category": "Rubro",
+            "name": "Nombre / beneficiario",
+            "amount": "Monto",
+            "currency": "Moneda",
+            "payment_status": "Estado",
+            "payment_method": "Tipo pago",
+            "bank_account": "Cuenta destino / IBAN",
+            "bank_accounting_code": "Cuenta contable pago",
+            "bank_voucher": "Comprobante",
+            "due_date": "Fecha pago",
+            "obligation_id": "ITP ID",
+            "reference": "Referencia",
+            "balance": "Saldo ITP",
+            "source": "Fuente",
+            "notes": "Notas",
+        }
+        widths = {
+            "category": 140,
+            "name": 260,
+            "amount": 120,
+            "currency": 70,
+            "payment_status": 95,
+            "payment_method": 160,
+            "bank_account": 220,
+            "bank_accounting_code": 150,
+            "bank_voucher": 150,
+            "due_date": 95,
+            "obligation_id": 70,
+            "reference": 150,
+            "balance": 110,
+            "source": 95,
+            "notes": 290,
+        }
+        for col in columns:
+            self.tree.heading(col, text=labels[col])
+            self.tree.column(col, width=widths[col], anchor="e" if col == "amount" else "w")
+        self.tree.tag_configure("auto", background="#eef7f2")
+        self.tree.tag_configure("manual", background="#fff7ed")
+        self.tree.tag_configure("review", background="#fee2e2")
+        self.tree.tag_configure("paid", background="#dcfce7")
+        self.tree.tag_configure("pending", background="#fef3c7")
+        self.tree.bind("<Double-1>", lambda _e: self._edit_selected())
+        yscroll = ttk.Scrollbar(detail, orient="vertical", command=self.tree.yview)
+        xscroll = ttk.Scrollbar(detail, orient="horizontal", command=self.tree.xview)
+        self.tree.configure(yscrollcommand=yscroll.set, xscrollcommand=xscroll.set)
+        self.tree.grid(row=0, column=0, sticky="nsew")
+        yscroll.grid(row=0, column=1, sticky="ns")
+        xscroll.grid(row=1, column=0, sticky="ew")
+
+        summary = ttk.Frame(pane)
+        summary.columnconfigure(0, weight=1)
+        summary.columnconfigure(1, weight=1)
+        summary.rowconfigure(0, weight=1)
+        pane.add(summary, weight=1)
+
+        self.tree_category = self._summary_tree(summary, "Resumen por rubro")
+        self.tree_category.grid(row=0, column=0, sticky="nsew", padx=(0, 5))
+        self.tree_bank = self._summary_tree(summary, "Resumen por cuenta / destino")
+        self.tree_bank.grid(row=0, column=1, sticky="nsew", padx=(5, 0))
+
+    def _summary_tree(self, parent, title):
+        frame = ttk.LabelFrame(parent, text=title)
+        frame.columnconfigure(0, weight=1)
+        frame.rowconfigure(0, weight=1)
+        tree = ttk.Treeview(frame, columns=("key", "currency", "amount"), show="headings", height=7)
+        for col, label, width in (("key", "Concepto", 280), ("currency", "Moneda", 70), ("amount", "Total", 130)):
+            tree.heading(col, text=label)
+            tree.column(col, width=width, anchor="e" if col == "amount" else "w")
+        tree.grid(row=0, column=0, sticky="nsew")
+        return frame
+
+    def _summary_tree_widget(self, frame):
+        for child in frame.winfo_children():
+            if isinstance(child, ttk.Treeview):
+                return child
+        return None
+
+    def _toggle_maximize(self):
+        self._maximized = not self._maximized
+        try:
+            self.state("zoomed" if self._maximized else "normal")
+        except tk.TclError:
+            if self._maximized:
+                self.geometry(f"{self.winfo_screenwidth()}x{self.winfo_screenheight()}+0+0")
+            else:
+                self.geometry("1220x760")
+
+    def _row_key(self, row):
+        if row.get("obligation_id"):
+            return ("ITP", int(row.get("obligation_id")))
+        return (
+            "MANUAL",
+            str(row.get("category") or "").strip().upper(),
+            str(row.get("name") or "").strip().upper(),
+            str(row.get("currency") or "CRC").strip().upper(),
+            f"{self._money(row.get('amount')):.2f}",
+            str(row.get("reference") or "").strip().upper(),
+        )
+
+    def _row_key_text(self, row):
+        return "|".join(str(part) for part in self._row_key(row))
+
+    def _merge_generated_rows(self, generated, current):
+        merged = []
+        seen = set()
+        for row in current or []:
+            key = self._row_key(row)
+            if key in seen:
+                continue
+            seen.add(key)
+            merged.append(row)
+        for row in generated or []:
+            key = self._row_key(row)
+            if key in seen or key in self.suppressed_keys:
+                continue
+            seen.add(key)
+            merged.append(row)
+        return merged
+
+    def _load_preview(self, force=False):
+        try:
+            current_rows = list(self.rows) if force else []
+            data = get_itp_biweekly_obligations_preview_api(self.period_var.get().strip(), int(self.fortnight_var.get() or 1), force=force)
+            generated = data.get("rows") or []
+            self.rows = self._merge_generated_rows(generated, current_rows) if force else generated
+            self._render()
+        except Exception as exc:
+            messagebox.showerror("Obligaciones quincenales", f"No se pudo generar preview:\n{exc}", parent=self)
+
+    def _render(self):
+        self.tree.delete(*self.tree.get_children())
+        for idx, row in enumerate(self.rows):
+            source = str(row.get("source") or "").upper()
+            status = str(row.get("payment_status") or "").strip()
+            if not status:
+                status = "Listo" if self._ready_to_apply(row) else "Pendiente"
+            tag = "paid" if status == "Pagado" else ("pending" if status == "Pendiente" else ("review" if source == "REVISION" else ("manual" if source == "MANUAL" else "auto")))
+            self.tree.insert("", "end", iid=str(idx), tags=(tag,), values=(
+                row.get("category") or "",
+                row.get("name") or "",
+                self._fmt(row.get("amount")),
+                row.get("currency") or "CRC",
+                status,
+                _payment_label(row),
+                row.get("bank_account") or "",
+                row.get("bank_accounting_code") or "",
+                row.get("bank_voucher") or "",
+                row.get("due_date") or "",
+                row.get("obligation_id") or "",
+                row.get("reference") or "",
+                self._fmt(row.get("balance")) if row.get("obligation_id") else "",
+                row.get("source") or "",
+                row.get("notes") or "",
+            ))
+        self._render_summaries()
+
+    def _render_summaries(self):
+        by_category = defaultdict(float)
+        by_bank = defaultdict(float)
+        total_crc = 0.0
+        total_usd = 0.0
+        for row in self.rows:
+            amount = self._money(row.get("amount"))
+            currency = row.get("currency") or "CRC"
+            by_category[(row.get("category") or "Otros", currency)] += amount
+            payment_key = _payment_label(row) if _payment_label(row) != "Banco" else (row.get("bank_account") or "Sin cuenta")
+            by_bank[(payment_key, currency)] += amount
+            if currency == "CRC":
+                total_crc += amount
+            elif currency == "USD":
+                total_usd += amount
+        for frame, data in ((self.tree_category, by_category), (self.tree_bank, by_bank)):
+            tree = self._summary_tree_widget(frame)
+            tree.delete(*tree.get_children())
+            for (key, currency), amount in sorted(data.items()):
+                tree.insert("", "end", values=(key, currency, self._fmt(amount)))
+        self.total_var.set(f"CRC {total_crc:,.2f}")
+        self.total_usd_var.set(f"USD {total_usd:,.2f}")
+        self.count_var.set(f"{len(self.rows):,} lineas")
+
+    def _add_line(self, category):
+        line = self._line_dialog({"category": category, "currency": "CRC", "source": "MANUAL"})
+        if line:
+            self.rows.append(line)
+            self._render()
+
+    def _edit_selected(self):
+        selected = self.tree.focus()
+        if not selected:
+            messagebox.showwarning("Obligaciones quincenales", "Selecciona una linea.", parent=self)
+            return
+        idx = int(selected)
+        line = self._line_dialog(dict(self.rows[idx]))
+        if line:
+            self.rows[idx] = line
+            self._render()
+
+    def _delete_selected(self):
+        selected = self.tree.selection()
+        if not selected:
+            return
+        indexes = sorted((int(item) for item in selected), reverse=True)
+        for idx in indexes:
+            if 0 <= idx < len(self.rows):
+                self.suppressed_keys.add(self._row_key(self.rows[idx]))
+                del self.rows[idx]
+        self._render()
+
+    def _line_dialog(self, initial):
+        win = tk.Toplevel(self)
+        win.title("Linea de obligacion")
+        win.geometry("620x430")
+        win.transient(self)
+        win.grab_set()
+        vars_ = {
+            "category": tk.StringVar(value=initial.get("category") or "Otros"),
+            "name": tk.StringVar(value=initial.get("name") or ""),
+            "amount": tk.StringVar(value=str(initial.get("amount") or "")),
+            "currency": tk.StringVar(value=initial.get("currency") or "CRC"),
+            "bank_account": tk.StringVar(value=initial.get("bank_account") or ""),
+            "payment_method": tk.StringVar(value=_payment_label(initial)),
+            "bank_accounting_code": tk.StringVar(value=initial.get("bank_accounting_code") or "1.1.02.02.01"),
+            "bank_voucher": tk.StringVar(value=initial.get("bank_voucher") or ""),
+            "due_date": tk.StringVar(value=initial.get("due_date") or ""),
+            "notes": tk.StringVar(value=initial.get("notes") or ""),
+            "reference": tk.StringVar(value=initial.get("reference") or ""),
+            "balance": tk.StringVar(value=str(initial.get("balance") or initial.get("amount") or "")),
+        }
+        result = {}
+        labels = [
+            ("Rubro", "category"),
+            ("Nombre / beneficiario", "name"),
+            ("Monto", "amount"),
+            ("Moneda", "currency"),
+            ("Tipo de pago", "payment_method"),
+            ("Cuenta destino / IBAN", "bank_account"),
+            ("Cuenta contable pago", "bank_accounting_code"),
+            ("Comprobante", "bank_voucher"),
+            ("Fecha pago", "due_date"),
+            ("Referencia ITP", "reference"),
+            ("Saldo ITP", "balance"),
+            ("Notas", "notes"),
+        ]
+        for idx, (label, key) in enumerate(labels):
+            ttk.Label(win, text=label).grid(row=idx, column=0, sticky="w", padx=12, pady=6)
+            if key == "category":
+                widget = ttk.Combobox(win, textvariable=vars_[key], values=CATEGORIES, state="readonly")
+            elif key == "currency":
+                widget = ttk.Combobox(win, textvariable=vars_[key], values=["CRC", "USD"], state="readonly")
+            elif key == "payment_method":
+                widget = ttk.Combobox(win, textvariable=vars_[key], values=list(PAYMENT_METHOD_CODES.keys()), state="readonly")
+            elif key == "bank_accounting_code":
+                widget = ttk.Combobox(win, textvariable=vars_[key], values=BANK_ACCOUNT_OPTIONS)
+            else:
+                widget = ttk.Entry(win, textvariable=vars_[key])
+            widget.grid(row=idx, column=1, sticky="ew", padx=12, pady=6)
+        win.columnconfigure(1, weight=1)
+
+        def sync_payment_method(*_args):
+            if vars_["payment_method"].get() == CARD_3155_LABEL:
+                vars_["bank_accounting_code"].set(CARD_3155_CODE)
+                if not vars_["bank_account"].get().strip():
+                    vars_["bank_account"].set("BAC")
+            elif vars_["payment_method"].get() == HAZEL_LABEL:
+                vars_["bank_accounting_code"].set(HAZEL_CODE)
+                vars_["bank_account"].set("Hazel Barrantes")
+
+        vars_["payment_method"].trace_add("write", sync_payment_method)
+        sync_payment_method()
+
+        def ok():
+            try:
+                amount = self._money(vars_["amount"].get())
+            except Exception:
+                messagebox.showwarning("Monto", "Monto invalido.", parent=win)
+                return
+            payment_method = PAYMENT_METHOD_CODES.get(vars_["payment_method"].get(), "BANK")
+            bank_code = vars_["bank_accounting_code"].get().strip()
+            bank_name = initial.get("bank_accounting_name") or ""
+            bank_account = vars_["bank_account"].get().strip()
+            if payment_method == "CARD_BAC_3155":
+                bank_code = CARD_3155_CODE
+                bank_name = CARD_3155_NAME
+                bank_account = bank_account or "BAC"
+            elif payment_method == "THIRD_PARTY_HAZEL":
+                bank_code = HAZEL_CODE
+                bank_name = HAZEL_NAME
+                bank_account = "Hazel Barrantes"
+            result.update({
+                "category": vars_["category"].get(),
+                "name": vars_["name"].get().strip(),
+                "amount": amount,
+                "currency": vars_["currency"].get(),
+                "payment_method": payment_method,
+                "payment_card_last4": "3155" if payment_method == "CARD_BAC_3155" else "",
+                "bank_account": bank_account,
+                "bank_accounting_code": bank_code,
+                "bank_accounting_name": bank_name,
+                "bank_voucher": vars_["bank_voucher"].get().strip(),
+                "due_date": vars_["due_date"].get().strip(),
+                "source": initial.get("source") or "MANUAL",
+                "notes": vars_["notes"].get().strip(),
+                "obligation_id": initial.get("obligation_id"),
+                "reference": vars_["reference"].get().strip(),
+                "balance": self._money(vars_["balance"].get()),
+            })
+            win.destroy()
+
+        footer = ttk.Frame(win)
+        footer.grid(row=len(labels), column=0, columnspan=2, sticky="e", padx=12, pady=12)
+        ttk.Button(footer, text="Guardar", command=ok).pack(side="left", padx=4)
+        ttk.Button(footer, text="Cancelar", command=win.destroy).pack(side="left", padx=4)
+        self.wait_window(win)
+        return result or None
+
+    def _export_excel(self):
+        if not self.rows:
+            messagebox.showwarning("Exportar", "No hay lineas para exportar.", parent=self)
+            return
+        path = filedialog.asksaveasfilename(
+            parent=self,
+            defaultextension=".xlsx",
+            initialfile=f"obligaciones_quincenales_{self.period_var.get()}_Q{self.fortnight_var.get()}.xlsx",
+            filetypes=[("Excel", "*.xlsx")],
+        )
+        if not path:
+            return
+        wb = Workbook()
+        ws = wb.active
+        ws.title = "Obligaciones"
+        ws.append(["Periodo", self.period_var.get(), "Quincena", self.fortnight_var.get()])
+        ws.append([])
+        headers = ["Rubro", "Nombre / beneficiario", "Monto a pagar", "Moneda", "Estado", "Tipo pago", "Tarjeta", "Cuenta destino / IBAN", "Cuenta contable pago", "Comprobante", "Fecha pago", "ITP ID", "Referencia", "Saldo ITP", "Pago parcial", "Fuente", "Notas"]
+        ws.append(headers)
+        for row in self.rows:
+            amount = self._money(row.get("amount"))
+            balance = self._money(row.get("balance"))
+            ws.append([
+                row.get("category"),
+                row.get("name"),
+                amount,
+                row.get("currency"),
+                row.get("payment_status") or ("Listo" if self._ready_to_apply(row) else "Pendiente"),
+                _payment_label(row),
+                row.get("payment_card_last4") or "",
+                row.get("bank_account"),
+                row.get("bank_accounting_code"),
+                row.get("bank_voucher"),
+                row.get("due_date"),
+                row.get("obligation_id") or "",
+                row.get("reference") or "",
+                balance if row.get("obligation_id") else "",
+                "SI" if row.get("obligation_id") and amount < balance else "",
+                row.get("source"),
+                row.get("notes"),
+            ])
+        ws2 = wb.create_sheet("Resumen")
+        ws2.append(["Resumen por rubro"])
+        ws2.append(["Rubro", "Moneda", "Total"])
+        for (key, currency), amount in sorted(self._summary_data("category").items()):
+            ws2.append([key, currency, amount])
+        ws2.append([])
+        ws2.append(["Resumen por cuenta / destino"])
+        ws2.append(["Cuenta / destino", "Moneda", "Total"])
+        for (key, currency), amount in sorted(self._summary_data("payment_destination").items()):
+            ws2.append([key, currency, amount])
+        ws3 = wb.create_sheet("Aplicacion ITP")
+        ws3.append(["Lineas vinculadas a obligaciones pendientes"])
+        ws3.append(["ITP ID", "Referencia", "Beneficiario", "Saldo ITP", "Monto a pagar", "Moneda", "Pago parcial", "Fecha pago", "Tipo pago", "Cuenta destino", "Cuenta contable pago", "Comprobante"])
+        for row in self.rows:
+            if not row.get("obligation_id"):
+                continue
+            amount = self._money(row.get("amount"))
+            balance = self._money(row.get("balance"))
+            ws3.append([
+                row.get("obligation_id"),
+                row.get("reference"),
+                row.get("name"),
+                balance,
+                amount,
+                row.get("currency"),
+                "SI" if amount < balance else "NO",
+                row.get("due_date"),
+                _payment_label(row),
+                row.get("bank_account"),
+                row.get("bank_accounting_code"),
+                row.get("bank_voucher"),
+            ])
+        self._style_workbook(wb)
+        wb.save(path)
+        messagebox.showinfo("Exportar", f"Excel generado correctamente:\n{path}", parent=self)
+
+    def _missing_required(self):
+        missing = []
+        for idx, row in enumerate(self.rows, start=1):
+            if self._money(row.get("amount")) <= 0:
+                continue
+            if not str(row.get("bank_accounting_code") or "").strip():
+                missing.append(f"Linea {idx}: falta cuenta contable pago")
+            if not str(row.get("bank_voucher") or "").strip():
+                missing.append(f"Linea {idx}: falta comprobante")
+        return missing
+
+    def _ready_to_apply(self, row):
+        if self._money(row.get("amount")) <= 0:
+            return False
+        return all(str(row.get(key) or "").strip() for key in ("bank_accounting_code", "bank_voucher", "due_date"))
+
+    def _save_draft(self):
+        result = post_itp_biweekly_obligations_save_draft_api({
+            "period": self.period_var.get().strip(),
+            "fortnight": int(self.fortnight_var.get() or 1),
+            "rows": self.rows,
+        })
+        if result.get("status") == "error":
+            messagebox.showerror("Guardar borrador", result.get("error") or "No se pudo guardar.", parent=self)
+            return
+        messagebox.showinfo(
+            "Guardar borrador",
+            f"Borrador guardado correctamente.\nLineas guardadas: {result.get('saved', 0)}",
+            parent=self,
+        )
+
+    def _selected_rows_for_apply(self):
+        selected = self.tree.selection()
+        rows = []
+        for item in selected:
+            idx = int(item)
+            if 0 <= idx < len(self.rows):
+                rows.append(self.rows[idx])
+        return rows
+
+    def _save_and_post_selected(self):
+        selected_rows = self._selected_rows_for_apply()
+        if not selected_rows:
+            messagebox.showwarning("Aplicar seleccion", "Selecciona una o varias lineas.", parent=self)
+            return
+        self._save_and_post(rows_to_apply=selected_rows, selected_only=True)
+
+    def _save_and_post(self, rows_to_apply=None, selected_only=False):
+        target_rows = rows_to_apply or self.rows
+        apply_keys = [self._row_key_text(row) for row in target_rows] if selected_only else []
+        ready = [row for row in target_rows if self._ready_to_apply(row)]
+        pending = [row for row in target_rows if self._money(row.get("amount")) > 0 and not self._ready_to_apply(row)]
+        if not ready:
+            messagebox.showwarning(
+                "Aplicar pagos y crear asientos",
+                "No hay lineas listas para aplicar. Completa comprobante, fecha y cuenta contable en al menos una linea pagada.",
+                parent=self,
+            )
+            return
+        total_crc = sum(self._money(row.get("amount")) for row in target_rows if (row.get("currency") or "CRC") == "CRC")
+        scope = "seleccionadas" if selected_only else "visibles"
+        ok = messagebox.askyesno(
+            "Aplicar pagos y crear asientos",
+            f"Se aplicaran solo las lineas {scope} que tengan comprobante, fecha y cuenta contable; las demas quedaran pendientes en pantalla/borrador.\n\n"
+            f"Lineas listas: {len(ready):,}\n"
+            f"Lineas pendientes: {len(pending):,}\n"
+            f"Total CRC visible: {total_crc:,.2f}\n\nContinuar?",
+            parent=self,
+        )
+        if not ok:
+            return
+        result = post_itp_biweekly_obligations_apply_api({
+            "period": self.period_var.get().strip(),
+            "fortnight": int(self.fortnight_var.get() or 1),
+            "rows": self.rows,
+            "apply_keys": apply_keys,
+        })
+        if result.get("status") == "error":
+            messagebox.showerror("Aplicar pagos y crear asientos", result.get("error") or "No se pudo guardar.", parent=self)
+        else:
+            messagebox.showinfo(
+                "Aplicar pagos y crear asientos",
+                f"Proceso aplicado.\nBatch: {result.get('batch_id')}\nLineas pagadas: {result.get('saved')}\nAsientos: {result.get('posted')}\nPagos ITP: {result.get('applied')}\nPendientes en borrador: {result.get('pending', 0)}",
+                parent=self,
+            )
+            applied_keys = {self._row_key(row) for row in ready}
+            for row in self.rows:
+                if self._row_key(row) in applied_keys:
+                    row["payment_status"] = "Pagado"
+                elif self._money(row.get("amount")) > 0 and not self._ready_to_apply(row):
+                    row["payment_status"] = "Pendiente"
+            self._render()
+
+    def _summary_data(self, key):
+        data = defaultdict(float)
+        for row in self.rows:
+            if key == "payment_destination":
+                label = _payment_label(row)
+                value = label if label != "Banco" else (row.get("bank_account") or "Sin cuenta")
+            else:
+                value = row.get(key) or ("Sin cuenta" if key == "bank_account" else "Otros")
+            data[(value, row.get("currency") or "CRC")] += self._money(row.get("amount"))
+        return data
+
+    def _style_workbook(self, wb):
+        header_fill = PatternFill("solid", fgColor="0F4C81")
+        header_font = Font(color="FFFFFF", bold=True)
+        thin = Side(style="thin", color="D0D5DD")
+        for ws in wb.worksheets:
+            ws.freeze_panes = "A4" if ws.title == "Obligaciones" else "A3"
+            for row in ws.iter_rows():
+                for cell in row:
+                    cell.border = Border(left=thin, right=thin, top=thin, bottom=thin)
+                    cell.alignment = Alignment(vertical="center")
+                    if isinstance(cell.value, (int, float)) and cell.column >= 3:
+                        cell.number_format = '#,##0.00'
+            for row in (1, 2, 3):
+                for cell in ws[row]:
+                    if cell.value:
+                        cell.fill = header_fill
+                        cell.font = header_font
+            if ws.max_row > 3 and ws.max_column:
+                ws.auto_filter.ref = ws.dimensions
+            for col in ws.columns:
+                width = max(len(str(cell.value or "")) for cell in col) + 2
+                ws.column_dimensions[col[0].column_letter].width = min(max(width, 12), 42)
+
+    @staticmethod
+    def _money(value):
+        try:
+            return float(str(value or 0).replace(",", ""))
+        except Exception:
+            return 0.0
+
+    @staticmethod
+    def _fmt(value):
+        return f"{PopupObligacionesQuincenales._money(value):,.2f}"

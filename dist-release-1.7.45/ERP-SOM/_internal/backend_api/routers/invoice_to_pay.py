@@ -1,0 +1,3650 @@
+from fastapi import (
+    APIRouter,
+    Depends,
+    HTTPException,
+    Query,
+    Header,
+    UploadFile,
+    File,
+    Form,
+    Body,
+)
+from fastapi.responses import StreamingResponse
+from psycopg2.extras import RealDictCursor
+from psycopg2.extras import Json
+from datetime import date, datetime, timedelta
+from decimal import Decimal, ROUND_HALF_UP
+from typing import Optional
+import calendar
+import io
+import os
+import re
+import shutil
+import time
+import unicodedata
+import uuid
+
+from database import get_db
+from rbac_service import has_permission
+from services.finance_audit import actor_from_headers, audit_event, row_to_dict
+from services.accounting_bank_rules import external_surveyor_settlement, resolve_itp_bank
+from services.accounting_auto import display_itp_invoice_reference
+from services.employee_payee_rules import (
+    deactivate_employee_itp_obligations,
+    is_employee_payee,
+)
+from services.itp_surveyor_reconciliation import reconcile_surveyor_invoice_obligations
+from services.tenanting import company_code as normalize_company_code
+from routers.hr_ot_log import _employee_hours_policy
+
+
+router = APIRouter(
+    prefix="/invoice-to-pay",
+    tags=["Finance - Invoice to Pay"]
+)
+
+BIWEEKLY_EXPORT_CACHE: dict[str, dict] = {}
+CARD_3155_METHOD = "CARD_BAC_3155"
+CARD_3155_LAST4 = "3155"
+CARD_3155_LABEL = "Tarjeta empresarial BAC 3155"
+CARD_PAYABLE_CODE = "2.1.02.10"
+CARD_PAYABLE_NAME = "Tarjeta corporativa BAC por pagar"
+HAZEL_PAYMENT_METHOD = "THIRD_PARTY_HAZEL"
+HAZEL_PAYMENT_LABEL = "Pagado por Hazel Barrantes"
+HAZEL_CONTRIBUTION_CODE = "3.1.99"
+HAZEL_CONTRIBUTION_NAME = "Aportes de terceros - Hazel Barrantes"
+EMPLOYEE_WORKER_CCSS_RATE = Decimal("0.1083")
+NET_BIWEEKLY_EMPLOYEE_NAMES = ("erasmo", "manfred")
+EXCLUDED_BIWEEKLY_PAYROLL_NAMES = ("diana", "pabel")
+
+
+def _cleanup_biweekly_export_cache():
+    now = time.time()
+    expired = [ticket for ticket, item in BIWEEKLY_EXPORT_CACHE.items() if now - float(item.get("created_at") or 0) > 600]
+    for ticket in expired:
+        BIWEEKLY_EXPORT_CACHE.pop(ticket, None)
+
+
+def _ensure_company_column(cur):
+    cur.execute("""
+        ALTER TABLE payment_obligations
+        ADD COLUMN IF NOT EXISTS company_code VARCHAR(30) NOT NULL DEFAULT 'MSL-CR'
+    """)
+    cur.execute("ALTER TABLE payment_obligations ADD COLUMN IF NOT EXISTS payment_method TEXT NOT NULL DEFAULT 'BANK'")
+    cur.execute("ALTER TABLE payment_obligations ADD COLUMN IF NOT EXISTS payment_card_last4 TEXT")
+    cur.execute("ALTER TABLE payment_obligations ADD COLUMN IF NOT EXISTS payment_reference TEXT")
+    cur.execute("ALTER TABLE payment_obligations ADD COLUMN IF NOT EXISTS electronic_key TEXT")
+    cur.execute("ALTER TABLE payment_obligations ADD COLUMN IF NOT EXISTS payment_bank TEXT")
+    cur.execute("ALTER TABLE payment_obligations ADD COLUMN IF NOT EXISTS payment_bank_account_code TEXT")
+    cur.execute("ALTER TABLE payment_obligations ADD COLUMN IF NOT EXISTS payment_bank_account_name TEXT")
+    cur.execute("ALTER TABLE payment_obligations ADD COLUMN IF NOT EXISTS paid_with_card BOOLEAN NOT NULL DEFAULT FALSE")
+    cur.execute("ALTER TABLE payment_obligations ADD COLUMN IF NOT EXISTS card_paid_at DATE")
+    cur.execute("ALTER TABLE payment_obligations ADD COLUMN IF NOT EXISTS card_holder_name TEXT")
+    cur.execute("ALTER TABLE payment_obligations ADD COLUMN IF NOT EXISTS planned_payment_date DATE")
+
+
+def _normalize_payment_method(value: str | None) -> str:
+    text = str(value or "").strip().upper()
+    if "HAZEL" in text or text == HAZEL_PAYMENT_METHOD:
+        return HAZEL_PAYMENT_METHOD
+    if "3155" in text or "CARD" in text or "TARJETA" in text:
+        return CARD_3155_METHOD
+    return "BANK"
+
+
+def _money(value) -> Decimal:
+    return Decimal(str(value or 0).replace(",", "")).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+
+
+def _normalize_biweekly_category(value: str | None) -> str:
+    text = unicodedata.normalize("NFKD", str(value or "").strip())
+    ascii_text = text.encode("ascii", "ignore").decode("ascii").upper()
+    mapping = {
+        "VIATICOS": "Viáticos",
+        "TELEFONIA": "Telefonia",
+        "TARJETAS DE CREDITO": "Tarjetas de credito",
+    }
+    return mapping.get(ascii_text, str(value or "").strip() or "Otros")
+
+
+def _employee_full_name(emp: dict) -> str:
+    return f"{emp.get('nombre') or ''} {emp.get('apellidos') or ''}".strip()
+
+
+def _uses_net_biweekly_rule(emp: dict) -> bool:
+    name = _employee_full_name(emp).lower()
+    return any(token in name for token in NET_BIWEEKLY_EMPLOYEE_NAMES)
+
+
+def _employee_month_overtime_crc(cur, emp: dict, period: str) -> Decimal:
+    usuario = str(emp.get("usuario") or "").strip()
+    if not usuario:
+        return Decimal("0.00")
+    year, month = [int(part) for part in str(period).split("-")[:2]]
+    cur.execute(
+        """
+        SELECT COALESCE(SUM(duracion_horas), 0) AS total
+        FROM hr_ot_log
+        WHERE lower(usuario) = lower(%s)
+          AND estado = 'APROBADO'
+          AND EXTRACT(YEAR FROM fecha_inicio) = %s
+          AND EXTRACT(MONTH FROM fecha_inicio) = %s
+        """,
+        (usuario, year, month),
+    )
+    hours = Decimal(str((cur.fetchone() or {}).get("total") or 0))
+    policy = _employee_hours_policy(emp)
+    ordinary_limit = Decimal(str(policy.get("tope_ordinario") or 0))
+    extra_rate = Decimal(str(policy.get("tarifa_hora_extra") or 0))
+    overtime_hours = max(hours - ordinary_limit, Decimal("0"))
+    return _money(overtime_hours * extra_rate)
+
+
+def _employee_biweekly_pay(cur, emp: dict, period: str, fortnight: int) -> tuple[Decimal, str]:
+    salary = _money(emp.get("salario"))
+    pago = str(emp.get("pago") or "").upper()
+    if not _uses_net_biweekly_rule(emp):
+        divisor = Decimal("2") if "QUINC" in pago else Decimal("1")
+        return _money(salary / divisor), "Salario sugerido por quincena desde Master Data Empleados."
+
+    gross_base = salary / Decimal("2")
+    overtime = _employee_month_overtime_crc(cur, emp, period) if int(fortnight or 1) == 2 else Decimal("0.00")
+    gross_period = gross_base + overtime
+    worker_ccss = _money(gross_period * EMPLOYEE_WORKER_CCSS_RATE)
+    notes = "Salario neto quincenal: salario mensual/2 menos CCSS obrero 10.83%."
+    if overtime:
+        notes += f" Incluye horas extra aprobadas sobre excedente: CRC {float(overtime):,.2f} bruto."
+    return _money(gross_period - worker_ccss), notes
+
+
+def _previous_period(period: str) -> str:
+    year, month = [int(part) for part in str(period).split("-")[:2]]
+    month -= 1
+    if month == 0:
+        year -= 1
+        month = 12
+    return f"{year:04d}-{month:02d}"
+
+
+def _easter_sunday(year: int) -> date:
+    a = year % 19
+    b = year // 100
+    c = year % 100
+    d = b // 4
+    e = b % 4
+    f = (b + 8) // 25
+    g = (b - f + 1) // 3
+    h = (19 * a + b - d - g + 15) % 30
+    i = c // 4
+    k = c % 4
+    l = (32 + 2 * e + 2 * i - h - k) % 7
+    m = (a + 11 * h + 22 * l) // 451
+    month = (h + l - 7 * m + 114) // 31
+    day = ((h + l - 7 * m + 114) % 31) + 1
+    return date(year, month, day)
+
+
+def _cr_holidays(year: int) -> set[date]:
+    easter = _easter_sunday(year)
+    return {
+        date(year, 1, 1),
+        easter - timedelta(days=3),
+        easter - timedelta(days=2),
+        date(year, 4, 11),
+        date(year, 5, 1),
+        date(year, 7, 25),
+        date(year, 8, 2),
+        date(year, 8, 15),
+        date(year, 9, 15),
+        date(year, 12, 1),
+        date(year, 12, 25),
+    }
+
+
+def _previous_business_day(value: date) -> date:
+    holidays = _cr_holidays(value.year) | _cr_holidays(value.year - 1)
+    current = value
+    while current.weekday() >= 5 or current in holidays:
+        current -= timedelta(days=1)
+    return current
+
+
+def _fortnight_due_date(period: str, fortnight: int) -> str:
+    year, month = [int(part) for part in str(period).split("-")[:2]]
+    day = 15 if int(fortnight or 1) == 1 else min(30, calendar.monthrange(year, month)[1])
+    return _previous_business_day(date(year, month, day)).isoformat()
+
+
+FIXED_BIWEEKLY_PAYMENT_CATEGORIES = {
+    "PLANILLA",
+    "CCSS",
+    "IVA",
+    "TARJETAS DE CREDITO",
+    "TARJETAS DE CRÉDITO",
+    "ALQUILER",
+    "INTERNET",
+    "TELEFONIA",
+    "TELEFONÍA",
+}
+
+
+def _biweekly_payment_date(period: str, fortnight: int, value: str | None, category: str | None = None) -> str:
+    fallback = _fortnight_due_date(period, fortnight)
+    normalized_category = unicodedata.normalize("NFKD", str(category or "").strip()).encode("ascii", "ignore").decode("ascii").upper()
+    if normalized_category in FIXED_BIWEEKLY_PAYMENT_CATEGORIES:
+        return fallback
+    text = str(value or "").strip()
+    if not text:
+        return fallback
+    try:
+        parsed = datetime.strptime(text, "%Y-%m-%d").date()
+    except Exception:
+        return fallback
+    if parsed.strftime("%Y-%m") != str(period):
+        return fallback
+    return parsed.isoformat()
+
+
+def _fortnight_window(period: str, fortnight: int) -> tuple[date, date]:
+    start = _month_start(period)
+    if int(fortnight or 1) == 1:
+        return start, date(start.year, start.month, 15)
+    return date(start.year, start.month, 16), _add_months(start, 1) - timedelta(days=1)
+
+
+def _month_start(period: str) -> date:
+    year, month = [int(part) for part in str(period).split("-")[:2]]
+    return date(year, month, 1)
+
+
+def _add_months(value: date, months: int) -> date:
+    month_index = value.year * 12 + value.month - 1 + int(months)
+    return date(month_index // 12, month_index % 12 + 1, 1)
+
+
+def _periods_between(start: date, end: date) -> list[str]:
+    periods = []
+    current = date(start.year, start.month, 1)
+    last = date(end.year, end.month, 1)
+    while current <= last:
+        periods.append(f"{current.year:04d}-{current.month:02d}")
+        current = _add_months(current, 1)
+    return periods
+
+
+def _coerce_date(value, fallback: date) -> date:
+    if isinstance(value, date):
+        return value
+    text = str(value or "").strip()
+    if not text:
+        return fallback
+    try:
+        return datetime.strptime(text[:10], "%Y-%m-%d").date()
+    except Exception:
+        return fallback
+
+
+def _biweekly_row_key(row: dict) -> tuple:
+    obligation_id = row.get("obligation_id")
+    if obligation_id:
+        return ("ITP", int(obligation_id))
+    return (
+        "MANUAL",
+        _normalize_biweekly_category(row.get("category")).upper(),
+        str(row.get("name") or "").strip().upper(),
+        str(row.get("currency") or "CRC").strip().upper(),
+        str(_money(row.get("amount"))),
+        str(row.get("reference") or "").strip().upper(),
+    )
+
+
+def _biweekly_row_key_text(row: dict) -> str:
+    return "|".join(str(part) for part in _biweekly_row_key(row))
+
+
+def _biweekly_row_identity(row: dict) -> tuple:
+    obligation_id = row.get("obligation_id")
+    if obligation_id:
+        return ("ITP", int(obligation_id))
+    return (
+        "MANUAL",
+        _normalize_biweekly_category(row.get("category")).upper(),
+        str(row.get("name") or "").strip().upper(),
+        str(row.get("currency") or "CRC").strip().upper(),
+        str(row.get("reference") or "").strip().upper(),
+    )
+
+
+def _biweekly_row_identity_text(row: dict) -> str:
+    return "|".join(str(part) for part in _biweekly_row_identity(row))
+
+
+def _append_unique_biweekly_row(rows: list[dict], seen: set, row: dict) -> None:
+    key = _biweekly_row_key(row)
+    if key in seen:
+        return
+    seen.add(key)
+    rows.append(row)
+
+
+def _biweekly_match_tokens(value: str) -> set[str]:
+    raw = unicodedata.normalize("NFKD", str(value or ""))
+    ascii_text = raw.encode("ascii", "ignore").decode("ascii").upper()
+    tokens = set(re.findall(r"[A-Z0-9]{4,}", ascii_text))
+    return tokens - {"PAGO", "FACTURA", "LINEA", "MANUAL", "PARTE", "DESDE", "HASTA"}
+
+
+def _filter_open_biweekly_rows(cur, company: str, rows: list[dict]) -> list[dict]:
+    if not rows:
+        return []
+    obligation_ids_by_company: dict[str, list[int]] = {}
+    for row in rows:
+        if str(row.get("obligation_id") or "").strip().isdigit():
+            row_company = normalize_company_code(header_value=row.get("origin_company_code") or row.get("company_code") or company)
+            obligation_ids_by_company.setdefault(row_company, []).append(int(row.get("obligation_id")))
+    open_by_id = {}
+    for obligation_company, raw_ids in obligation_ids_by_company.items():
+        obligation_ids = sorted(set(raw_ids))
+        cur.execute(
+            """
+            SELECT id, company_code, payee_name, reference, balance, status, active
+            FROM payment_obligations
+            WHERE company_code=%s
+              AND id = ANY(%s)
+            """,
+            (obligation_company, obligation_ids),
+        )
+        for ob in cur.fetchall() or []:
+            item = dict(ob)
+            if (
+                bool(item.get("active", True))
+                and str(item.get("status") or "").upper() in {"PENDING", "PARTIAL"}
+                and _money(item.get("balance")) > 0
+            ):
+                open_by_id[(item["company_code"], int(item["id"]))] = item
+
+    cur.execute(
+        """
+        SELECT id, payee_name, reference, total, balance, status, active, last_payment_date, notes
+        FROM payment_obligations
+        WHERE company_code=%s
+          AND COALESCE(active, TRUE)=TRUE
+          AND status IN ('PAID','REPLACED')
+          AND COALESCE(balance,0)=0
+          AND COALESCE(total,0) > 0
+          AND (last_payment_date IS NOT NULL OR status='PAID')
+        ORDER BY COALESCE(last_payment_date, due_date, issue_date) DESC NULLS LAST, id DESC
+        LIMIT 500
+        """,
+        (company,),
+    )
+    closed = []
+    for ob in cur.fetchall() or []:
+        item = dict(ob)
+        item["_amount"] = _money(item.get("total"))
+        item["_tokens"] = _biweekly_match_tokens(
+            " ".join(str(item.get(key) or "") for key in ("payee_name", "reference", "notes"))
+        )
+        closed.append(item)
+
+    filtered = []
+    for row in rows:
+        item = dict(row)
+        raw_obligation_id = str(item.get("obligation_id") or "").strip()
+        if raw_obligation_id.isdigit():
+            row_company = normalize_company_code(header_value=item.get("origin_company_code") or item.get("company_code") or company)
+            open_obligation = open_by_id.get((row_company, int(raw_obligation_id)))
+            if not open_obligation:
+                continue
+            item["origin_company_code"] = row_company
+            invoice_reference = display_itp_invoice_reference(open_obligation.get("reference"))
+            item["reference"] = invoice_reference
+            item["notes"] = f"Aplicar pago a ITP #{raw_obligation_id} | Factura: {invoice_reference}"
+            if open_obligation.get("payee_name"):
+                item["name"] = open_obligation.get("payee_name")
+            item["amount"] = float(_money(open_obligation.get("balance")))
+            item["balance"] = float(_money(open_obligation.get("balance")))
+            filtered.append(item)
+            continue
+
+        amount = _money(item.get("amount"))
+        if amount <= 0:
+            filtered.append(item)
+            continue
+        text = " ".join(str(item.get(key) or "") for key in ("name", "reference", "notes"))
+        tokens = _biweekly_match_tokens(text)
+        if tokens:
+            matched_closed = any(
+                abs(closed_item["_amount"] - amount) <= Decimal("0.01")
+                and len(tokens.intersection(closed_item["_tokens"])) >= 2
+                for closed_item in closed
+            )
+            if matched_closed:
+                continue
+        filtered.append(item)
+    return filtered
+
+
+def _dedupe_biweekly_rows_against_itp(rows: list[dict]) -> list[dict]:
+    itp_rows = []
+    for row in rows or []:
+        if row.get("obligation_id"):
+            text = " ".join(str(row.get(key) or "") for key in ("name", "reference", "notes"))
+            itp_rows.append({
+                "amount": _money(row.get("amount")),
+                "tokens": _biweekly_match_tokens(text),
+                "text": unicodedata.normalize("NFKD", text).encode("ascii", "ignore").decode("ascii").upper(),
+            })
+    if not itp_rows:
+        return rows
+    result = []
+    for row in rows or []:
+        if row.get("obligation_id"):
+            result.append(row)
+            continue
+        amount = _money(row.get("amount"))
+        text = " ".join(str(row.get(key) or "") for key in ("name", "reference", "notes"))
+        ascii_text = unicodedata.normalize("NFKD", text).encode("ascii", "ignore").decode("ascii").upper()
+        tokens = _biweekly_match_tokens(text)
+        is_duplicate = any(
+            amount > 0
+            and abs(item["amount"] - amount) <= Decimal("0.01")
+            and (
+                (
+                    len(tokens.intersection(item["tokens"])) >= 1
+                    and any(len(token) >= 10 for token in tokens.intersection(item["tokens"]))
+                )
+                or any(len(token) >= 10 and token in item["text"] for token in tokens)
+                or any(len(token) >= 10 and token in ascii_text for token in item["tokens"])
+            )
+            for item in itp_rows
+        )
+        if not is_duplicate:
+            result.append(row)
+    return result
+
+
+def _ensure_biweekly_schema(cur):
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS itp_biweekly_payment_batches (
+            id BIGSERIAL PRIMARY KEY,
+            company_code TEXT NOT NULL,
+            period TEXT NOT NULL,
+            fortnight INTEGER NOT NULL,
+            created_by TEXT,
+            created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+            status TEXT NOT NULL DEFAULT 'APPLIED'
+        )
+    """)
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS itp_biweekly_payment_lines (
+            id BIGSERIAL PRIMARY KEY,
+            batch_id BIGINT REFERENCES itp_biweekly_payment_batches(id) ON DELETE CASCADE,
+            company_code TEXT NOT NULL,
+            category TEXT NOT NULL,
+            beneficiary TEXT NOT NULL,
+            amount NUMERIC(18,2) NOT NULL,
+            currency TEXT NOT NULL DEFAULT 'CRC',
+            amount_crc NUMERIC(18,2) NOT NULL DEFAULT 0,
+            destination_account TEXT,
+            bank_accounting_code TEXT NOT NULL,
+            bank_accounting_name TEXT,
+            bank_voucher TEXT NOT NULL,
+            payment_date DATE NOT NULL,
+            obligation_id BIGINT,
+            reference TEXT,
+            source TEXT,
+            notes TEXT,
+            accounting_entry_id INTEGER,
+            created_at TIMESTAMP NOT NULL DEFAULT NOW()
+        )
+    """)
+    cur.execute("ALTER TABLE payment_obligations ADD COLUMN IF NOT EXISTS last_payment_date DATE")
+    cur.execute("ALTER TABLE payment_obligations ADD COLUMN IF NOT EXISTS payment_bank_account_code TEXT")
+    cur.execute("ALTER TABLE payment_obligations ADD COLUMN IF NOT EXISTS payment_bank_account_name TEXT")
+    cur.execute("ALTER TABLE payment_obligations ADD COLUMN IF NOT EXISTS payment_method TEXT NOT NULL DEFAULT 'BANK'")
+    cur.execute("ALTER TABLE payment_obligations ADD COLUMN IF NOT EXISTS payment_card_last4 TEXT")
+    cur.execute("ALTER TABLE payment_obligations ADD COLUMN IF NOT EXISTS paid_with_card BOOLEAN NOT NULL DEFAULT FALSE")
+    cur.execute("ALTER TABLE payment_obligations ADD COLUMN IF NOT EXISTS card_paid_at DATE")
+    cur.execute("ALTER TABLE payment_obligations ADD COLUMN IF NOT EXISTS card_holder_name TEXT")
+    cur.execute("ALTER TABLE itp_biweekly_payment_lines ADD COLUMN IF NOT EXISTS payment_method TEXT NOT NULL DEFAULT 'BANK'")
+    cur.execute("ALTER TABLE itp_biweekly_payment_lines ADD COLUMN IF NOT EXISTS payment_card_last4 TEXT")
+    cur.execute("ALTER TABLE itp_biweekly_payment_lines ADD COLUMN IF NOT EXISTS origin_company_code TEXT")
+    cur.execute("""
+        INSERT INTO accounting_accounts(account_code, account_name, account_type, normal_balance, account_level, parent_account, accepts_posting, active)
+        VALUES
+          ('5.1.03', 'Servicios básicos', 'EXPENSE', 'DEBIT', 3, '5.1', TRUE, TRUE),
+          ('5.1.13', 'Gastos por supermercado', 'EXPENSE', 'DEBIT', 3, '5.1', TRUE, TRUE),
+          ('5.1.14', 'Gastos por alimentación', 'EXPENSE', 'DEBIT', 3, '5.1', TRUE, TRUE),
+          ('500-001-001-044', 'Viáticos', 'EXPENSE', 'DEBIT', 3, '5.1', TRUE, TRUE)
+        ON CONFLICT(account_code) DO UPDATE
+        SET account_name=EXCLUDED.account_name, accepts_posting=TRUE, active=TRUE
+    """)
+
+
+def _load_biweekly_draft(cur, company: str, period: str, fortnight: int):
+    cur.execute(
+        """
+        SELECT id
+        FROM itp_biweekly_payment_batches
+        WHERE company_code = %s
+          AND period = %s
+          AND fortnight = %s
+          AND status = 'DRAFT'
+        ORDER BY created_at DESC, id DESC
+        LIMIT 1
+        """,
+        (company, period, int(fortnight or 1)),
+    )
+    batch = cur.fetchone()
+    if not batch:
+        return None
+    batch_id = batch["id"] if isinstance(batch, dict) else batch[0]
+    cur.execute(
+        """
+        SELECT
+            category,
+            beneficiary AS name,
+            amount,
+            currency,
+            destination_account AS bank_account,
+            bank_accounting_code,
+            bank_accounting_name,
+            bank_voucher,
+            payment_date AS due_date,
+            obligation_id,
+            reference,
+            amount AS balance,
+            source,
+            notes,
+            COALESCE(origin_company_code, company_code) AS origin_company_code,
+            COALESCE(payment_method, 'BANK') AS payment_method,
+            payment_card_last4
+        FROM itp_biweekly_payment_lines
+        WHERE batch_id = %s
+        ORDER BY id
+        """,
+        (batch_id,),
+    )
+    rows = []
+    for line in cur.fetchall() or []:
+        item = dict(line)
+        if item.get("due_date") is not None:
+            item["due_date"] = str(item["due_date"])
+        item["amount"] = float(_money(item.get("amount")))
+        item["balance"] = float(_money(item.get("balance")))
+        rows.append(item)
+    return {"batch_id": batch_id, "rows": _filter_open_biweekly_rows(cur, company, rows)}
+
+
+def _load_biweekly_carryover_drafts(cur, company: str, period: str, fortnight: int):
+    cur.execute(
+        """
+        SELECT
+            l.category,
+            l.beneficiary AS name,
+            l.amount,
+            l.currency,
+            l.destination_account AS bank_account,
+            l.bank_accounting_code,
+            l.bank_accounting_name,
+            l.bank_voucher,
+            l.payment_date AS due_date,
+            l.obligation_id,
+            l.reference,
+            l.amount AS balance,
+            COALESCE(NULLIF(l.source, ''), 'DRAFT') AS source,
+            CONCAT_WS(' | ', NULLIF(l.notes, ''), CONCAT('Arrastrado desde ', b.period, ' Q', b.fortnight)) AS notes,
+            COALESCE(l.origin_company_code, l.company_code) AS origin_company_code,
+            COALESCE(l.payment_method, 'BANK') AS payment_method,
+            l.payment_card_last4
+        FROM itp_biweekly_payment_batches b
+        JOIN itp_biweekly_payment_lines l ON l.batch_id = b.id
+        WHERE b.company_code = %s
+          AND (b.period < %s OR (b.period = %s AND b.fortnight < %s))
+          AND COALESCE(l.amount,0) > 0
+          AND NULLIF(TRIM(COALESCE(l.bank_voucher, '')), '') IS NULL
+          AND NOT EXISTS (
+              SELECT 1
+              FROM itp_biweekly_payment_batches pb
+              JOIN itp_biweekly_payment_lines pl ON pl.batch_id = pb.id
+              WHERE pb.company_code = b.company_code
+                AND NULLIF(TRIM(COALESCE(pl.bank_voucher, '')), '') IS NOT NULL
+                AND (
+                    (l.obligation_id IS NOT NULL AND pl.obligation_id = l.obligation_id)
+                    OR (
+                        l.obligation_id IS NULL
+                        AND pl.obligation_id IS NULL
+                        AND pl.category = l.category
+                        AND pl.beneficiary = l.beneficiary
+                        AND pl.amount = l.amount
+                        AND pl.currency = l.currency
+                        AND COALESCE(pl.reference,'') = COALESCE(l.reference,'')
+                    )
+                )
+          )
+        ORDER BY b.period, b.fortnight, l.id
+        """,
+        (company, period, period, int(fortnight or 1)),
+    )
+    rows = []
+    for line in cur.fetchall() or []:
+        item = dict(line)
+        if item.get("due_date") is not None:
+            item["due_date"] = str(item["due_date"])
+        item["amount"] = float(_money(item.get("amount")))
+        item["balance"] = float(_money(item.get("balance")))
+        rows.append(item)
+    return _filter_open_biweekly_rows(cur, company, rows)
+
+
+def _load_biweekly_paid_markers(cur, company: str, period: str, fortnight: int) -> dict[str, set[str]]:
+    _ensure_biweekly_schema(cur)
+    cur.execute(
+        """
+        SELECT
+            l.category,
+            l.beneficiary AS name,
+            l.amount,
+            l.currency,
+            l.obligation_id,
+            l.reference
+        FROM itp_biweekly_payment_batches b
+        JOIN itp_biweekly_payment_lines l ON l.batch_id = b.id
+        WHERE b.company_code = %s
+          AND b.period = %s
+          AND b.fortnight = %s
+          AND NULLIF(TRIM(COALESCE(l.bank_voucher, '')), '') IS NOT NULL
+        """,
+        (company, period, int(fortnight or 1)),
+    )
+    markers = {"keys": set(), "identities": set()}
+    for line in cur.fetchall() or []:
+        item = dict(line)
+        item["amount"] = float(_money(item.get("amount")))
+        markers["keys"].add(_biweekly_row_key_text(item))
+        markers["identities"].add(_biweekly_row_identity_text(item))
+    return markers
+
+
+def _save_biweekly_draft(cur, company: str, period: str, fortnight: int, rows: list, user: str):
+    _ensure_biweekly_schema(cur)
+    cur.execute(
+        """
+        DELETE FROM itp_biweekly_payment_batches
+        WHERE company_code = %s
+          AND period = %s
+          AND fortnight = %s
+          AND status = 'DRAFT'
+        """,
+        (company, period, int(fortnight or 1)),
+    )
+    cur.execute(
+        """
+        INSERT INTO itp_biweekly_payment_batches(company_code, period, fortnight, created_by, status)
+        VALUES(%s,%s,%s,%s,'DRAFT')
+        RETURNING id
+        """,
+        (company, period, int(fortnight or 1), user),
+    )
+    batch_id = cur.fetchone()["id"]
+    saved = 0
+    for item in rows or []:
+        amount = _money(item.get("amount"))
+        if amount <= 0:
+            continue
+        payment_date = _biweekly_payment_date(period, fortnight, item.get("due_date"), item.get("category"))
+        payment_method = _normalize_payment_method(item.get("payment_method"))
+        is_card_payment = payment_method == CARD_3155_METHOD
+        is_hazel_payment = payment_method == HAZEL_PAYMENT_METHOD
+        bank_code = HAZEL_CONTRIBUTION_CODE if is_hazel_payment else (CARD_PAYABLE_CODE if is_card_payment else str(item.get("bank_accounting_code") or "").strip())
+        bank_name = HAZEL_CONTRIBUTION_NAME if is_hazel_payment else (CARD_PAYABLE_NAME if is_card_payment else str(item.get("bank_accounting_name") or "").strip())
+        cur.execute(
+            """
+            INSERT INTO itp_biweekly_payment_lines(
+                batch_id, company_code, category, beneficiary, amount, currency, amount_crc,
+                destination_account, bank_accounting_code, bank_accounting_name, bank_voucher,
+                payment_method, payment_card_last4, payment_date, obligation_id, reference, source, notes, origin_company_code
+            )
+            VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+            """,
+            (
+                batch_id,
+                company,
+                _normalize_biweekly_category(item.get("category")),
+                str(item.get("name") or "").strip() or "Sin beneficiario",
+                amount,
+                str(item.get("currency") or "CRC").upper(),
+                0,
+                item.get("bank_account") or "",
+                bank_code,
+                bank_name,
+                item.get("bank_voucher") or "",
+                payment_method,
+                CARD_3155_LAST4 if is_card_payment else (item.get("payment_card_last4") or None),
+                payment_date,
+                item.get("obligation_id") or None,
+                item.get("reference") or "",
+                item.get("source") or "DRAFT",
+                item.get("notes") or "",
+                normalize_company_code(header_value=item.get("origin_company_code") or item.get("company_code") or company),
+            ),
+        )
+        saved += 1
+    return {"status": "ok", "batch_id": batch_id, "saved": saved}
+
+
+def _exchange_rate(cur, value_date: str) -> Decimal:
+    cur.execute("SELECT to_regclass('public.exchange_rate') AS table_name")
+    table_row = cur.fetchone()
+    table_name = (table_row or {}).get("table_name") if isinstance(table_row, dict) else (table_row[0] if table_row else None)
+    if not table_name:
+        return _money(453)
+    cur.execute(
+        """
+        SELECT rate
+        FROM exchange_rate
+        WHERE rate_date <= %s
+        ORDER BY rate_date DESC
+        LIMIT 1
+        """,
+        (value_date,),
+    )
+    row = cur.fetchone()
+    return _money((row or {}).get("rate") if isinstance(row, dict) else (row[0] if row else 453))
+
+
+def _debit_account_for(category: str):
+    category = _normalize_biweekly_category(category)
+    mapping = {
+        "Planilla": ("2.1.02.07", "Salarios por pagar"),
+        "CCSS": ("2.1.05.01", "Obligaciones patronales por pagar-CCSS"),
+        "IVA": ("2.1.02.03", "Impuesto sobre valor agregado (IVA) por pagar"),
+        "Tarjetas de credito": ("2.1.02.10", "Tarjeta corporativa BAC por pagar"),
+        "Telefonia": ("500-001-001-023", "Telefonos"),
+        "Viáticos": ("500-001-001-044", "Viáticos"),
+        "Alquiler": ("5.1.05", "Gastos por alquiler"),
+        "Internet": ("5.1.03", "Servicios básicos"),
+        "Surveyors": ("2.1.01.01", "Cuentas por pagar-comerciales"),
+    }
+    return mapping.get(category, ("5.4", "Otros gastos"))
+
+# ============================================================
+# RBAC GUARD
+# ============================================================
+def require_permission(module: str, action: str):
+    def checker(
+        x_user_role: str = Header(..., alias="X-User-Role")
+    ):
+        if not has_permission(x_user_role, module, action):
+            raise HTTPException(
+                status_code=403,
+                detail="No autorizado"
+            )
+    return checker
+
+# ============================================================
+# 🔁 SYNC SERVICIOS → PAYMENT OBLIGATIONS
+# ============================================================
+def _sync_servicios_to_itp(cur, company_code: str):
+    """
+    Sincroniza obligaciones desde servicios hacia Invoice To Pay.
+
+    Reglas:
+    - INSERTA si no existe
+    - ACTUALIZA solo si:
+        • origin = 'SERVICIOS'
+        • status = 'PENDING' o 'PARTIAL'
+        • el monto cambió
+    - Respeta pagos parciales recalculando balance
+    """
+
+    cur.execute("SELECT to_regclass('public.servicio_surveyors_flat') AS table_name")
+    has_flat_surveyors = bool((cur.fetchone() or {}).get("table_name"))
+
+    if has_flat_surveyors:
+        flat_select = """
+            SELECT s.consec, s.buque_contenedor, s.pais, s.operacion, s.fecha_fin, s.detalle,
+                   CASE WHEN LOWER(TRIM(COALESCE(s.pais, ''))) = 'costa rica' THEN 'CRC' ELSE 'USD' END AS currency,
+                   v.orden, v.surveyor_nombre, v.honorario
+            FROM servicios s
+            JOIN servicio_surveyors_flat f ON f.servicio_consec = s.consec
+            CROSS JOIN LATERAL (VALUES
+                (1, f.surveyor_1, f.honorario_1),
+                (2, f.surveyor_2, f.honorario_2),
+                (3, f.surveyor_3, f.honorario_3),
+                (4, f.surveyor_4, f.honorario_4),
+                (5, f.surveyor_5, f.honorario_5),
+                (6, f.surveyor_6, f.honorario_6),
+                (7, f.surveyor_7, f.honorario_7),
+                (8, f.surveyor_8, f.honorario_8),
+                (9, f.surveyor_9, f.honorario_9),
+                (10, f.surveyor_10, f.honorario_10)
+            ) AS v(orden, surveyor_nombre, honorario)
+            WHERE COALESCE(s.company_code, 'MSL-CR') = %s
+              AND NULLIF(TRIM(COALESCE(v.surveyor_nombre, '')), '') IS NOT NULL
+              AND COALESCE(v.honorario, 0) > 0
+              AND s.fecha_fin IS NOT NULL
+        """
+        cur.execute(f"""
+            INSERT INTO payment_obligations (
+                company_code, record_type, payee_type, payee_name, obligation_type,
+                reference, vessel, country, operation, service_id, issue_date, due_date,
+                currency, total, balance, status, origin, notes, created_at
+            )
+            SELECT
+                %s, 'OBLIGATION', 'SURVEYOR', fr.surveyor_nombre, 'SURVEYOR_FEE',
+                CONCAT(fr.consec::text, '-', fr.orden::text),
+                fr.buque_contenedor, fr.pais, fr.operacion, fr.consec,
+                fr.fecha_fin, (fr.fecha_fin + INTERVAL '7 days'), fr.currency,
+                fr.honorario, fr.honorario, 'PENDING', 'SERVICIOS', fr.detalle, NOW()
+            FROM ({flat_select}) fr
+            WHERE NOT EXISTS (
+                SELECT 1 FROM payment_obligations po
+                WHERE po.company_code=%s
+                  AND po.origin='SERVICIOS'
+                  AND po.obligation_type='SURVEYOR_FEE'
+                  AND po.service_id=fr.consec
+                  AND po.reference=CONCAT(fr.consec::text, '-', fr.orden::text)
+            )
+        """, (company_code, company_code, company_code))
+
+        cur.execute(f"""
+            UPDATE payment_obligations po
+               SET total=fr.honorario,
+                   balance=GREATEST(fr.honorario - (po.total - po.balance), 0),
+                   payee_name=fr.surveyor_nombre,
+                   vessel=COALESCE(fr.buque_contenedor, po.vessel),
+                   country=COALESCE(fr.pais, po.country),
+                   operation=COALESCE(fr.operacion, po.operation),
+                   currency=fr.currency,
+                   issue_date=COALESCE(fr.fecha_fin, po.issue_date),
+                   due_date=COALESCE((fr.fecha_fin + INTERVAL '7 days'), po.due_date),
+                   notes=COALESCE(fr.detalle, po.notes),
+                   updated_at=NOW()
+            FROM ({flat_select}) fr
+            WHERE po.company_code=%s
+              AND po.origin='SERVICIOS'
+              AND po.obligation_type='SURVEYOR_FEE'
+              AND po.service_id=fr.consec
+              AND po.reference=CONCAT(fr.consec::text, '-', fr.orden::text)
+              AND po.status IN ('PENDING','PARTIAL')
+              AND (
+                    po.total IS DISTINCT FROM fr.honorario
+                 OR po.payee_name IS DISTINCT FROM fr.surveyor_nombre
+                 OR po.currency IS DISTINCT FROM fr.currency
+              )
+        """, (company_code, company_code))
+
+        cur.execute("""
+            UPDATE payment_obligations po
+               SET balance=0,
+                   status='REPLACED',
+                   active=FALSE,
+                   notes=TRIM(BOTH E'\n' FROM CONCAT_WS(E'\n', NULLIF(po.notes,''), 'Reemplazada por desglose individual de surveyors del servicio.')),
+                   updated_at=NOW()
+            WHERE po.company_code=%s
+              AND po.origin='SERVICIOS'
+              AND po.obligation_type='SURVEYOR_FEE'
+              AND po.status IN ('PENDING','PARTIAL')
+              AND po.reference = po.service_id::text
+              AND EXISTS (
+                  SELECT 1
+                  FROM servicio_surveyors_flat f
+                  WHERE f.servicio_consec=po.service_id
+                    AND COALESCE(f.cantidad_surveyors, 0) > 0
+              )
+        """, (company_code,))
+
+        cur.execute("""
+            UPDATE payment_obligations po
+               SET balance=0,
+                   status='REPLACED',
+                   active=FALSE,
+                   notes=TRIM(BOTH E'\n' FROM CONCAT_WS(E'\n', NULLIF(po.notes,''), 'Reemplazada por cambio en desglose individual de surveyors.')),
+                   updated_at=NOW()
+            WHERE po.company_code=%s
+              AND po.origin='SERVICIOS'
+              AND po.obligation_type='SURVEYOR_FEE'
+              AND po.status IN ('PENDING','PARTIAL')
+              AND po.reference LIKE po.service_id::text || '-%%'
+              AND NOT EXISTS (
+                  SELECT 1
+                  FROM servicio_surveyors_flat f
+                  CROSS JOIN LATERAL (VALUES
+                      (1, f.surveyor_1, f.honorario_1),
+                      (2, f.surveyor_2, f.honorario_2),
+                      (3, f.surveyor_3, f.honorario_3),
+                      (4, f.surveyor_4, f.honorario_4),
+                      (5, f.surveyor_5, f.honorario_5),
+                      (6, f.surveyor_6, f.honorario_6),
+                      (7, f.surveyor_7, f.honorario_7),
+                      (8, f.surveyor_8, f.honorario_8),
+                      (9, f.surveyor_9, f.honorario_9),
+                      (10, f.surveyor_10, f.honorario_10)
+                  ) AS v(orden, surveyor_nombre, honorario)
+                  WHERE f.servicio_consec=po.service_id
+                    AND po.reference=CONCAT(f.servicio_consec::text, '-', v.orden::text)
+                    AND NULLIF(TRIM(COALESCE(v.surveyor_nombre, '')), '') IS NOT NULL
+                    AND COALESCE(v.honorario, 0) > 0
+              )
+        """, (company_code,))
+
+    # ============================================================
+    # 1️⃣ INSERTAR HONORARIOS (SURVEYOR_FEE)
+    # ============================================================
+    cur.execute("""
+        INSERT INTO payment_obligations (
+            company_code,
+            record_type,
+            payee_type,
+            payee_name,
+            obligation_type,
+            reference,
+            vessel,
+            country,
+            operation,
+            service_id,
+            issue_date,
+            due_date,
+            currency,
+            total,
+            balance,
+            status,
+            origin,
+            notes,
+            created_at
+        )
+        SELECT
+            %s,
+            'OBLIGATION',
+            'SURVEYOR',
+            s.surveyor,
+            'SURVEYOR_FEE',
+            s.consec,
+            s.buque_contenedor,
+            s.pais,
+            s.operacion,
+            s.consec,
+            s.fecha_fin,
+            (s.fecha_fin + INTERVAL '7 days'),
+            CASE WHEN LOWER(TRIM(COALESCE(s.pais, ''))) = 'costa rica' THEN 'CRC' ELSE 'USD' END,
+            s.honorarios,
+            s.honorarios,
+            'PENDING',
+            'SERVICIOS',
+            s.detalle,
+            NOW()
+        FROM servicios s
+        WHERE
+            COALESCE(s.company_code, 'MSL-CR') = %s
+            AND
+            s.surveyor IS NOT NULL
+            AND s.honorarios IS NOT NULL
+            AND s.honorarios > 0
+            AND s.fecha_fin IS NOT NULL
+            AND (
+                %s = FALSE
+                OR NOT EXISTS (
+                    SELECT 1
+                    FROM servicio_surveyors_flat f
+                    WHERE f.servicio_consec=s.consec
+                      AND COALESCE(f.cantidad_surveyors, 0) > 0
+                )
+            )
+            AND NOT EXISTS (
+                SELECT 1
+                FROM payment_obligations po
+                WHERE po.service_id = s.consec
+                  AND po.origin = 'SERVICIOS'
+                  AND po.obligation_type = 'SURVEYOR_FEE'
+                  AND po.company_code = %s
+            )
+    """, (company_code, company_code, has_flat_surveyors, company_code))
+
+    # ============================================================
+    # 2️⃣ INSERTAR COSTO TARJETAS (CARD_PROCESSING)
+    # ============================================================
+    cur.execute("""
+        INSERT INTO payment_obligations (
+            company_code,
+            record_type,
+            payee_type,
+            payee_name,
+            obligation_type,
+            reference,
+            vessel,
+            country,
+            operation,
+            service_id,
+            issue_date,
+            due_date,
+            currency,
+            total,
+            balance,
+            status,
+            origin,
+            notes,
+            created_at
+        )
+        SELECT
+            %s,
+            'OBLIGATION',
+            'SUPPLIER',
+            'CARD PROCESSOR',
+            'CARD_PROCESSING',
+            s.consec,
+            s.buque_contenedor,
+            s.pais,
+            s.operacion,
+            s.consec,
+            s.fecha_fin,
+            (s.fecha_fin + INTERVAL '15 days'),
+            'USD',
+            s.costo_tarjetas,
+            s.costo_tarjetas,
+            'PENDING',
+            'SERVICIOS',
+            'Costo tarjetas - ' || COALESCE(s.detalle,''),
+            NOW()
+        FROM servicios s
+        WHERE
+            COALESCE(s.company_code, 'MSL-CR') = %s
+            AND
+            s.costo_tarjetas IS NOT NULL
+            AND s.costo_tarjetas > 0
+            AND s.fecha_fin IS NOT NULL
+            AND NOT EXISTS (
+                SELECT 1
+                FROM payment_obligations po
+                WHERE po.service_id = s.consec
+                  AND po.origin = 'SERVICIOS'
+                  AND po.obligation_type = 'CARD_PROCESSING'
+                  AND po.company_code = %s
+            )
+    """, (company_code, company_code, company_code))
+
+    # ============================================================
+    # 3️⃣ ACTUALIZAR HONORARIOS MODIFICADOS
+    # ============================================================
+    cur.execute("""
+        UPDATE payment_obligations po
+        SET
+            total = s.honorarios,
+            balance = GREATEST(
+                s.honorarios - (po.total - po.balance),
+                0
+            ),
+            payee_name = COALESCE(s.surveyor, po.payee_name),
+            vessel = COALESCE(s.buque_contenedor, po.vessel),
+            country = COALESCE(s.pais, po.country),
+            operation = COALESCE(s.operacion, po.operation),
+            currency = CASE WHEN LOWER(TRIM(COALESCE(s.pais, ''))) = 'costa rica' THEN 'CRC' ELSE 'USD' END,
+            issue_date = COALESCE(s.fecha_fin, po.issue_date),
+            due_date = COALESCE((s.fecha_fin + INTERVAL '7 days'), po.due_date),
+            notes = COALESCE(s.detalle, po.notes),
+            updated_at = NOW()
+        FROM servicios s
+        WHERE
+            po.service_id = s.consec
+            AND po.company_code = %s
+            AND COALESCE(s.company_code, 'MSL-CR') = %s
+            AND po.origin = 'SERVICIOS'
+            AND po.obligation_type = 'SURVEYOR_FEE'
+            AND s.honorarios IS NOT NULL
+            AND s.honorarios > 0
+            AND po.status IN ('PENDING', 'PARTIAL')
+            AND (
+                po.total IS DISTINCT FROM s.honorarios
+                OR po.currency IS DISTINCT FROM CASE WHEN LOWER(TRIM(COALESCE(s.pais, ''))) = 'costa rica' THEN 'CRC' ELSE 'USD' END
+            )
+            AND (
+                %s = FALSE
+                OR NOT EXISTS (
+                    SELECT 1
+                    FROM servicio_surveyors_flat f
+                    WHERE f.servicio_consec=s.consec
+                      AND COALESCE(f.cantidad_surveyors, 0) > 0
+                )
+            )
+    """, (company_code, company_code, has_flat_surveyors))
+
+    # ============================================================
+    # 4️⃣ ACTUALIZAR COSTO TARJETAS MODIFICADO
+    # ============================================================
+    cur.execute("""
+        UPDATE payment_obligations po
+        SET
+            total = s.costo_tarjetas,
+            balance = GREATEST(
+                s.costo_tarjetas - (po.total - po.balance),
+                0
+            ),
+            vessel = COALESCE(s.buque_contenedor, po.vessel),
+            country = COALESCE(s.pais, po.country),
+            operation = COALESCE(s.operacion, po.operation),
+            issue_date = COALESCE(s.fecha_fin, po.issue_date),
+            due_date = COALESCE((s.fecha_fin + INTERVAL '15 days'), po.due_date),
+            notes = 'Costo tarjetas - ' || COALESCE(s.detalle,''),
+            updated_at = NOW()
+        FROM servicios s
+        WHERE
+            po.service_id = s.consec
+            AND po.company_code = %s
+            AND COALESCE(s.company_code, 'MSL-CR') = %s
+            AND po.origin = 'SERVICIOS'
+            AND po.obligation_type = 'CARD_PROCESSING'
+            AND s.costo_tarjetas IS NOT NULL
+            AND s.costo_tarjetas > 0
+            AND po.status IN ('PENDING', 'PARTIAL')
+            AND po.total IS DISTINCT FROM s.costo_tarjetas
+    """, (company_code, company_code))
+
+    deactivate_employee_itp_obligations(cur)
+
+
+def _sync_tax_purchases_to_itp(cur, company_code: str, since: date | None = None) -> int:
+    cur.execute("SELECT to_regclass('public.tax_electronic_documents') AS table_name")
+    table = cur.fetchone()
+    if not table or not table.get("table_name"):
+        return 0
+    company = normalize_company_code(header_value=company_code)
+    since = since or (date.today() - timedelta(days=120))
+    cur.execute("""
+        SELECT d.*
+        FROM tax_electronic_documents d
+        WHERE d.company_code=%s
+          AND d.direction='PURCHASE'
+          AND COALESCE(d.issue_datetime::date, CURRENT_DATE) >= %s
+          AND COALESCE(d.total, 0) <> 0
+          AND COALESCE(d.status, 'PENDING') <> 'REJECTED'
+          AND NOT EXISTS (
+              SELECT 1
+              FROM payment_obligations po
+              WHERE po.company_code=d.company_code
+                AND COALESCE(po.active, TRUE)=TRUE
+                AND (
+                    NULLIF(po.electronic_key, '') = NULLIF(d.electronic_key, '')
+                    OR NULLIF(po.reference, '') = NULLIF(d.electronic_key, '')
+                    OR NULLIF(po.reference, '') = NULLIF(d.document_number, '')
+                )
+          )
+        ORDER BY d.issue_datetime NULLS LAST, d.id
+        LIMIT 250
+    """, (company, since))
+    rows = cur.fetchall() or []
+    inserted = 0
+    for doc in rows:
+        electronic_key = str(doc.get("electronic_key") or "").strip()
+        document_number = str(doc.get("document_number") or "").strip()
+        reference = display_itp_invoice_reference(electronic_key or document_number)
+        cur.execute("""
+            SELECT id
+            FROM payment_obligations
+            WHERE company_code=%s
+              AND COALESCE(active, TRUE)=TRUE
+              AND (
+                  NULLIF(electronic_key, '') = NULLIF(%s, '')
+                  OR NULLIF(reference, '') = NULLIF(%s, '')
+                  OR NULLIF(reference, '') = NULLIF(%s, '')
+                  OR NULLIF(reference, '') = NULLIF(%s, '')
+              )
+            LIMIT 1
+        """, (company, electronic_key, electronic_key, document_number, reference))
+        if cur.fetchone():
+            continue
+        issuer = doc.get("issuer_name") or "Proveedor factura electronica"
+        if is_employee_payee(cur, issuer):
+            continue
+        issue_value = doc.get("issue_datetime") or date.today()
+        issue_date = issue_value.date() if hasattr(issue_value, "date") else _coerce_date(issue_value, date.today())
+        is_credit = "CREDIT" in str(doc.get("document_type") or "").upper() or str(doc.get("document_type") or "").upper() in {"NC", "NCE"}
+        total = _money(doc.get("total"))
+        if is_credit:
+            total = -abs(total)
+            balance = Decimal("0.00")
+            status = "PAID"
+            obligation_type = "SUPPLIER_CREDIT_NOTE"
+        else:
+            balance = total
+            status = "PENDING"
+            obligation_type = "SUPPLIER_INVOICE"
+        cur.execute("""
+            INSERT INTO payment_obligations (
+                company_code, record_type, payee_type, payee_name, obligation_type,
+                reference, electronic_key, issue_date, due_date, country, currency,
+                total, balance, status, origin, file_xml, file_pdf, active, notes,
+                created_at, updated_at
+            )
+            VALUES (
+                %s, 'OBLIGATION', 'SUPPLIER', %s, %s,
+                %s, %s, %s, %s, 'Costa Rica', %s,
+                %s, %s, %s, 'ACCOUNTING_XML', %s, %s, TRUE, %s,
+                NOW(), NOW()
+            )
+            RETURNING id
+        """, (
+            company,
+            issuer,
+            obligation_type,
+            reference,
+            electronic_key or None,
+            issue_date,
+            issue_date + timedelta(days=30),
+            doc.get("currency_code") or "CRC",
+            total,
+            balance,
+            status,
+            doc.get("xml_path"),
+            doc.get("pdf_path"),
+            f"Importado automaticamente desde Gastos/XML electronicos. Registro fiscal #{doc.get('id')}",
+        ))
+        obligation_id = cur.fetchone()["id"]
+        if not is_credit:
+            reconcile_surveyor_invoice_obligations(
+                cur,
+                company,
+                issuer,
+                issue_date,
+                reference=reference,
+                invoice_obligation_id=obligation_id,
+            )
+        inserted += 1
+    return inserted
+
+
+def _sync_itp_sources(cur, company_code: str) -> dict:
+    _ensure_company_column(cur)
+    _sync_servicios_to_itp(cur, company_code)
+    tax_inserted = _sync_tax_purchases_to_itp(cur, company_code)
+    deactivate_employee_itp_obligations(cur)
+    return {"tax_purchases": tax_inserted}
+
+@router.get("/search")
+def search_invoice_to_pay(
+    obligation_type: Optional[str] = Query(None),
+    payee: Optional[str] = Query(None),
+    status: Optional[str] = Query(None),
+    issue_date_from: Optional[date] = Query(None),
+    issue_date_to: Optional[date] = Query(None),
+    due_date_from: Optional[date] = Query(None),
+    due_date_to: Optional[date] = Query(None),
+    payment_date_from: Optional[date] = Query(None),
+    payment_date_to: Optional[date] = Query(None),
+    conn=Depends(get_db),
+    x_company_code: str | None = Header(None, alias="X-Company-Code"),
+):
+    cur = conn.cursor(cursor_factory=RealDictCursor)
+    company = normalize_company_code(header_value=x_company_code)
+    _sync_itp_sources(cur, company)
+    conn.commit()
+
+    filters = ["COALESCE(active, TRUE) = TRUE", "company_code = %s"]
+    params = [company]
+
+    # =================
+    # FILTRO POR ESTADO
+    # =================
+    if status:
+        status = status.upper()
+
+        if status == "ALL":
+            # 🔥 Sin filtro: trae TODOS los registros
+            pass
+        else:
+            filters.append("status = %s")
+            params.append(status)
+
+    # =================================
+    # FILTRO POR TIPO DE OBLIGACIÓN
+    # (basado en payee_type REAL)
+    # =================================
+    if obligation_type:
+        if obligation_type.upper() == "SURVEYOR":
+            filters.append("payee_type = 'SURVEYOR'")
+        elif obligation_type.upper() == "SUPPLIER":
+            filters.append("payee_type = 'SUPPLIER'")
+        elif obligation_type.upper() == "MANUAL":
+            filters.append("origin = 'MANUAL'")
+
+    # =================
+    # FILTRO BENEFICIARIO
+    # =================
+    if payee:
+        filters.append("payee_name ILIKE %s")
+        params.append(f"%{payee}%")
+
+    # ================================
+    # FILTROS POR RANGOS DE FECHA
+    # ================================
+    if issue_date_from:
+        filters.append("issue_date >= %s")
+        params.append(issue_date_from)
+
+    if issue_date_to:
+        filters.append("issue_date <= %s")
+        params.append(issue_date_to)
+
+    if due_date_from:
+        filters.append("due_date >= %s")
+        params.append(due_date_from)
+
+    if due_date_to:
+        filters.append("due_date <= %s")
+        params.append(due_date_to)
+
+    if payment_date_from:
+        filters.append("COALESCE(planned_payment_date, due_date) >= %s")
+        params.append(payment_date_from)
+
+    if payment_date_to:
+        filters.append("COALESCE(planned_payment_date, due_date) <= %s")
+        params.append(payment_date_to)
+
+    where_clause = ""
+    if filters:
+        where_clause = "WHERE " + " AND ".join(filters)
+
+    # ========================================
+    # SELECT FINAL CORRECTO
+    # ========================================
+    sql = f"""
+        SELECT
+            id,
+            payee_name,
+
+            -- ✅ COLUMNA Obligación = payee_type REAL
+            payee_type AS obligation_type,
+
+            -- ✅ COLUMNA Referencia (regla de negocio)
+            CASE
+                WHEN origin = 'SERVICIOS' THEN notes
+                ELSE reference
+            END AS referencia,
+
+            vessel,
+            country,
+            operation,
+            currency,
+            total,
+            balance,
+            status,
+            last_payment_date,
+            issue_date,
+            due_date,
+            planned_payment_date,
+            origin,
+            payment_bank,
+            payment_bank_account_code,
+            payment_bank_account_name,
+            payment_reference,
+            COALESCE(payment_method, CASE WHEN COALESCE(paid_with_card, FALSE) THEN %s ELSE 'BANK' END) AS payment_method,
+            payment_card_last4,
+            COALESCE(paid_with_card, FALSE) AS paid_with_card
+
+        FROM payment_obligations
+        {where_clause}
+        ORDER BY issue_date DESC
+    """
+
+    try:
+        cur.execute(sql, [CARD_3155_METHOD] + params)
+        rows = []
+        for row in cur.fetchall() or []:
+            item = dict(row)
+            if str(item.get("origin") or "").upper() != "SERVICIOS":
+                item["referencia"] = display_itp_invoice_reference(item.get("referencia"))
+            rows.append(item)
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"InvoiceToPay search error: {str(e)}"
+        )
+
+    return {"data": rows}
+
+
+# ============================================================
+# 2️⃣ KPIs — CONVERSIÓN CRC → USD (TC = 500)
+# ============================================================
+@router.get("/kpis")
+def invoice_to_pay_kpis(conn=Depends(get_db)):
+    cur = conn.cursor()
+    deactivate_employee_itp_obligations(cur)
+    conn.commit()
+
+    cur.execute("""
+        SELECT
+            -- =====================================
+            -- PENDING (TOTAL ACTUAL, NO HISTÓRICO)
+            -- =====================================
+            COALESCE(
+                SUM(
+                    CASE
+                        WHEN status IN ('PENDING','PARTIAL') THEN
+                            CASE
+                                WHEN currency = 'CRC' THEN balance / 500.0
+                                ELSE balance
+                            END
+                    END
+                ), 0
+            ) AS pending_usd,
+
+            -- =====================================
+            -- PAID (SOLO PAGOS DEL MES EN CURSO)
+            -- =====================================
+            COALESCE(
+                SUM(
+                    CASE
+                        WHEN status IN ('PAID','PARTIAL')
+                         AND last_payment_date IS NOT NULL
+                         AND DATE_TRUNC('month', last_payment_date) = DATE_TRUNC('month', CURRENT_DATE)
+                        THEN
+                            CASE
+                                WHEN currency = 'CRC' THEN (total - balance) / 500.0
+                                ELSE (total - balance)
+                            END
+                    END
+                ), 0
+            ) AS paid_usd,
+
+            -- =====================================
+            -- DPO (SOLO FACTURAS PAGADAS ESTE MES)
+            -- =====================================
+            ROUND(
+                AVG(
+                    CASE
+                        WHEN status = 'PAID'
+                         AND last_payment_date IS NOT NULL
+                         AND DATE_TRUNC('month', last_payment_date) = DATE_TRUNC('month', CURRENT_DATE)
+                         AND issue_date IS NOT NULL
+                        THEN (last_payment_date - issue_date)
+                    END
+                ), 2
+            ) AS dpo,
+
+            -- =====================================
+            -- OVERDUE COUNT (ACTUAL)
+            -- =====================================
+            COUNT(
+                CASE
+                    WHEN balance > 0
+                     AND due_date IS NOT NULL
+                     AND due_date < CURRENT_DATE
+                    THEN 1
+                END
+            ) AS overdue,
+
+            -- =====================================
+            -- OVERDUE AMOUNT (USD)
+            -- =====================================
+            COALESCE(
+                SUM(
+                    CASE
+                        WHEN balance > 0
+                         AND due_date IS NOT NULL
+                         AND due_date < CURRENT_DATE
+                        THEN
+                            CASE
+                                WHEN currency = 'CRC' THEN balance / 500.0
+                                ELSE balance
+                            END
+                    END
+                ), 0
+            ) AS overdue_amount_usd
+
+        FROM payment_obligations
+        WHERE record_type = 'OBLIGATION'
+          AND COALESCE(active, TRUE) = TRUE
+    """)
+
+    pending, paid, dpo, overdue, overdue_amount = cur.fetchone()
+
+    return {
+        "pending": round(pending, 2),
+        "paid": round(paid, 2),
+        "dpo": dpo,
+        "overdue": overdue,
+        "overdue_amount": round(overdue_amount, 2),
+        "currency": "USD",
+        "exchange_rate": 500,
+        "scope": "CURRENT_MONTH"
+    }
+
+
+@router.get("/payment-schedule")
+def invoice_to_pay_payment_schedule(
+    date_from: Optional[date] = Query(None),
+    date_to: Optional[date] = Query(None),
+    conn=Depends(get_db),
+    x_company_code: str | None = Header(None, alias="X-Company-Code"),
+):
+    cur = conn.cursor(cursor_factory=RealDictCursor)
+    company = normalize_company_code(header_value=x_company_code)
+    _sync_itp_sources(cur, company)
+    conn.commit()
+    today = date.today()
+    start = date_from or today.replace(day=1)
+    if date_to:
+        end = date_to
+    else:
+        next_month = today.replace(day=28) + timedelta(days=4)
+        end = next_month.replace(day=1) + timedelta(days=35)
+
+    cur.execute(
+        """
+        SELECT
+            id,
+            payee_name,
+            payee_type,
+            reference AS referencia,
+            vessel,
+            operation,
+            country,
+            currency,
+            total,
+            balance,
+            status,
+            due_date,
+            planned_payment_date,
+            COALESCE(planned_payment_date, due_date) AS schedule_date,
+            payment_method,
+            payment_bank_account_name,
+            origin
+        FROM payment_obligations
+        WHERE COALESCE(active, TRUE) = TRUE
+          AND company_code = %s
+          AND status IN ('PENDING','PARTIAL')
+          AND COALESCE(balance, 0) > 0
+          AND COALESCE(planned_payment_date, due_date) IS NOT NULL
+          AND COALESCE(planned_payment_date, due_date) >= %s
+          AND COALESCE(planned_payment_date, due_date) <= %s
+        ORDER BY COALESCE(planned_payment_date, due_date) ASC, payee_name ASC
+        """,
+        (company, start, end),
+    )
+    rows = [dict(row) for row in cur.fetchall() or []]
+    days: dict[str, dict] = {}
+    totals: dict[str, float] = {}
+    real_obligation_ids = {int(row["id"]) for row in rows if row.get("id") is not None}
+
+    def append_calendar_item(row: dict, *, add_to_total: bool = True) -> None:
+        schedule_value = row.get("schedule_date") or row.get("planned_payment_date") or row.get("due_date")
+        key = schedule_value.isoformat() if hasattr(schedule_value, "isoformat") else str(schedule_value)
+        if not key or key == "None":
+            return
+        day = days.setdefault(key, {"date": key, "count": 0, "totals": {}, "items": []})
+        currency = row.get("currency") or "-"
+        amount = float(row.get("balance") or 0)
+        day["count"] += 1
+        if add_to_total and amount > 0:
+            day["totals"][currency] = round(float(day["totals"].get(currency, 0)) + amount, 2)
+            totals[currency] = round(float(totals.get(currency, 0)) + amount, 2)
+        item = dict(row)
+        item["balance"] = amount
+        item["total"] = float(row.get("total") or 0)
+        if hasattr(item.get("due_date"), "isoformat"):
+            item["due_date"] = item["due_date"].isoformat()
+        item["schedule_date"] = key
+        item["planned_payment_date"] = key if item.get("planned_payment_date") else ""
+        day["items"].append(item)
+
+    for row in rows:
+        append_calendar_item(row)
+
+    cur.execute("SELECT to_regclass('public.servicio_surveyors_flat') AS table_name")
+    has_flat_surveyors = bool((cur.fetchone() or {}).get("table_name"))
+    if has_flat_surveyors:
+        cur.execute(
+            """
+            WITH service_surveyors AS (
+                SELECT s.consec, s.buque_contenedor, s.pais, s.operacion, s.fecha_fin, s.detalle,
+                       CASE WHEN LOWER(TRIM(COALESCE(s.pais, ''))) = 'costa rica' THEN 'CRC' ELSE 'USD' END AS currency,
+                       v.orden, v.surveyor_nombre, v.honorario
+                FROM servicios s
+                JOIN servicio_surveyors_flat f ON f.servicio_consec = s.consec
+                CROSS JOIN LATERAL (VALUES
+                    (1, f.surveyor_1, f.honorario_1),
+                    (2, f.surveyor_2, f.honorario_2),
+                    (3, f.surveyor_3, f.honorario_3),
+                    (4, f.surveyor_4, f.honorario_4),
+                    (5, f.surveyor_5, f.honorario_5),
+                    (6, f.surveyor_6, f.honorario_6),
+                    (7, f.surveyor_7, f.honorario_7),
+                    (8, f.surveyor_8, f.honorario_8),
+                    (9, f.surveyor_9, f.honorario_9),
+                    (10, f.surveyor_10, f.honorario_10)
+                ) AS v(orden, surveyor_nombre, honorario)
+                WHERE COALESCE(s.company_code, 'MSL-CR') = %s
+                  AND NULLIF(TRIM(COALESCE(v.surveyor_nombre, '')), '') IS NOT NULL
+                  AND COALESCE(v.honorario, 0) > 0
+                  AND s.fecha_fin IS NOT NULL
+            )
+            SELECT
+                consec,
+                CONCAT(consec::text, '-', orden::text) AS reference,
+                surveyor_nombre AS payee_name,
+                buque_contenedor,
+                pais,
+                operacion,
+                detalle,
+                fecha_fin,
+                (fecha_fin + INTERVAL '7 days')::date AS due_date,
+                currency,
+                honorario AS amount
+            FROM service_surveyors ss
+            WHERE (ss.fecha_fin + INTERVAL '7 days')::date BETWEEN %s AND %s
+              AND NOT EXISTS (
+                  SELECT 1
+                  FROM payment_obligations po
+                  WHERE po.company_code = %s
+                    AND COALESCE(po.active, TRUE) = TRUE
+                    AND po.origin = 'SERVICIOS'
+                    AND po.obligation_type = 'SURVEYOR_FEE'
+                    AND po.service_id = ss.consec
+                    AND po.reference = CONCAT(ss.consec::text, '-', ss.orden::text)
+              )
+            ORDER BY due_date, payee_name
+            """,
+            (company, start, end, company),
+        )
+    else:
+        cur.execute(
+            """
+            SELECT
+                s.consec,
+                s.consec::text AS reference,
+                s.surveyor AS payee_name,
+                s.buque_contenedor,
+                s.pais,
+                s.operacion,
+                s.detalle,
+                s.fecha_fin,
+                (s.fecha_fin + INTERVAL '7 days')::date AS due_date,
+                CASE WHEN LOWER(TRIM(COALESCE(s.pais, ''))) = 'costa rica' THEN 'CRC' ELSE 'USD' END AS currency,
+                s.honorarios AS amount
+            FROM servicios s
+            WHERE COALESCE(s.company_code, 'MSL-CR') = %s
+              AND NULLIF(TRIM(COALESCE(s.surveyor, '')), '') IS NOT NULL
+              AND COALESCE(s.honorarios, 0) > 0
+              AND s.fecha_fin IS NOT NULL
+              AND (s.fecha_fin + INTERVAL '7 days')::date BETWEEN %s AND %s
+              AND NOT EXISTS (
+                  SELECT 1
+                  FROM payment_obligations po
+                  WHERE po.company_code = %s
+                    AND COALESCE(po.active, TRUE) = TRUE
+                    AND po.origin = 'SERVICIOS'
+                    AND po.obligation_type = 'SURVEYOR_FEE'
+                    AND po.service_id = s.consec
+              )
+            ORDER BY due_date, payee_name
+            """,
+            (company, start, end, company),
+        )
+    projected_surveyor_count = 0
+    for svc in cur.fetchall() or []:
+        amount = _money(svc.get("amount"))
+        append_calendar_item(
+            {
+                "id": f"SURVEYOR-PROJECTED-{svc.get('consec')}-{svc.get('reference')}",
+                "payee_name": svc.get("payee_name") or "Surveyor",
+                "payee_type": "SURVEYOR",
+                "obligation_type": "SURVEYOR_FEE",
+                "referencia": svc.get("reference") or svc.get("consec"),
+                "vessel": svc.get("buque_contenedor") or "",
+                "operation": svc.get("operacion") or "SERVICIOS",
+                "country": svc.get("pais") or "",
+                "currency": svc.get("currency") or "CRC",
+                "total": float(amount),
+                "balance": float(amount),
+                "status": "PROJECTED",
+                "due_date": svc.get("due_date"),
+                "payment_method": "BANK",
+                "payment_bank_account_name": "",
+                "origin": "SERVICIOS",
+                "notes": f"Pago proyectado a surveyor 7 días después de finalizar operación. {svc.get('detalle') or ''}".strip(),
+            },
+            add_to_total=True,
+        )
+        projected_surveyor_count += 1
+
+    if has_flat_surveyors:
+        cur.execute(
+            """
+            SELECT
+                s.consec,
+                s.consec::text AS reference,
+                s.surveyor AS payee_name,
+                s.buque_contenedor,
+                s.pais,
+                s.operacion,
+                s.detalle,
+                s.fecha_fin,
+                (s.fecha_fin + INTERVAL '7 days')::date AS due_date,
+                CASE WHEN LOWER(TRIM(COALESCE(s.pais, ''))) = 'costa rica' THEN 'CRC' ELSE 'USD' END AS currency,
+                s.honorarios AS amount
+            FROM servicios s
+            WHERE COALESCE(s.company_code, 'MSL-CR') = %s
+              AND NULLIF(TRIM(COALESCE(s.surveyor, '')), '') IS NOT NULL
+              AND COALESCE(s.honorarios, 0) > 0
+              AND s.fecha_fin IS NOT NULL
+              AND (s.fecha_fin + INTERVAL '7 days')::date BETWEEN %s AND %s
+              AND NOT EXISTS (
+                  SELECT 1
+                  FROM servicio_surveyors_flat f
+                  WHERE f.servicio_consec = s.consec
+                    AND COALESCE(f.cantidad_surveyors, 0) > 0
+              )
+              AND NOT EXISTS (
+                  SELECT 1
+                  FROM payment_obligations po
+                  WHERE po.company_code = %s
+                    AND COALESCE(po.active, TRUE) = TRUE
+                    AND po.origin = 'SERVICIOS'
+                    AND po.obligation_type = 'SURVEYOR_FEE'
+                    AND po.service_id = s.consec
+              )
+            ORDER BY due_date, payee_name
+            """,
+            (company, start, end, company),
+        )
+        for svc in cur.fetchall() or []:
+            amount = _money(svc.get("amount"))
+            append_calendar_item(
+                {
+                    "id": f"SURVEYOR-PROJECTED-{svc.get('consec')}-{svc.get('reference')}",
+                    "payee_name": svc.get("payee_name") or "Surveyor",
+                    "payee_type": "SURVEYOR",
+                    "obligation_type": "SURVEYOR_FEE",
+                    "referencia": svc.get("reference") or svc.get("consec"),
+                    "vessel": svc.get("buque_contenedor") or "",
+                    "operation": svc.get("operacion") or "SERVICIOS",
+                    "country": svc.get("pais") or "",
+                    "currency": svc.get("currency") or "CRC",
+                    "total": float(amount),
+                    "balance": float(amount),
+                    "status": "PROJECTED",
+                    "due_date": svc.get("due_date"),
+                    "payment_method": "BANK",
+                    "payment_bank_account_name": "",
+                    "origin": "SERVICIOS",
+                    "notes": f"Pago proyectado a surveyor 7 días después de finalizar operación. {svc.get('detalle') or ''}".strip(),
+                },
+                add_to_total=True,
+            )
+            projected_surveyor_count += 1
+
+    projected_count = 0
+    seen_projected: set[tuple] = set()
+    for period in _periods_between(start, end):
+        for fortnight in (1, 2):
+            due = _coerce_date(_fortnight_due_date(period, fortnight), start)
+            if due < start or due > end:
+                continue
+            try:
+                preview = biweekly_obligations_preview(
+                    period=period,
+                    fortnight=fortnight,
+                    force=True,
+                    conn=conn,
+                    x_company_code=company,
+                )
+            except Exception:
+                continue
+            paid_biweekly_markers = _load_biweekly_paid_markers(cur, company, period, fortnight)
+            for line in preview.get("rows", []) or []:
+                if (
+                    _biweekly_row_key_text(line) in paid_biweekly_markers["keys"]
+                    or _biweekly_row_identity_text(line) in paid_biweekly_markers["identities"]
+                ):
+                    continue
+                obligation_id = line.get("obligation_id")
+                if obligation_id and int(obligation_id) in real_obligation_ids:
+                    continue
+                line_due = _coerce_date(line.get("due_date"), due)
+                if line_due < start or line_due > end:
+                    continue
+                amount = _money(line.get("balance") if line.get("balance") is not None else line.get("amount"))
+                if amount <= 0:
+                    continue
+                projected_key = (
+                    period,
+                    fortnight,
+                    str(line.get("category") or "").upper(),
+                    str(line.get("name") or "").upper(),
+                    str(line.get("reference") or "").upper(),
+                    str(amount),
+                )
+                if projected_key in seen_projected:
+                    continue
+                seen_projected.add(projected_key)
+                append_calendar_item(
+                    {
+                        "id": f"BIWEEKLY-{period}-Q{fortnight}-{len(seen_projected)}",
+                        "payee_name": line.get("name") or line.get("category") or "Obligación quincenal",
+                        "payee_type": line.get("category") or "BIWEEKLY",
+                        "obligation_type": line.get("category") or "BIWEEKLY",
+                        "referencia": line.get("reference") or f"{period} Q{fortnight}",
+                        "vessel": "",
+                        "operation": line.get("source") or "BIWEEKLY",
+                        "country": "",
+                        "currency": line.get("currency") or "CRC",
+                        "total": float(amount),
+                        "balance": float(amount),
+                        "status": "PROJECTED",
+                        "due_date": line_due,
+                        "payment_method": line.get("payment_method") or "BANK",
+                        "payment_bank_account_name": line.get("bank_account") or "",
+                        "origin": "BIWEEKLY",
+                        "notes": line.get("notes") or "",
+                    },
+                    add_to_total=True,
+                )
+                projected_count += 1
+    return {
+        "company_code": company,
+        "date_from": start.isoformat(),
+        "date_to": end.isoformat(),
+        "days": list(days.values()),
+        "totals": totals,
+        "total_count": len(rows),
+        "projected_count": projected_count,
+        "projected_surveyor_count": projected_surveyor_count,
+    }
+
+
+@router.get("/biweekly-obligations/preview")
+def biweekly_obligations_preview(
+    period: str = Query(...),
+    fortnight: int = Query(1),
+    force: bool = Query(False),
+    conn=Depends(get_db),
+    x_company_code: str | None = Header(None, alias="X-Company-Code"),
+):
+    company = normalize_company_code(header_value=x_company_code)
+    cur = conn.cursor(cursor_factory=RealDictCursor)
+    _sync_itp_sources(cur, company)
+    conn.commit()
+    _ensure_biweekly_schema(cur)
+    carryover_rows = _load_biweekly_carryover_drafts(cur, company, period, int(fortnight or 1))
+    draft = _load_biweekly_draft(cur, company, period, fortnight)
+    if not force:
+        if draft:
+            rows = []
+            seen = set()
+            for item in carryover_rows + draft["rows"]:
+                _append_unique_biweekly_row(rows, seen, item)
+            rows = _dedupe_biweekly_rows_against_itp(rows)
+            return {
+                "period": period,
+                "fortnight": int(fortnight or 1),
+                "company_code": company,
+                "source": "draft",
+                "batch_id": draft["batch_id"],
+                "rows": rows,
+            }
+    rows = []
+    seen_rows = set()
+    seed_rows = carryover_rows + ((draft or {}).get("rows") or [])
+    for item in seed_rows:
+        _append_unique_biweekly_row(rows, seen_rows, item)
+    default_crc_bank = "CR87010200009640180220"
+    aaron_bank = "CR27010200009688657826"
+
+    def suggested_bank(category, name, currency, current=""):
+        category = _normalize_biweekly_category(category)
+        if category == "Tarjetas de credito":
+            return "BAC"
+        if "aaron avila" in str(name or "").lower():
+            return aaron_bank
+        if str(currency or "CRC").upper() == "CRC":
+            return default_crc_bank
+        return current or ""
+
+    def row(category, name, amount, currency="CRC", bank_account="", source="MANUAL", notes="", due_date=None, obligation_id=None, reference="", balance=None, origin_company_code=None):
+        category = _normalize_biweekly_category(category)
+        amount = _money(amount)
+        currency = currency or "CRC"
+        return {
+            "category": category,
+            "name": str(name or "").strip(),
+            "amount": float(amount),
+            "currency": currency,
+            "bank_account": suggested_bank(category, name, currency, bank_account),
+            "due_date": due_date or _fortnight_due_date(period, fortnight),
+            "source": source,
+            "notes": notes or "",
+            "obligation_id": obligation_id,
+            "reference": reference or "",
+            "balance": float(_money(balance if balance is not None else amount)),
+            "origin_company_code": normalize_company_code(header_value=origin_company_code or company),
+            "bank_accounting_code": "1.1.02.02.01",
+            "bank_accounting_name": "Banco BAC San Jose CRC CR87010200009640180220",
+            "bank_voucher": "",
+            "payment_method": "BANK",
+            "payment_card_last4": "",
+        }
+
+    try:
+        due_start, due_end = _fortnight_window(period, fortnight)
+        cur.execute(
+            """
+            SELECT
+                nombre,
+                apellidos,
+                salario,
+                pago,
+                banco,
+                cuenta_iban,
+                moneda,
+                usuario,
+                jornada,
+                horas_contratadas,
+                horas_tope_ordinario,
+                horas_tope_maximo,
+                tarifa_hora_extra,
+                pago_minimo_garantizado
+            FROM empleados
+            WHERE COALESCE(estado, 'Activo') = 'Activo'
+              AND COALESCE(activo, TRUE) = TRUE
+              AND company_code = %s
+              AND COALESCE(salario, 0) > 0
+            ORDER BY nombre, apellidos
+            """,
+            (company,),
+        )
+        for emp in cur.fetchall() or []:
+            employee_name_key = _employee_full_name(emp).lower()
+            if any(name in employee_name_key for name in EXCLUDED_BIWEEKLY_PAYROLL_NAMES):
+                continue
+            amount, payroll_notes = _employee_biweekly_pay(cur, emp, period, int(fortnight or 1))
+            _append_unique_biweekly_row(rows, seen_rows, row(
+                "Planilla",
+                _employee_full_name(emp),
+                amount,
+                emp.get("moneda") or "CRC",
+                emp.get("cuenta_iban") or emp.get("banco") or "",
+                "EMPLEADOS",
+                payroll_notes,
+            ))
+
+        if int(fortnight or 1) == 1:
+            prev_period = _previous_period(period)
+            fortnight_payment_date = _fortnight_due_date(period, 1)
+            try:
+                year, month = [int(part) for part in prev_period.split("-")]
+                next_year, next_month = (year + 1, 1) if month == 12 else (year, month + 1)
+                cur.execute(
+                    """
+                    WITH tax_ranked AS (
+                        SELECT d.*,
+                               ROW_NUMBER() OVER (
+                                   PARTITION BY d.direction,
+                                                COALESCE(NULLIF(d.document_number, ''), NULLIF(d.electronic_key, ''), d.source_table || ':' || d.source_id, d.id::text)
+                                   ORDER BY
+                                       CASE
+                                           WHEN d.source_table IN ('hacienda_emitted_excel', 'hacienda_acceptance_excel', 'xml_upload') THEN 0
+                                           WHEN d.xml_path IS NOT NULL THEN 1
+                                           WHEN d.source_table IN ('invoicing', 'collections') THEN 2
+                                           WHEN d.source_table = 'payment_obligations' THEN 3
+                                           ELSE 4
+                                       END,
+                                       CASE WHEN COALESCE(d.tax_amount, 0) <> 0 THEN 0 ELSE 1 END,
+                                       d.id DESC
+                               ) AS tax_rank
+                        FROM tax_electronic_documents d
+                        WHERE d.issue_datetime >= %s
+                          AND d.issue_datetime < %s
+                          AND COALESCE(d.issue_datetime::date, CURRENT_DATE) <= CURRENT_DATE
+                          AND company_code = %s
+                    )
+                    SELECT direction,
+                           COALESCE(SUM(
+                               CASE
+                                   WHEN UPPER(COALESCE(currency_code,'CRC')) IN ('CRC','COLON','COLONES')
+                                   THEN tax_amount
+                                   ELSE tax_amount * COALESCE(NULLIF(exchange_rate,0),1)
+                               END
+                           ),0) AS tax_crc
+                    FROM tax_ranked
+                    WHERE tax_rank = 1
+                    GROUP BY direction
+                    """,
+                    (f"{year:04d}-{month:02d}-01", f"{next_year:04d}-{next_month:02d}-01", company),
+                )
+                taxes = {r["direction"]: _money(r["tax_crc"]) for r in cur.fetchall() or []}
+                iva_amount = _money(taxes.get("SALE", Decimal("0")) - taxes.get("PURCHASE", Decimal("0")))
+                if iva_amount > 0:
+                    _append_unique_biweekly_row(rows, seen_rows, row("IVA", f"IVA por pagar {prev_period}", iva_amount, "CRC", default_crc_bank, "ACCOUNTING_TAX", "IVA venta menos IVA compra del mes anterior.", fortnight_payment_date))
+            except Exception as exc:
+                conn.rollback()
+                _append_unique_biweekly_row(rows, seen_rows, row("IVA", f"Revisar IVA mes anterior {prev_period}", 0, "CRC", default_crc_bank, "REVISION", str(exc), fortnight_payment_date))
+
+            _append_unique_biweekly_row(rows, seen_rows, row("CCSS", "CCSS por pagar", 0, "CRC", default_crc_bank, "MANUAL", "Completar monto confirmado por CCSS.", fortnight_payment_date))
+            _append_unique_biweekly_row(rows, seen_rows, row("Telefonia", "Manfred Bolanos Barrantes", 7000, "CRC", default_crc_bank, "AUTO_FIXED", "Apoyo celular primera quincena.", fortnight_payment_date))
+            _append_unique_biweekly_row(rows, seen_rows, row("Telefonia", "Erasmo Gomez Gomez", 7000, "CRC", default_crc_bank, "AUTO_FIXED", "Apoyo celular primera quincena.", fortnight_payment_date))
+
+            company_scope = list(dict.fromkeys([company, "MSL-CR", "MCI-CR"]))
+            cur.execute("SELECT to_regclass('public.corporate_card_statements') AS table_name")
+            card_table = cur.fetchone()
+            statements = []
+            if card_table and card_table.get("table_name"):
+                cur.execute(
+                    """
+                    WITH statement_totals AS (
+                        SELECT
+                            s.id,
+                            s.company_code,
+                            s.card_last4,
+                            s.statement_period,
+                            s.payment_due_date,
+                            s.cash_payment_crc,
+                            s.cash_payment_usd,
+                            s.cutoff_date,
+                            s.source_filename,
+                            s.status,
+                            COUNT(t.id) AS tx_count,
+                            COALESCE(SUM(CASE WHEN UPPER(COALESCE(t.currency,'CRC')) = 'CRC' THEN t.amount_original ELSE 0 END), 0) AS tx_crc,
+                            COALESCE(SUM(CASE WHEN UPPER(COALESCE(t.currency,'CRC')) = 'USD' THEN t.amount_original ELSE 0 END), 0) AS tx_usd
+                        FROM corporate_card_statements s
+                        LEFT JOIN corporate_card_transactions t ON t.statement_id=s.id
+                        WHERE s.company_code = ANY(%s)
+                          AND COALESCE(s.status,'IMPORTED') <> 'VOID'
+                          AND (
+                              s.statement_period = %s
+                              OR (
+                                  s.payment_due_date IS NOT NULL
+                                  AND s.payment_due_date <= %s
+                                  AND COALESCE(s.status,'IMPORTED') <> 'SETTLED'
+                              )
+                              OR (
+                                  s.statement_period IS NULL
+                                  AND s.cutoff_date >= %s
+                                  AND s.cutoff_date < %s
+                              )
+                          )
+                        GROUP BY s.id
+                    ),
+                    ranked AS (
+                        SELECT *,
+                               ROW_NUMBER() OVER (
+                                   PARTITION BY company_code, COALESCE(NULLIF(TRIM(card_last4),''), source_filename, id::text)
+                                   ORDER BY
+                                       CASE WHEN COALESCE(status,'IMPORTED') = 'SETTLED' THEN 1 ELSE 0 END,
+                                       CASE
+                                           WHEN payment_due_date >= %s AND payment_due_date <= %s THEN 0
+                                           WHEN payment_due_date < %s THEN 1
+                                           WHEN statement_period = %s THEN 2
+                                           ELSE 3
+                                       END,
+                                       payment_due_date ASC NULLS LAST,
+                                       cutoff_date DESC NULLS LAST,
+                                       id DESC
+                               ) AS rn
+                        FROM statement_totals
+                    )
+                    SELECT company_code, card_last4, statement_period, payment_due_date,
+                           cash_payment_crc, cash_payment_usd, status, tx_count, tx_crc, tx_usd
+                    FROM ranked
+                    WHERE rn = 1
+                    ORDER BY company_code, card_last4
+                    """,
+                    (
+                        company_scope,
+                        prev_period,
+                        fortnight_payment_date,
+                        f"{year:04d}-{month:02d}-01",
+                        f"{next_year:04d}-{next_month:02d}-01",
+                        due_start,
+                        due_end,
+                        due_start,
+                        prev_period,
+                    ),
+                )
+                statements = cur.fetchall() or []
+            if not statements:
+                cur.execute("SELECT to_regclass('public.accounting_entries') AS entries_table, to_regclass('public.accounting_lines') AS lines_table")
+                accounting_tables = cur.fetchone() or {}
+                if accounting_tables.get("entries_table") and accounting_tables.get("lines_table"):
+                    cur.execute(
+                        """
+                        SELECT
+                            COALESCE(SUM(COALESCE(l.credit,0) - COALESCE(l.debit,0)), 0) AS amount_crc,
+                            COUNT(DISTINCT e.id) AS entry_count
+                        FROM accounting_entries e
+                        JOIN accounting_lines l ON l.entry_id=e.id
+                        WHERE e.company_code = ANY(%s)
+                          AND e.period = %s
+                          AND COALESCE(e.workflow_status,'POSTED') = 'POSTED'
+                          AND (
+                              e.origin IN ('CORP_CARD_PENDING','CORP_CARD_EXPENSE','CORP_CARD_ITP_PAYMENT','CORP_CARD_SETTLEMENT')
+                              OR UPPER(COALESCE(e.description,'')) LIKE '%%TARJETA CORPORATIVA BAC%%'
+                              OR UPPER(COALESCE(e.description,'')) LIKE '%%BAC%%'
+                          )
+                          AND (
+                              l.account_code = %s
+                              OR UPPER(COALESCE(l.account_name,'')) LIKE '%%TARJETA CORPORATIVA BAC%%'
+                          )
+                        """,
+                        (company_scope, prev_period, CARD_PAYABLE_CODE),
+                    )
+                    card_accounting = cur.fetchone() or {}
+                    amount_crc = _money(card_accounting.get("amount_crc"))
+                    if amount_crc > 0:
+                        statements = [{
+                            "company_code": company,
+                            "card_last4": "",
+                            "statement_period": prev_period,
+                            "payment_due_date": fortnight_payment_date,
+                            "cash_payment_crc": amount_crc,
+                            "cash_payment_usd": Decimal("0.00"),
+                            "status": "POSTED_PENDING_PAYMENT",
+                            "tx_count": int(card_accounting.get("entry_count") or 0),
+                            "tx_crc": amount_crc,
+                            "tx_usd": Decimal("0.00"),
+                            "accounting_fallback": True,
+                        }]
+            if not statements:
+                _append_unique_biweekly_row(rows, seen_rows, row("Tarjetas de credito", f"Faltan estados BAC {prev_period}", 0, "CRC", "BAC", "REVISION", "Importar estados BAC del mes anterior para calcular tarjetas.", fortnight_payment_date))
+            card_labels = {"3155": "Aaron", "3156": "Diana", "3157": "Pabel", "1951": "Diana", "1936": "Diana", "1969": "Pabel", "1944": "Pabel", "3148": "ITP"}
+            for st in statements:
+                if str(st.get("status") or "").upper() == "SETTLED":
+                    continue
+                last4 = str(st.get("card_last4") or "").strip()
+                label = card_labels.get(last4, f"Tarjeta {last4 or 'BAC'}")
+                crc = _money(st.get("cash_payment_crc"))
+                usd = _money(st.get("cash_payment_usd"))
+                if crc <= 0 and usd <= 0 and int(st.get("tx_count") or 0) > 0:
+                    crc = _money(st.get("tx_crc"))
+                    usd = _money(st.get("tx_usd"))
+                if crc > 0:
+                    source = "CORP_CARD_ACCOUNTING" if st.get("accounting_fallback") else "CORP_CARD"
+                    notes = "Saldo tarjeta BAC tomado del mayor contable." if st.get("accounting_fallback") else f"Tarjeta {last4}"
+                    _append_unique_biweekly_row(rows, seen_rows, row("Tarjetas de credito", f"BAC {label} contado CRC {st.get('statement_period') or ''}", crc, "CRC", "BAC", source, notes, fortnight_payment_date))
+                if usd > 0:
+                    _append_unique_biweekly_row(rows, seen_rows, row("Tarjetas de credito", f"BAC {label} contado USD {st.get('statement_period') or ''}", usd, "USD", "BAC", "CORP_CARD", f"Tarjeta {last4}. Convertir/pagar segun banco.", fortnight_payment_date))
+
+        cur.execute(
+            """
+            SELECT id, company_code, payee_name, obligation_type, reference, currency, balance, issue_date, due_date,
+                   planned_payment_date,
+                   COALESCE(planned_payment_date, due_date, issue_date) AS schedule_date,
+                   payment_bank, payment_bank_account_code, payment_bank_account_name, notes
+            FROM payment_obligations
+            WHERE COALESCE(active, TRUE)=TRUE
+              AND company_code = ANY(%s)
+              AND status IN ('PENDING','PARTIAL')
+              AND COALESCE(balance,0) > 0
+            ORDER BY COALESCE(planned_payment_date, due_date, issue_date) NULLS LAST, payee_name
+            """,
+            (["MSL-CR", "MCI-CR"],),
+        )
+        for ob in cur.fetchall() or []:
+            schedule_date = _coerce_date(ob.get("schedule_date") or ob.get("planned_payment_date") or ob.get("due_date") or ob.get("issue_date"), due_start)
+            if schedule_date < due_start or schedule_date > due_end:
+                continue
+            obligation_type_upper = str(ob.get("obligation_type") or "").upper()
+            haystack = " ".join(str(ob.get(k) or "") for k in ("payee_name", "obligation_type", "notes", "reference")).lower()
+            if "alquiler" in haystack or "rent" in haystack or "prime properties" in haystack:
+                category = "Alquiler"
+            elif "internet" in haystack or "american data" in haystack:
+                category = "Internet"
+            elif "surveyor" in haystack or obligation_type_upper == "SURVEYOR_FEE":
+                if not ob.get("planned_payment_date"):
+                    continue
+                category = "Surveyors"
+            elif obligation_type_upper in {"SUPPLIER_INVOICE", "SUPPLIER_CREDIT_NOTE"}:
+                category = "Proveedores"
+            else:
+                continue
+            invoice_reference = display_itp_invoice_reference(ob.get("reference"))
+            _append_unique_biweekly_row(rows, seen_rows, row(
+                category,
+                ob.get("payee_name") or ob.get("reference") or category,
+                ob.get("balance"),
+                ob.get("currency") or "CRC",
+                ob.get("payment_bank_account_name") or ob.get("payment_bank_account_code") or ob.get("payment_bank") or "",
+                "ITP",
+                f"Aplicar pago a ITP #{ob.get('id')} | Factura: {invoice_reference}".strip(),
+                _biweekly_payment_date(period, int(fortnight or 1), str(schedule_date), category),
+                obligation_id=ob.get("id"),
+                reference=invoice_reference,
+                balance=ob.get("balance"),
+                origin_company_code=ob.get("company_code") or company,
+            ))
+        rows = _dedupe_biweekly_rows_against_itp(rows)
+        return {"period": period, "fortnight": int(fortnight or 1), "company_code": company, "rows": rows}
+    except Exception as exc:
+        conn.rollback()
+        raise HTTPException(status_code=500, detail=f"No se pudo generar obligaciones quincenales: {exc}")
+
+
+@router.post("/biweekly-obligations/save-draft")
+def biweekly_obligations_save_draft(
+    payload: dict,
+    conn=Depends(get_db),
+    x_company_code: str | None = Header(None, alias="X-Company-Code"),
+    x_user: str | None = Header(None, alias="X-User"),
+):
+    company = normalize_company_code(header_value=x_company_code)
+    user = x_user or "SYSTEM"
+    period = str(payload.get("period") or "").strip()
+    rows = payload.get("rows") or []
+    if not period or not isinstance(rows, list):
+        raise HTTPException(status_code=400, detail="Periodo y lineas son obligatorios")
+    cur = conn.cursor(cursor_factory=RealDictCursor)
+    try:
+        result = _save_biweekly_draft(cur, company, period, int(payload.get("fortnight") or 1), rows, user)
+        conn.commit()
+        return result
+    except Exception as exc:
+        conn.rollback()
+        raise HTTPException(status_code=500, detail=f"No se pudo guardar borrador quincenal: {exc}")
+
+
+@router.post("/biweekly-obligations/apply")
+def biweekly_obligations_apply(
+    payload: dict,
+    conn=Depends(get_db),
+    x_company_code: str | None = Header(None, alias="X-Company-Code"),
+    x_user: str | None = Header(None, alias="X-User"),
+):
+    company = normalize_company_code(header_value=x_company_code)
+    user = x_user or "SYSTEM"
+    period = str(payload.get("period") or "").strip()
+    rows = payload.get("rows") or []
+    apply_keys_raw = payload.get("apply_keys") or []
+    apply_keys = {str(key) for key in apply_keys_raw if str(key or "").strip()}
+    if not period or not isinstance(rows, list):
+        raise HTTPException(status_code=400, detail="Periodo y lineas son obligatorios")
+    cur = conn.cursor(cursor_factory=RealDictCursor)
+    _ensure_company_column(cur)
+    _ensure_biweekly_schema(cur)
+    errors = []
+    saved = posted = applied = pending = 0
+    pending_rows = []
+    try:
+        cur.execute(
+            """
+            DELETE FROM itp_biweekly_payment_batches
+            WHERE company_code = %s
+              AND period = %s
+              AND fortnight = %s
+              AND status = 'DRAFT'
+            """,
+            (company, period, int(payload.get("fortnight") or 1)),
+        )
+        cur.execute(
+            """
+            INSERT INTO itp_biweekly_payment_batches(company_code, period, fortnight, created_by)
+            VALUES(%s,%s,%s,%s)
+            RETURNING id
+            """,
+            (company, period, int(payload.get("fortnight") or 1), user),
+        )
+        batch_id = cur.fetchone()["id"]
+        for idx, item in enumerate(rows, start=1):
+            try:
+                category = _normalize_biweekly_category(item.get("category"))
+                beneficiary = str(item.get("name") or "").strip()
+                bank_code = str(item.get("bank_accounting_code") or "").strip()
+                voucher = str(item.get("bank_voucher") or "").strip()
+                payment_date = _biweekly_payment_date(period, int(payload.get("fortnight") or 1), item.get("due_date"), item.get("category"))
+                currency = str(item.get("currency") or "CRC").upper()
+                amount = _money(item.get("amount"))
+                payment_method = _normalize_payment_method(item.get("payment_method"))
+                is_card_payment = payment_method == CARD_3155_METHOD
+                is_hazel_payment = payment_method == HAZEL_PAYMENT_METHOD
+                payment_card_last4 = CARD_3155_LAST4 if is_card_payment else str(item.get("payment_card_last4") or "").strip()
+                if is_hazel_payment:
+                    bank_code = HAZEL_CONTRIBUTION_CODE
+                elif is_card_payment:
+                    bank_code = CARD_PAYABLE_CODE
+                if amount <= 0:
+                    continue
+                if apply_keys and _biweekly_row_key_text(item) not in apply_keys:
+                    pending_rows.append(item)
+                    pending += 1
+                    continue
+                missing = []
+                if not category:
+                    missing.append("rubro")
+                if not beneficiary:
+                    missing.append("beneficiario")
+                if not bank_code:
+                    missing.append("cuenta contable banco")
+                if not voucher:
+                    missing.append("comprobante bancario")
+                if missing:
+                    pending_rows.append(item)
+                    pending += 1
+                    continue
+                datetime.strptime(payment_date, "%Y-%m-%d")
+                if is_hazel_payment:
+                    bank_row = {"account_code": HAZEL_CONTRIBUTION_CODE, "account_name": HAZEL_CONTRIBUTION_NAME}
+                elif is_card_payment:
+                    bank_row = {"account_code": CARD_PAYABLE_CODE, "account_name": CARD_PAYABLE_NAME}
+                else:
+                    cur.execute(
+                        """
+                        SELECT account_code, account_name
+                        FROM accounting_accounts
+                        WHERE account_code=%s
+                          AND COALESCE(active, TRUE)=TRUE
+                          AND COALESCE(accepts_posting, FALSE)=TRUE
+                        LIMIT 1
+                        """,
+                        (bank_code,),
+                    )
+                    bank_row = cur.fetchone()
+                    if not bank_row:
+                        raise ValueError(f"Cuenta contable banco invalida o inactiva: {bank_code}")
+                rate = _exchange_rate(cur, payment_date) if currency == "USD" else Decimal("1.00")
+                amount_crc = (amount * rate).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+                bank_name = bank_row["account_name"]
+                description = f"Pago quincenal {category} - {beneficiary} - Comp {voucher}"
+                obligation_id = item.get("obligation_id")
+                entry_company = normalize_company_code(header_value=item.get("origin_company_code") or item.get("company_code") or company) if obligation_id else company
+                if obligation_id:
+                    cur.execute("SELECT id, balance FROM payment_obligations WHERE id=%s AND company_code=%s FOR UPDATE", (int(obligation_id), entry_company))
+                    ob = cur.fetchone()
+                    if not ob:
+                        raise ValueError(f"ITP {obligation_id} no existe en {entry_company}")
+                    balance = _money(ob.get("balance"))
+                    if amount > balance:
+                        raise ValueError(f"Pago excede saldo ITP {obligation_id}")
+                    new_balance = (balance - amount).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+                    cur.execute(
+                        """
+                        UPDATE payment_obligations
+                           SET balance=%s,
+                               status=%s,
+                               last_payment_date=%s,
+                               payment_bank_account_code=%s,
+                               payment_bank_account_name=%s,
+                               payment_method=%s,
+                               payment_card_last4=%s,
+                               paid_with_card=%s,
+                               card_paid_at=%s,
+                               card_holder_name=%s,
+                               updated_at=NOW()
+                         WHERE id=%s AND company_code=%s
+                        """,
+                        (
+                            new_balance, "PAID" if new_balance == 0 else "PARTIAL", payment_date,
+                            bank_code, bank_name, payment_method, payment_card_last4 or None,
+                            is_card_payment, payment_date if is_card_payment else None,
+                            CARD_3155_LABEL if is_card_payment else None, int(obligation_id), entry_company,
+                        ),
+                    )
+                    applied += 1
+                entry_origin = "ITP_PAYMENT" if obligation_id else "ITP_BIWEEKLY_PAYMENT"
+                entry_origin_id = int(obligation_id) if obligation_id else batch_id * 10000 + idx
+                cur.execute("SELECT id FROM accounting_entries WHERE origin=%s AND origin_id=%s AND company_code=%s LIMIT 1", (entry_origin, entry_origin_id, entry_company))
+                existing = cur.fetchone()
+                if existing:
+                    entry_id = existing["id"]
+                    cur.execute("DELETE FROM accounting_lines WHERE entry_id=%s", (entry_id,))
+                else:
+                    cur.execute(
+                        """
+                        INSERT INTO accounting_entries(entry_date, period, description, origin, origin_id, created_by, workflow_status, company_code, currency_code, exchange_rate, posting_rule_code, posting_metadata, posted_by, posted_at)
+                        VALUES(%s,%s,%s,%s,%s,%s,'POSTED',%s,'CRC',%s,%s,%s,%s,NOW())
+                        RETURNING id
+                        """,
+                        (payment_date, period, description, entry_origin, entry_origin_id, user, entry_company, rate, entry_origin, Json({"bank_voucher": voucher, "category": category, "source": item.get("source"), "display_company_code": company}), user),
+                    )
+                    entry_id = cur.fetchone()["id"]
+                debit_code, debit_name = ("2.1.01.01", "Cuentas por pagar-comerciales") if obligation_id else _debit_account_for(category)
+                cur.execute(
+                    """
+                    INSERT INTO accounting_lines(entry_id, account_code, account_name, debit, credit, line_description)
+                    VALUES(%s,%s,%s,%s,0,%s),(%s,%s,%s,0,%s,%s)
+                    """,
+                    (entry_id, debit_code, debit_name, amount_crc, description, entry_id, bank_code, bank_name, amount_crc, description),
+                )
+                posted += 1
+                cur.execute(
+                    """
+                    INSERT INTO itp_biweekly_payment_lines(
+                        batch_id, company_code, category, beneficiary, amount, currency, amount_crc,
+                        destination_account, bank_accounting_code, bank_accounting_name, bank_voucher,
+                        payment_method, payment_card_last4,
+                        payment_date, obligation_id, reference, source, notes, accounting_entry_id, origin_company_code
+                    )
+                    VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                    """,
+                    (
+                        batch_id, company, category, beneficiary, amount, currency, amount_crc,
+                        item.get("bank_account") or "", bank_code, bank_name, voucher, payment_method, payment_card_last4 or None, payment_date,
+                        obligation_id, item.get("reference") or "", item.get("source") or "", item.get("notes") or "", entry_id, entry_company,
+                    ),
+                )
+                saved += 1
+            except Exception as exc:
+                errors.append(f"Linea {idx}: {exc}")
+        if pending_rows:
+            _save_biweekly_draft(cur, company, period, int(payload.get("fortnight") or 1), pending_rows, user)
+        if errors:
+            conn.rollback()
+            raise HTTPException(status_code=400, detail="\n".join(errors[:10]))
+        conn.commit()
+        return {"status": "ok", "batch_id": batch_id, "saved": saved, "posted": posted, "applied": applied, "pending": pending}
+    except HTTPException:
+        raise
+    except Exception as exc:
+        conn.rollback()
+        raise HTTPException(status_code=500, detail=f"No se pudo aplicar obligaciones quincenales: {exc}")
+
+
+@router.post("/biweekly-obligations/export.xlsx")
+def biweekly_obligations_export(payload: dict):
+    return _build_biweekly_obligations_excel(payload)
+
+
+@router.post("/biweekly-obligations/export-ticket")
+def biweekly_obligations_export_ticket(payload: dict):
+    rows = payload.get("rows") or []
+    if not isinstance(rows, list):
+        raise HTTPException(status_code=400, detail="Lineas invalidas")
+    _cleanup_biweekly_export_cache()
+    ticket = uuid.uuid4().hex
+    BIWEEKLY_EXPORT_CACHE[ticket] = {"created_at": time.time(), "payload": payload}
+    return {"ticket": ticket}
+
+
+@router.get("/biweekly-obligations/export/{ticket}.xlsx")
+def biweekly_obligations_export_by_ticket(ticket: str):
+    _cleanup_biweekly_export_cache()
+    item = BIWEEKLY_EXPORT_CACHE.get(str(ticket or "").strip())
+    if not item:
+        raise HTTPException(status_code=404, detail="Exportacion expirada")
+    return _build_biweekly_obligations_excel(item.get("payload") or {})
+
+
+def _build_biweekly_obligations_excel(payload: dict):
+    try:
+        from openpyxl import Workbook
+        from openpyxl.styles import Font, PatternFill
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"No se pudo cargar motor Excel: {exc}")
+
+    rows = payload.get("rows") or []
+    if not isinstance(rows, list):
+        raise HTTPException(status_code=400, detail="Lineas invalidas")
+
+    columns = [
+        ("category", "Rubro"),
+        ("name", "Nombre / beneficiario"),
+        ("amount", "Monto"),
+        ("currency", "Moneda"),
+        ("bank_account", "Cuenta bancaria destino"),
+        ("bank_accounting_code", "Cuenta contable banco"),
+        ("bank_voucher", "Comprobante"),
+        ("due_date", "Fecha pago"),
+        ("obligation_id", "ITP ID"),
+        ("reference", "Referencia"),
+        ("source", "Fuente"),
+        ("notes", "Notas"),
+    ]
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Obligaciones"
+    period = str(payload.get("period") or "")
+    fortnight = str(payload.get("fortnight") or "")
+    ws["A1"] = f"Obligaciones quincenales {period} Q{fortnight}"
+    ws["A1"].font = Font(bold=True, size=14)
+    ws.append([])
+    ws.append([label for _, label in columns])
+    for cell in ws[3]:
+        cell.font = Font(bold=True, color="FFFFFF")
+        cell.fill = PatternFill("solid", fgColor="003A75")
+
+    for item in rows:
+        if not isinstance(item, dict):
+            continue
+        ws.append([item.get(key) for key, _ in columns])
+
+    for column_cells in ws.columns:
+        width = min(max(len(str(cell.value or "")) for cell in column_cells) + 2, 46)
+        ws.column_dimensions[column_cells[0].column_letter].width = width
+
+    output = io.BytesIO()
+    wb.save(output)
+    output.seek(0)
+    filename = f"Obligaciones_Quincenales_{period or 'periodo'}_Q{fortnight or '1'}.xlsx"
+    return StreamingResponse(
+        output,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@router.get("/reports/payment-report.xlsx")
+def itp_payment_report_excel(
+    period: str = Query("", description="Periodo base YYYY-MM"),
+    months: int = Query(1, ge=1, le=60),
+    status: str = Query("ALL"),
+    date_from: Optional[date] = Query(None),
+    date_to: Optional[date] = Query(None),
+    obligation_type: str = Query("ALL"),
+    payee_type: str = Query("ALL"),
+    conn=Depends(get_db),
+    x_company_code: str | None = Header(None, alias="X-Company-Code"),
+):
+    try:
+        from openpyxl import Workbook
+        from openpyxl.styles import Font, PatternFill
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"No se pudo cargar motor Excel: {exc}")
+
+    company = normalize_company_code(header_value=x_company_code)
+    period = str(period or date.today().strftime("%Y-%m")).strip()
+    end_date = _add_months(_month_start(period), 1)
+    start_date = _add_months(end_date, -int(months or 1))
+    if date_from:
+        start_date = date_from
+    if date_to:
+        end_date = date_to + timedelta(days=1)
+    status = str(status or "ALL").strip().upper()
+    obligation_type = str(obligation_type or "ALL").strip().upper()
+    payee_type = str(payee_type or "ALL").strip().upper()
+
+    filters = [
+        "COALESCE(active, TRUE) = TRUE",
+        "company_code = %s",
+        "COALESCE(last_payment_date, due_date, issue_date) >= %s",
+        "COALESCE(last_payment_date, due_date, issue_date) < %s",
+    ]
+    params = [company, start_date, end_date]
+    if status != "ALL":
+        if status == "PENDING":
+            filters.append("status IN ('PENDING','PARTIAL')")
+        else:
+            filters.append("status = %s")
+            params.append(status)
+    if obligation_type != "ALL":
+        filters.append("UPPER(COALESCE(obligation_type,'')) = %s")
+        params.append(obligation_type)
+    if payee_type != "ALL":
+        filters.append("UPPER(COALESCE(payee_type,'')) = %s")
+        params.append(payee_type)
+
+    cur = conn.cursor(cursor_factory=RealDictCursor)
+    _ensure_company_column(cur)
+    conn.commit()
+    cur.execute(
+        f"""
+        SELECT
+            id,
+            payee_name,
+            payee_type,
+            obligation_type,
+            reference,
+            vessel,
+            country,
+            operation,
+            currency,
+            total,
+            balance,
+            GREATEST(COALESCE(total,0) - COALESCE(balance,0), 0) AS paid_amount,
+            status,
+            issue_date,
+            due_date,
+            last_payment_date,
+            origin,
+            payment_bank,
+            payment_bank_account_code,
+            payment_bank_account_name,
+            payment_reference,
+            COALESCE(payment_method, CASE WHEN COALESCE(paid_with_card, FALSE) THEN %s ELSE 'BANK' END) AS payment_method,
+            payment_card_last4,
+            COALESCE(paid_with_card, FALSE) AS paid_with_card,
+            notes
+        FROM payment_obligations
+        WHERE {" AND ".join(filters)}
+        ORDER BY COALESCE(last_payment_date, due_date, issue_date) DESC, payee_name
+        """,
+        [CARD_3155_METHOD] + params,
+    )
+    rows = cur.fetchall() or []
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Detalle ITP"
+    ws["A1"] = f"Reporte ITP pagos {start_date:%Y-%m-%d} a {(end_date - timedelta(days=1)):%Y-%m-%d} | Estado: {status} | Tipo: {obligation_type} | Beneficiario: {payee_type}"
+    ws["A1"].font = Font(bold=True, size=14)
+    headers = [
+        "ID", "Beneficiario", "Tipo beneficiario", "Tipo obligacion", "Referencia",
+        "Buque", "Pais", "Operacion", "Moneda", "Total", "Pagado", "Pendiente",
+        "Estado", "Fecha factura", "Fecha vencimiento", "Ultimo pago", "Origen",
+        "Metodo pago", "Tarjeta", "Cuenta contable pago", "Nombre cuenta pago",
+        "Comprobante", "Notas",
+    ]
+    ws.append([])
+    ws.append(headers)
+    for cell in ws[3]:
+        cell.font = Font(bold=True, color="FFFFFF")
+        cell.fill = PatternFill("solid", fgColor="003A75")
+
+    summary = {}
+    for row in rows:
+        method = row.get("payment_method") or ("CARD_BAC_3155" if row.get("paid_with_card") else "BANK")
+        method_label = HAZEL_PAYMENT_LABEL if method == HAZEL_PAYMENT_METHOD else (CARD_3155_LABEL if method == CARD_3155_METHOD else "Banco")
+        card_last4 = row.get("payment_card_last4") or (CARD_3155_LAST4 if method == CARD_3155_METHOD else "")
+        total = _money(row.get("total"))
+        paid = _money(row.get("paid_amount"))
+        balance = _money(row.get("balance"))
+        ws.append([
+            row.get("id"), row.get("payee_name"), row.get("payee_type"), row.get("obligation_type"), row.get("reference"),
+            row.get("vessel"), row.get("country"), row.get("operation"), row.get("currency"), float(total), float(paid), float(balance),
+            row.get("status"), row.get("issue_date"), row.get("due_date"), row.get("last_payment_date"), row.get("origin"),
+            method_label, card_last4, row.get("payment_bank_account_code"), row.get("payment_bank_account_name"),
+            row.get("payment_reference"), row.get("notes"),
+        ])
+        key = (row.get("status") or "", row.get("currency") or "CRC", method_label)
+        current = summary.setdefault(key, {"total": Decimal("0.00"), "paid": Decimal("0.00"), "balance": Decimal("0.00"), "count": 0})
+        current["total"] += total
+        current["paid"] += paid
+        current["balance"] += balance
+        current["count"] += 1
+
+    ws2 = wb.create_sheet("Resumen")
+    ws2.append(["Estado", "Moneda", "Metodo pago", "Lineas", "Total", "Pagado", "Pendiente"])
+    for cell in ws2[1]:
+        cell.font = Font(bold=True, color="FFFFFF")
+        cell.fill = PatternFill("solid", fgColor="003A75")
+    for (row_status, currency, method_label), data in sorted(summary.items()):
+        ws2.append([row_status, currency, method_label, data["count"], float(data["total"]), float(data["paid"]), float(data["balance"])])
+
+    for sheet in (ws, ws2):
+        for column_cells in sheet.columns:
+            width = min(max(len(str(cell.value or "")) for cell in column_cells) + 2, 48)
+            sheet.column_dimensions[column_cells[0].column_letter].width = width
+
+    output = io.BytesIO()
+    wb.save(output)
+    output.seek(0)
+    filename = f"ITP_Pagos_{period}_{months}m_{status}.xlsx"
+    return StreamingResponse(
+        output,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+# ============================================================
+# 3️⃣ APPLY PAYMENT — BLINDADO FINANCIERO
+# ============================================================
+from decimal import Decimal, ROUND_HALF_UP, InvalidOperation
+
+@router.post("/apply-payment")
+def apply_payment(
+    obligation_id: int,
+    amount: float,
+    payment_date: date,
+    bank_account_code: Optional[str] = Query(None),
+    bank_account_name: Optional[str] = Query(None),
+    bank_name: Optional[str] = Query(None),
+    payment_reference: Optional[str] = Query(None),
+    payment_method: Optional[str] = Query(None),
+    payment_card_last4: Optional[str] = Query(None),
+    conn=Depends(get_db),
+    x_user: str | None = Header(None, alias="X-User"),
+    x_role: str | None = Header(None, alias="X-Role"),
+    x_user_role: str | None = Header(None, alias="X-User-Role"),
+):
+    cur = None
+
+    try:
+        cur = conn.cursor(cursor_factory=RealDictCursor)
+        bank_account_code = str(bank_account_code or "").strip()
+        bank_account_name = str(bank_account_name or "").strip()
+        bank_name = str(bank_name or bank_account_name or "").strip()
+        payment_method = _normalize_payment_method(payment_method)
+        is_card_payment = payment_method == CARD_3155_METHOD
+        is_hazel_payment = payment_method == HAZEL_PAYMENT_METHOD
+        payment_card_last4 = CARD_3155_LAST4 if is_card_payment else str(payment_card_last4 or "").strip()
+        performed_by, performed_role = actor_from_headers(x_user, x_role, x_user_role)
+
+        cur.execute("""
+            ALTER TABLE payment_obligations
+            ADD COLUMN IF NOT EXISTS payment_bank TEXT
+        """)
+        cur.execute("""
+            ALTER TABLE payment_obligations
+            ADD COLUMN IF NOT EXISTS payment_bank_account_code TEXT
+        """)
+        cur.execute("""
+            ALTER TABLE payment_obligations
+            ADD COLUMN IF NOT EXISTS payment_bank_account_name TEXT
+        """)
+        cur.execute("""
+            ALTER TABLE payment_obligations
+            ADD COLUMN IF NOT EXISTS payment_reference TEXT
+        """)
+        cur.execute("ALTER TABLE payment_obligations ADD COLUMN IF NOT EXISTS payment_method TEXT NOT NULL DEFAULT 'BANK'")
+        cur.execute("ALTER TABLE payment_obligations ADD COLUMN IF NOT EXISTS payment_card_last4 TEXT")
+        cur.execute("ALTER TABLE payment_obligations ADD COLUMN IF NOT EXISTS paid_with_card BOOLEAN NOT NULL DEFAULT FALSE")
+        cur.execute("ALTER TABLE payment_obligations ADD COLUMN IF NOT EXISTS card_paid_at DATE")
+        cur.execute("ALTER TABLE payment_obligations ADD COLUMN IF NOT EXISTS card_holder_name TEXT")
+        payment_reference = str(payment_reference or "").strip()
+        if not payment_reference:
+            raise HTTPException(
+                status_code=400,
+                detail="Comprobante bancario requerido"
+            )
+
+        # =====================================================
+        # 1️⃣ BLOQUEAR FILA (ANTI CONCURRENCIA)
+        # =====================================================
+        cur.execute("""
+            SELECT *
+            FROM payment_obligations
+            WHERE id = %s
+              AND record_type = 'OBLIGATION'
+              AND COALESCE(active, TRUE) = TRUE
+            FOR UPDATE
+        """, (obligation_id,))
+
+        obligation = cur.fetchone()
+
+        if not obligation:
+            raise HTTPException(
+                status_code=404,
+                detail="Obligation not found"
+            )
+
+        if is_hazel_payment:
+            bank_row = {
+                "account_code": HAZEL_CONTRIBUTION_CODE,
+                "account_name": HAZEL_CONTRIBUTION_NAME,
+            }
+        elif is_card_payment:
+            bank_row = {
+                "account_code": CARD_PAYABLE_CODE,
+                "account_name": CARD_PAYABLE_NAME,
+            }
+        else:
+            bank_row = resolve_itp_bank(
+                cur,
+                bank_account_code,
+                bank_account_name,
+                payee_name=obligation.get("payee_name"),
+                payee_type=obligation.get("payee_type"),
+                obligation_type=obligation.get("obligation_type"),
+                country=obligation.get("country"),
+                reference=obligation.get("reference"),
+                notes=obligation.get("notes"),
+            )
+            if bank_account_code and not bank_row:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Selected bank account does not exist or is inactive"
+                )
+        if bank_row:
+            bank_account_code = bank_row["account_code"]
+            bank_account_name = bank_row["account_name"]
+            bank_name = bank_account_name
+
+        before_obligation = row_to_dict(obligation)
+
+        # =====================================================
+        # 2️⃣ CONVERTIR A DECIMAL (FINANCIERO CORRECTO)
+        # =====================================================
+        try:
+            balance = Decimal(str(obligation["balance"])).quantize(
+                Decimal("0.01"),
+                rounding=ROUND_HALF_UP
+            )
+
+            amount_decimal = Decimal(str(amount)).quantize(
+                Decimal("0.01"),
+                rounding=ROUND_HALF_UP
+            )
+
+        except InvalidOperation:
+            raise HTTPException(
+                status_code=400,
+                detail="Invalid monetary format"
+            )
+
+        # =====================================================
+        # 3️⃣ VALIDACIONES DE NEGOCIO
+        # =====================================================
+        if amount_decimal <= Decimal("0.00"):
+            raise HTTPException(
+                status_code=400,
+                detail="Payment amount must be greater than zero"
+            )
+
+        if obligation["status"] == "PAID":
+            raise HTTPException(
+                status_code=400,
+                detail="Obligation is already fully paid"
+            )
+
+        if amount_decimal > balance:
+            raise HTTPException(
+                status_code=400,
+                detail="Payment exceeds outstanding balance"
+            )
+
+        # =====================================================
+        # 4️⃣ CÁLCULO SEGURO DE NUEVO SALDO
+        # =====================================================
+        settlement = external_surveyor_settlement(
+            cur,
+            amount_decimal,
+            payee_name=obligation.get("payee_name"),
+            fallback_country=obligation.get("country"),
+            payee_type=obligation.get("payee_type"),
+            obligation_type=obligation.get("obligation_type"),
+        )
+
+        new_balance = (balance - amount_decimal).quantize(
+            Decimal("0.01"),
+            rounding=ROUND_HALF_UP
+        )
+
+        if new_balance < Decimal("0.00"):
+            # Protección extrema (nunca debería pasar)
+            raise HTTPException(
+                status_code=400,
+                detail="Resulting balance cannot be negative"
+            )
+
+        new_status = (
+            "PAID"
+            if new_balance == Decimal("0.00")
+            else "PARTIAL"
+        )
+
+        # =====================================================
+        # 5️⃣ UPDATE TRANSACCIONAL
+        # =====================================================
+        cur.execute("""
+            UPDATE payment_obligations
+            SET
+                balance = %s,
+                status = %s,
+                last_payment_date = %s,
+                payment_bank = %s,
+                payment_bank_account_code = %s,
+                payment_bank_account_name = %s,
+                payment_reference = %s,
+                payment_method = %s,
+                payment_card_last4 = %s,
+                paid_with_card = %s,
+                card_paid_at = %s,
+                card_holder_name = %s,
+                updated_at = NOW()
+            WHERE id = %s
+        """, (
+            new_balance,
+            new_status,
+            payment_date,
+            bank_name or None,
+            bank_account_code or None,
+            bank_account_name or None,
+            payment_reference or None,
+            payment_method,
+            payment_card_last4 or None,
+            is_card_payment,
+            payment_date if is_card_payment else None,
+            CARD_3155_LABEL if is_card_payment else None,
+            obligation_id
+        ))
+
+        cur.execute("SELECT * FROM payment_obligations WHERE id = %s", (obligation_id,))
+        after_obligation = row_to_dict(cur.fetchone())
+
+        audit_event(
+            cur,
+            module="itp",
+            action="PAYMENT_APPLIED",
+            entity_type="payment_obligation",
+            entity_id=obligation_id,
+            performed_by=performed_by,
+            performed_role=performed_role,
+            before=before_obligation,
+            after=after_obligation,
+            metadata={
+                "applied_amount": str(amount_decimal),
+                "external_surveyor_rule_applied": bool(settlement["applies"]),
+                "deduction_usd": str(settlement["deduction"]),
+                "withholding_usd": str(settlement["withholding"]),
+                "net_payment_usd": str(settlement["net_payment"]),
+                "payment_date": payment_date,
+                "payment_reference": payment_reference or None,
+                "payment_method": payment_method,
+                "payment_card_last4": payment_card_last4 or None,
+                "bank_account_code": bank_account_code or None,
+                "bank_account_name": bank_account_name or None,
+                "new_balance": str(new_balance),
+            },
+        )
+
+        conn.commit()
+
+        accounting_warning = None
+        try:
+            from services.accounting_auto import sync_itp_to_accounting
+            sync_itp_to_accounting(conn)
+        except Exception as sync_error:
+            accounting_warning = str(sync_error)
+
+        return {
+            "message": "Payment applied successfully",
+            "obligation_id": obligation_id,
+            "previous_balance": float(balance),
+            "applied_amount": float(amount_decimal),
+            "external_surveyor_rule_applied": bool(settlement["applies"]),
+            "deduction_usd": float(settlement["deduction"]),
+            "withholding_usd": float(settlement["withholding"]),
+            "net_payment_usd": float(settlement["net_payment"]),
+            "new_balance": float(new_balance),
+            "status": new_status,
+            "payment_method": payment_method,
+            "payment_card_last4": payment_card_last4 or None,
+            "accounting_warning": accounting_warning
+        }
+
+    except HTTPException:
+        if conn:
+            conn.rollback()
+        raise
+
+    except Exception as e:
+        if conn:
+            conn.rollback()
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error applying payment: {repr(e)}"
+        )
+
+    finally:
+        if cur:
+            cur.close()
+
+# ============================================================
+# 4️⃣ MANUAL OBLIGATION
+# ============================================================
+@router.post("/manual")
+def create_manual_obligation(
+    payee_name: str,
+    obligation_type: str,
+    total: float,
+    currency: str,
+    reference: Optional[str] = None,
+    notes: Optional[str] = None,
+    payee_type: str = "OTHER",
+    conn=Depends(get_db),
+    x_company_code: str | None = Header(None, alias="X-Company-Code"),
+):
+    if total <= 0:
+        raise HTTPException(
+            status_code=400,
+            detail="Total must be greater than zero"
+        )
+
+    cur = conn.cursor(cursor_factory=RealDictCursor)
+    company = normalize_company_code(header_value=x_company_code)
+
+    try:
+        _ensure_company_column(cur)
+        if is_employee_payee(cur, payee_name):
+            raise HTTPException(
+                status_code=400,
+                detail="El beneficiario existe como empleado en Master Data; no se registra en ITP."
+            )
+
+        cur.execute("""
+            INSERT INTO payment_obligations (
+                company_code,
+                record_type,
+                payee_type,
+                payee_name,
+                obligation_type,
+                reference,
+                currency,
+                total,
+                balance,
+                status,
+                origin,
+                notes,
+                active,
+                created_at
+            )
+            VALUES (
+                %s,
+                'OBLIGATION',
+                %s,
+                %s,
+                %s,
+                %s,
+                %s,
+                %s,
+                %s,
+                'PENDING',
+                'MANUAL',
+                %s,
+                TRUE,
+                NOW()
+            )
+            RETURNING id
+        """, (
+            company,
+            payee_type,
+            payee_name,
+            obligation_type,
+            reference,
+            currency,
+            total,
+            total,
+            notes
+        ))
+
+        new_id = cur.fetchone()["id"]
+        conn.commit()
+
+    except HTTPException:
+        conn.rollback()
+        raise
+
+    except Exception as e:
+        conn.rollback()
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error creating manual obligation: {str(e)}"
+        )
+
+    return {
+        "message": "Manual obligation created successfully",
+        "id": new_id
+    }
+
+
+@router.post("/calendar/materialize")
+def materialize_calendar_obligation(
+    payload: dict = Body(default_factory=dict),
+    conn=Depends(get_db),
+    x_company_code: str | None = Header(None, alias="X-Company-Code"),
+):
+    payee_name = str(payload.get("payee_name") or "").strip()
+    obligation_type = str(payload.get("obligation_type") or "CALENDAR").strip()
+    payee_type = str(payload.get("payee_type") or obligation_type or "OTHER").strip()
+    reference = str(payload.get("reference") or payload.get("referencia") or "").strip()
+    currency = str(payload.get("currency") or "USD").strip().upper()
+    origin = str(payload.get("origin") or "CALENDAR").strip().upper()
+    if not payee_name:
+        raise HTTPException(status_code=400, detail="Beneficiario requerido")
+    if currency not in {"USD", "CRC"}:
+        raise HTTPException(status_code=400, detail="Moneda invalida")
+    try:
+        total = Decimal(str(payload.get("total") or payload.get("balance") or "0")).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+        balance = Decimal(str(payload.get("balance") or total)).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Monto invalido")
+    if total <= 0 or balance <= 0:
+        raise HTTPException(status_code=400, detail="Total y saldo deben ser mayores a cero")
+    if balance > total:
+        raise HTTPException(status_code=400, detail="El saldo no puede ser mayor que el total")
+    try:
+        due_date = _coerce_date(payload.get("due_date"), date.today())
+        issue_date = _coerce_date(payload.get("issue_date"), date.today()) if payload.get("issue_date") else date.today()
+    except Exception:
+        raise HTTPException(status_code=400, detail="Fecha invalida")
+    service_id = payload.get("service_id")
+    if service_id is None:
+        raw_id = str(payload.get("projected_id") or payload.get("id") or "")
+        if raw_id.startswith("SURVEYOR-PROJECTED-"):
+            parts = raw_id.split("-")
+            if len(parts) >= 3 and parts[2].isdigit():
+                service_id = int(parts[2])
+
+    cur = conn.cursor(cursor_factory=RealDictCursor)
+    company = normalize_company_code(header_value=x_company_code)
+    try:
+        _ensure_company_column(cur)
+        if is_employee_payee(cur, payee_name):
+            raise HTTPException(status_code=400, detail="El beneficiario existe como empleado en Master Data; no se registra en ITP.")
+        cur.execute(
+            """
+            SELECT id
+            FROM payment_obligations
+            WHERE company_code = %s
+              AND COALESCE(active, TRUE) = TRUE
+              AND origin = %s
+              AND obligation_type = %s
+              AND COALESCE(reference, '') = COALESCE(%s, '')
+              AND COALESCE(payee_name, '') = %s
+              AND COALESCE(balance, 0) > 0
+            LIMIT 1
+            """,
+            (company, origin, obligation_type, reference, payee_name),
+        )
+        existing = cur.fetchone()
+        if existing:
+            conn.commit()
+            return {"status": "exists", "id": existing["id"]}
+        cur.execute(
+            """
+            INSERT INTO payment_obligations (
+                company_code, record_type, payee_type, payee_name, obligation_type,
+                reference, issue_date, due_date, planned_payment_date, vessel, country, operation, currency,
+                total, balance, status, origin, service_id, notes, active, created_at
+            )
+            VALUES (
+                %s, 'OBLIGATION', %s, %s, %s,
+                %s, %s, %s, %s, %s, %s, %s, %s,
+                %s, %s, %s, %s, %s, %s, TRUE, NOW()
+            )
+            RETURNING *
+            """,
+            (
+                company,
+                payee_type,
+                payee_name,
+                obligation_type,
+                reference,
+                issue_date,
+                due_date,
+                _coerce_date(payload.get("planned_payment_date"), due_date) if payload.get("planned_payment_date") else due_date,
+                payload.get("vessel") or "",
+                payload.get("country") or "",
+                payload.get("operation") or "",
+                currency,
+                total,
+                balance,
+                "PARTIAL" if balance < total else "PENDING",
+                origin,
+                service_id,
+                payload.get("notes") or "",
+            ),
+        )
+        row = cur.fetchone()
+        conn.commit()
+        return {"status": "ok", "id": row["id"], "data": dict(row or {})}
+    except HTTPException:
+        conn.rollback()
+        raise
+    except Exception as exc:
+        conn.rollback()
+        raise HTTPException(status_code=500, detail=f"Error materializando obligacion: {str(exc)}")
+
+# ============================================================
+# 📥 UPLOAD XML (FACTURA / NC) — 100% BLINDADO
+# ============================================================
+@router.post("/upload/xml")
+def upload_invoice_xml(
+    file: UploadFile = File(...),
+    conn=Depends(get_db),
+    x_company_code: str | None = Header(None, alias="X-Company-Code"),
+):
+    from xml.etree import ElementTree as ET
+    from datetime import datetime, date, timedelta
+    import os
+    import shutil
+
+    cur = conn.cursor(cursor_factory=RealDictCursor)
+    company = normalize_company_code(header_value=x_company_code)
+    _ensure_company_column(cur)
+
+    # ============================================================
+    # GUARDAR ARCHIVO
+    # ============================================================
+    os.makedirs("storage/invoice_to_pay/xml", exist_ok=True)
+
+    ts = int(datetime.now().timestamp())
+    safe_name = file.filename.replace(" ", "_")
+    filepath = f"storage/invoice_to_pay/xml/{ts}_{safe_name}"
+
+    with open(filepath, "wb") as buffer:
+        shutil.copyfileobj(file.file, buffer)
+
+    # ============================================================
+    # PARSE XML (TOLERANTE)
+    # ============================================================
+    try:
+        tree = ET.parse(filepath)
+        root = tree.getroot()
+
+        # Namespace dinámico
+        if "}" in root.tag:
+            ns_uri = root.tag.split("}")[0].strip("{")
+            ns = {"fe": ns_uri}
+            p = "fe:"
+        else:
+            ns = {}
+            p = ""
+
+        def find_text(paths, default=None):
+            for path in paths:
+                node = root.find(path, ns)
+                if node is not None and node.text:
+                    return node.text.strip()
+            return default
+
+        # ------------------------------------------------------------
+        # TIPO DOCUMENTO
+        # ------------------------------------------------------------
+        is_credit_note = root.find(f".//{p}NotaCreditoElectronica", ns) is not None \
+                         or "NotaCredito" in root.tag
+
+        obligation_type = (
+            "SUPPLIER_CREDIT_NOTE" if is_credit_note else "SUPPLIER_INVOICE"
+        )
+
+        # ------------------------------------------------------------
+        # CLAVE
+        # ------------------------------------------------------------
+        clave = find_text([
+            f".//{p}Clave",
+            ".//Clave"
+        ])
+        if not clave:
+            raise ValueError("XML sin Clave")
+        invoice_reference = display_itp_invoice_reference(clave)
+
+        # ------------------------------------------------------------
+        # FECHA EMISIÓN
+        # ------------------------------------------------------------
+        fecha_raw = find_text([
+            f".//{p}FechaEmision",
+            ".//FechaEmision"
+        ])
+        if not fecha_raw:
+            raise ValueError("XML sin FechaEmision")
+
+        issue_date = date.fromisoformat(fecha_raw.split("T")[0])
+
+        # ------------------------------------------------------------
+        # EMISOR
+        # ------------------------------------------------------------
+        emisor = find_text([
+            f".//{p}Emisor/{p}Nombre",
+            f".//{p}Nombre"
+        ], "PROVEEDOR DESCONOCIDO")
+
+        # ------------------------------------------------------------
+        # MONEDA
+        # ------------------------------------------------------------
+        moneda = find_text([
+            f".//{p}CodigoMoneda",
+            ".//CodigoMoneda"
+        ], "CRC")
+
+        # ------------------------------------------------------------
+        # TOTAL (FACTURA / NC)
+        # ------------------------------------------------------------
+        total_raw = find_text([
+            f".//{p}TotalComprobante",
+            f".//{p}MontoTotal",
+            ".//TotalComprobante"
+        ])
+
+        if not total_raw:
+            raise ValueError("XML sin TotalComprobante")
+
+        total = float(total_raw)
+
+        if is_credit_note:
+            total = total * -1  # NC = negativo
+
+        # ------------------------------------------------------------
+        # PLAZO
+        # ------------------------------------------------------------
+        plazo_raw = find_text([
+            f".//{p}PlazoCredito",
+            ".//PlazoCredito"
+        ])
+
+        term_days = int(plazo_raw) if plazo_raw and plazo_raw.isdigit() else 30
+        due_date = issue_date + timedelta(days=term_days)
+
+    except Exception as e:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Error parsing XML: {str(e)}"
+        )
+
+    # ============================================================
+    # INSERTAR payment_obligations
+    # ============================================================
+    try:
+        if is_employee_payee(cur, emisor):
+            return {
+                "message": "XML omitido para ITP: el emisor existe como empleado en Master Data.",
+                "type": obligation_type,
+                "reference": clave,
+                "supplier": emisor,
+                "total": total,
+                "currency": moneda,
+                "skipped": True,
+            }
+        cur.execute("""
+            SELECT id
+            FROM payment_obligations
+            WHERE company_code=%s
+              AND COALESCE(active, TRUE)=TRUE
+              AND (
+                  NULLIF(electronic_key, '') = NULLIF(%s, '')
+                  OR NULLIF(reference, '') = NULLIF(%s, '')
+                  OR NULLIF(reference, '') = NULLIF(%s, '')
+              )
+            ORDER BY id DESC
+            LIMIT 1
+        """, (company, clave, clave, invoice_reference))
+        existing = cur.fetchone()
+        if existing:
+            conn.commit()
+            return {
+                "message": "XML ya estaba registrado en ITP",
+                "id": existing["id"],
+                "type": obligation_type,
+                "reference": invoice_reference,
+                "electronic_key": clave,
+                "supplier": emisor,
+                "total": total,
+                "currency": moneda,
+                "status": "exists",
+            }
+
+        cur.execute("""
+            INSERT INTO payment_obligations (
+                company_code,
+                record_type,
+                payee_type,
+                payee_id,
+                payee_name,
+                obligation_type,
+                reference,
+                electronic_key,
+                issue_date,
+                due_date,
+                country,
+                currency,
+                total,
+                balance,
+                status,
+                origin,
+                file_xml,
+                active,
+                notes,
+                created_at,
+                updated_at
+            )
+            VALUES (
+                %s,
+                'OBLIGATION',
+                'SUPPLIER',
+                NULL,
+                %s,
+                %s,
+                %s,
+                %s,
+                %s,
+                %s,
+                'Costa Rica',
+                %s,
+                %s,
+                %s,
+                'PENDING',
+                'UPLOAD',
+                %s,
+                TRUE,
+                %s,
+                NOW(),
+                NOW()
+            )
+            RETURNING id
+        """, (
+            company,
+            emisor,
+            obligation_type,
+            invoice_reference,
+            clave,
+            issue_date,
+            due_date,
+            moneda,
+            total,
+            total,
+            filepath,
+            f"Documento cargado por XML ({invoice_reference}) | Clave electrónica: {clave}"
+        ))
+        obligation_id = cur.fetchone()["id"]
+        replaced_ids = reconcile_surveyor_invoice_obligations(
+            cur,
+            company,
+            emisor,
+            issue_date,
+            reference=invoice_reference,
+            invoice_obligation_id=obligation_id,
+        )
+
+        conn.commit()
+
+    except Exception as e:
+        conn.rollback()
+        raise HTTPException(
+            status_code=500,
+            detail=f"DB insert error: {str(e)}"
+        )
+
+    return {
+        "message": "XML procesado correctamente",
+        "type": obligation_type,
+        "reference": invoice_reference,
+        "electronic_key": clave,
+        "supplier": emisor,
+        "total": total,
+        "currency": moneda,
+        "replaced_service_obligations": replaced_ids
+    }
+
+
+# ============================================================
+# 📥 UPLOAD PDF (ADJUNTO) con issue_date y due_date
+# ============================================================
+@router.post("/upload/pdf")
+def upload_invoice_pdf(
+    file: UploadFile = File(...),
+    reference: str = Form(...),
+    issue_date: Optional[date] = Form(None),
+    due_date: Optional[date] = Form(None),
+    conn=Depends(get_db),
+    x_company_code: str | None = Header(None, alias="X-Company-Code"),
+):
+    """
+    Carga un PDF y crea una obligación en payment_obligations
+    Usará la lógica:
+      - issue_date: si provisto por UI, si no, fecha actual
+      - due_date: si provisto por UI, si no, same day (contado)
+    """
+    cur = conn.cursor(cursor_factory=RealDictCursor)
+    company = normalize_company_code(header_value=x_company_code)
+    _ensure_company_column(cur)
+
+    # Normalizar fechas
+    issue_val = issue_date or date.today()
+    due_val = due_date or issue_val
+
+    os.makedirs("storage/invoice_to_pay/pdf", exist_ok=True)
+    timestamp = int(datetime.now().timestamp())
+    filename = f"pdf_{timestamp}_{file.filename}"
+    filepath = os.path.join("storage/invoice_to_pay/pdf", filename)
+
+    try:
+        with open(filepath, "wb") as buffer:
+            shutil.copyfileobj(file.file, buffer)
+
+        cur.execute("""
+            INSERT INTO payment_obligations (
+                company_code,
+                record_type,
+                obligation_type,
+                reference,
+                issue_date,
+                due_date,
+                currency,
+                total,
+                balance,
+                status,
+                origin,
+                file_pdf,
+                notes,
+                active,
+                created_at
+            )
+            VALUES (
+                %s,
+                'OBLIGATION',
+                'PDF_ONLY',
+                %s,
+                %s,
+                %s,
+                %s,
+                %s,
+                %s,
+                'PENDING',
+                'UPLOAD',
+                %s,
+                %s,
+                TRUE,
+                NOW()
+            )
+        """, (
+            company,
+            reference,
+            issue_val,
+            due_val,
+            "USD",         # Por defecto USD (puedes ajustar luego)
+            0.0,           # Sin monto explícito para PDF
+            0.0,
+            filepath,
+            f"PDF adjunto para {reference}"
+        ))
+
+        conn.commit()
+
+    except Exception as e:
+        conn.rollback()
+        raise HTTPException(
+            status_code=500,
+            detail=f"PDF upload error: {str(e)}"
+        )
+
+    return {"message": "PDF uploaded and obligation created successfully"}
+
+
+@router.patch("/{obligation_id}")
+def update_invoice_to_pay(
+    obligation_id: int,
+    payload: dict = Body(default_factory=dict),
+    conn=Depends(get_db),
+    x_company_code: str | None = Header(None, alias="X-Company-Code"),
+):
+    cur = conn.cursor(cursor_factory=RealDictCursor)
+    company = normalize_company_code(header_value=x_company_code)
+    _ensure_company_column(cur)
+    cur.execute(
+        """
+        SELECT id, total, balance, status
+        FROM payment_obligations
+        WHERE id = %s
+          AND company_code = %s
+          AND COALESCE(active, TRUE) = TRUE
+        FOR UPDATE
+        """,
+        (obligation_id, company),
+    )
+    existing = cur.fetchone()
+    if not existing:
+        raise HTTPException(status_code=404, detail="Obligation not found")
+
+    allowed = {
+        "payee_name": "payee_name",
+        "payee_type": "payee_type",
+        "obligation_type": "obligation_type",
+        "reference": "reference",
+        "issue_date": "issue_date",
+        "due_date": "due_date",
+        "planned_payment_date": "planned_payment_date",
+        "vessel": "vessel",
+        "country": "country",
+        "operation": "operation",
+        "currency": "currency",
+        "total": "total",
+        "balance": "balance",
+        "notes": "notes",
+    }
+    updates = {}
+    for key, column in allowed.items():
+        if key not in payload:
+            continue
+        value = payload.get(key)
+        if isinstance(value, str):
+            value = value.strip()
+        if key in {"total", "balance"}:
+            try:
+                value = Decimal(str(value or "0")).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+            except Exception:
+                raise HTTPException(status_code=400, detail=f"{key} inválido")
+            if value <= 0:
+                raise HTTPException(status_code=400, detail="Use Aplicar pago para cancelar una obligación; el saldo editado debe ser mayor a cero.")
+        if key == "currency":
+            value = str(value or "USD").upper()
+            if value not in {"USD", "CRC"}:
+                raise HTTPException(status_code=400, detail="Moneda inválida")
+        if key in {"issue_date", "due_date", "planned_payment_date"} and value:
+            value = _coerce_date(value, date.today())
+        updates[column] = value
+
+    if not updates:
+        raise HTTPException(status_code=400, detail="No hay campos para actualizar")
+
+    next_total = Decimal(str(updates.get("total", existing.get("total") or 0))).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+    next_balance = Decimal(str(updates.get("balance", existing.get("balance") or 0))).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+    if next_balance > next_total:
+        raise HTTPException(status_code=400, detail="El saldo no puede ser mayor que el total")
+    updates["status"] = "PARTIAL" if next_balance < next_total else "PENDING"
+
+    assignments = ", ".join(f"{column} = %s" for column in updates)
+    params = list(updates.values()) + [obligation_id, company]
+    cur.execute(
+        f"""
+        UPDATE payment_obligations
+        SET {assignments}
+        WHERE id = %s
+          AND company_code = %s
+        RETURNING *
+        """,
+        params,
+    )
+    row = cur.fetchone()
+    conn.commit()
+    return {"status": "ok", "data": dict(row or {})}
+
+
+@router.delete("/{obligation_id}")
+def delete_invoice_to_pay(obligation_id: int, conn=Depends(get_db)):
+    cur = conn.cursor()
+
+    cur.execute(
+        "SELECT id FROM payment_obligations WHERE id = %s",
+        (obligation_id,)
+    )
+    row = cur.fetchone()
+
+    if not row:
+        raise HTTPException(status_code=404, detail="Obligation not found")
+
+    cur.execute(
+        "DELETE FROM payment_obligations WHERE id = %s",
+        (obligation_id,)
+    )
+
+    conn.commit()
+
+    return {"status": "ok"}

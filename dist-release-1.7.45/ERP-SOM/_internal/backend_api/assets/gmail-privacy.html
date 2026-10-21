@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Pol&iacute;tica de privacidad de ERP-SOM | MSL</title>
+  <style>
+    * { box-sizing: border-box; }
+    body { margin: 0; color: #202b34; background: #fff; font: 16px/1.65 system-ui, sans-serif; letter-spacing: 0; }
+    header { border-bottom: 1px solid #d6e0eb; background: #f4f7fb; }
+    header div, main, footer { max-width: 850px; margin: auto; padding: 24px; }
+    header div { display: flex; flex-wrap: wrap; gap: 16px; justify-content: space-between; }
+    h1 { font-size: 30px; line-height: 1.2; }
+    h2 { font-size: 21px; line-height: 1.35; margin-top: 32px; }
+    a { color: #005da8; overflow-wrap: anywhere; }
+    .meta { color: #536171; }
+    footer { border-top: 1px solid #d6e0eb; }
+    code { overflow-wrap: anywhere; }
+  </style>
+</head>
+<body>
+  <header><div><strong>ERP-SOM &middot; MSL</strong><a href="/som">Acceder a SOM</a></div></header>
+  <main>
+    <h1>Pol&iacute;tica de privacidad de ERP-SOM</h1>
+    <p class="meta">Integraci&oacute;n con Gmail &middot; Actualizada el 5 de octubre de 2026</p>
+    <h2>1. Responsable y finalidad</h2>
+    <p>MSL es responsable de esta integraci&oacute;n de ERP-SOM. Utilizamos Gmail para gestionar documentos contables de las empresas que autorizan sus buzones: importar facturas electr&oacute;nicas, procesar estados de cuenta y notificaciones bancarias, y actualizar los registros y obligaciones correspondientes.</p>
+    <p>Contacto de privacidad: <a href="mailto:contabilidad@mslogisticsgroup.com">contabilidad@mslogisticsgroup.com</a>.</p>
+    <h2>2. Informaci&oacute;n que se consulta</h2>
+    <p>Con autorizaci&oacute;n del titular de la cuenta, ERP-SOM consulta mensajes que coinciden con los criterios de sincronizaci&oacute;n configurados. Puede acceder a:</p>
+    <ul>
+      <li>Direcci&oacute;n del buz&oacute;n, remitente, asunto, fechas e identificadores del mensaje.</li>
+      <li>Contenido de mensajes necesario para interpretar notificaciones bancarias.</li>
+      <li>Adjuntos XML, PDF y archivos ZIP que contienen documentos electr&oacute;nicos.</li>
+      <li>Datos presentes en esos documentos, como nombres, identificaciones fiscales, importes, monedas, impuestos, vencimientos y movimientos bancarios.</li>
+    </ul>
+    <p>Los filtros seleccionan qu&eacute; mensajes se procesan; no limitan t&eacute;cnicamente el permiso otorgado por Google a una carpeta espec&iacute;fica.</p>
+    <h2>3. Permisos de Gmail</h2>
+    <p>ERP-SOM solicita el permiso <code>gmail.modify</code> para leer mensajes y adjuntos, y crear o aplicar etiquetas que identifican documentos procesados, duplicados o pendientes de revisi&oacute;n.</p>
+    <p>La integraci&oacute;n implementada no utiliza este permiso para enviar correos ni eliminar mensajes. La autenticaci&oacute;n se realiza mediante Google OAuth; ERP-SOM no solicita ni almacena la contrase&ntilde;a de Gmail.</p>
+    <h2>4. Uso de los datos</h2>
+    <p>La informaci&oacute;n se utiliza para importar y consultar documentos, evitar duplicados, actualizar registros contables y obligaciones de pago, y diagnosticar errores de sincronizaci&oacute;n.</p>
+    <p>Los datos obtenidos de Gmail no se vender&aacute;n ni se utilizar&aacute;n para publicidad, determinar solvencia crediticia, conceder pr&eacute;stamos o entrenar modelos de inteligencia artificial de prop&oacute;sito general.</p>
+    <h2>5. Almacenamiento y protecci&oacute;n</h2>
+    <p>ERP-SOM conserva documentos importados, datos extra&iacute;dos y registros de procesamiento en su infraestructura de servidor y base de datos. El servicio est&aacute; alojado en Railway.</p>
+    <p>Las comunicaciones con Google utilizan HTTPS. Los tokens de renovaci&oacute;n que permiten la sincronizaci&oacute;n autom&aacute;tica se almacenan cifrados. Estas medidas no constituyen una garant&iacute;a absoluta frente a incidentes de seguridad.</p>
+    <h2>6. Acceso y proveedores</h2>
+    <p>Los documentos importados se destinan a las funciones contables autorizadas por la empresa. El acceso humano deber&aacute; limitarse a esas funciones con la autorizaci&oacute;n correspondiente, al soporte expresamente autorizado, a necesidades de seguridad o a obligaciones legales.</p>
+    <p>Google proporciona la autorizaci&oacute;n y el acceso a Gmail. Los proveedores de alojamiento y almacenamiento intervienen &uacute;nicamente en la prestaci&oacute;n del servicio. Cualquier otra comunicaci&oacute;n de datos deber&aacute; contar con una base v&aacute;lida y respetar las restricciones de uso de Google.</p>
+    <h2>7. Conservaci&oacute;n y eliminaci&oacute;n</h2>
+    <p>Desconectar Gmail detiene futuras sincronizaciones y elimina el token de renovaci&oacute;n almacenado por ERP-SOM, pero <strong>no elimina autom&aacute;ticamente los documentos ya importados</strong>.</p>
+    <p>Las solicitudes de acceso, correcci&oacute;n o eliminaci&oacute;n deben dirigirse al contacto de privacidad. La conservaci&oacute;n de documentos, registros t&eacute;cnicos y copias de respaldo se determinar&aacute; conforme a su finalidad y a las obligaciones contables y legales aplicables. Las solicitudes se evaluar&aacute;n considerando esas obligaciones; cuando corresponda conservar informaci&oacute;n, se informar&aacute; al solicitante. No se ofrece un plazo fijo de borrado ni una eliminaci&oacute;n autom&aacute;tica al desconectar la cuenta.</p>
+    <h2>8. Control del usuario</h2>
+    <p>El titular puede desactivar la sincronizaci&oacute;n, desconectar el buz&oacute;n en ERP-SOM o revocar el acceso desde las <a href="https://myaccount.google.com/connections">conexiones de su cuenta de Google</a>. Revocar el acceso no borra los registros previamente importados en SOM.</p>
+    <h2>9. Uso limitado y cambios</h2>
+    <p>El uso y la transferencia de informaci&oacute;n obtenida mediante las API de Google se ajustar&aacute;n a la <a href="https://developers.google.com/terms/api-services-user-data-policy">Pol&iacute;tica de Datos de Usuarios de los Servicios de API de Google</a>, incluidos sus requisitos de uso limitado.</p>
+    <p>Los cambios relevantes se comunicar&aacute;n antes de aplicar nuevos usos de los datos, solicitando una nueva autorizaci&oacute;n cuando corresponda.</p>
+  </main>
+  <footer>MSL &middot; <a href="mailto:contabilidad@mslogisticsgroup.com">Contacto de privacidad</a></footer>
+</body>
+</html>

@@ -203,6 +203,8 @@ def get_sampling_certificate(record_id: int, conn=Depends(get_db)):
 
         return row
 
+    except HTTPException:
+        raise
     except Exception as e:
 
         raise HTTPException(

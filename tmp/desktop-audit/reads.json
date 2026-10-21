@@ -1,0 +1,3760 @@
+[
+  {
+    "function": "filter_servicios_draft_api",
+    "method": "GET",
+    "path": "/draft-survey/servicios/filter",
+    "params": {},
+    "role": "user",
+    "company": "MCI-CR",
+    "status": 200,
+    "shape": "dict",
+    "count": 506
+  },
+  {
+    "function": "filter_servicios_draft_api",
+    "method": "GET",
+    "path": "/draft-survey/servicios/filter",
+    "params": {},
+    "role": "user",
+    "company": "MSL-CR",
+    "status": 200,
+    "shape": "dict",
+    "count": 506
+  },
+  {
+    "function": "filter_servicios_draft_api",
+    "method": "GET",
+    "path": "/draft-survey/servicios/filter",
+    "params": {},
+    "role": "admin",
+    "company": "MCI-CR",
+    "status": 200,
+    "shape": "dict",
+    "count": 506
+  },
+  {
+    "function": "filter_servicios_draft_api",
+    "method": "GET",
+    "path": "/draft-survey/servicios/filter",
+    "params": {},
+    "role": "admin",
+    "company": "MSL-CR",
+    "status": 200,
+    "shape": "dict",
+    "count": 506
+  },
+  {
+    "function": "filter_servicios_vessel_truck_api",
+    "method": "GET",
+    "path": "/vessel-truck-supervision/servicios-filter",
+    "params": {},
+    "role": "user",
+    "company": "MCI-CR",
+    "status": 200,
+    "shape": "dict",
+    "count": 427
+  },
+  {
+    "function": "filter_servicios_vessel_truck_api",
+    "method": "GET",
+    "path": "/vessel-truck-supervision/servicios-filter",
+    "params": {},
+    "role": "user",
+    "company": "MSL-CR",
+    "status": 200,
+    "shape": "dict",
+    "count": 427
+  },
+  {
+    "function": "filter_servicios_vessel_truck_api",
+    "method": "GET",
+    "path": "/vessel-truck-supervision/servicios-filter",
+    "params": {},
+    "role": "admin",
+    "company": "MCI-CR",
+    "status": 200,
+    "shape": "dict",
+    "count": 427
+  },
+  {
+    "function": "filter_servicios_vessel_truck_api",
+    "method": "GET",
+    "path": "/vessel-truck-supervision/servicios-filter",
+    "params": {},
+    "role": "admin",
+    "company": "MSL-CR",
+    "status": 200,
+    "shape": "dict",
+    "count": 427
+  },
+  {
+    "function": "generate_draft_survey_unified_pdf_api",
+    "method": "GET",
+    "path": "/draft-survey-final/unified/1",
+    "params": {},
+    "role": "user",
+    "company": "MCI-CR",
+    "status": 500,
+    "error": "{\"detail\":\"Error generating UNIFIED PDF: 404: Draft Survey Word report not found\"}"
+  },
+  {
+    "function": "generate_draft_survey_unified_pdf_api",
+    "method": "GET",
+    "path": "/draft-survey-final/unified/1",
+    "params": {},
+    "role": "user",
+    "company": "MSL-CR",
+    "status": 500,
+    "error": "{\"detail\":\"Error generating UNIFIED PDF: 404: Draft Survey Word report not found\"}"
+  },
+  {
+    "function": "generate_draft_survey_unified_pdf_api",
+    "method": "GET",
+    "path": "/draft-survey-final/unified/1",
+    "params": {},
+    "role": "admin",
+    "company": "MCI-CR",
+    "status": 500,
+    "error": "{\"detail\":\"Error generating UNIFIED PDF: 404: Draft Survey Word report not found\"}"
+  },
+  {
+    "function": "generate_draft_survey_unified_pdf_api",
+    "method": "GET",
+    "path": "/draft-survey-final/unified/1",
+    "params": {},
+    "role": "admin",
+    "company": "MSL-CR",
+    "status": 500,
+    "error": "{\"detail\":\"Error generating UNIFIED PDF: 404: Draft Survey Word report not found\"}"
+  },
+  {
+    "function": "generate_truck_presentation_pdf_api",
+    "method": "GET",
+    "path": "/vessel-truck-supervision/1/presentation",
+    "params": {},
+    "role": "user",
+    "company": "MCI-CR",
+    "status": 404
+  },
+  {
+    "function": "generate_truck_presentation_pdf_api",
+    "method": "GET",
+    "path": "/vessel-truck-supervision/1/presentation",
+    "params": {},
+    "role": "user",
+    "company": "MSL-CR",
+    "status": 200,
+    "error": "Expecting value: line 1 column 1 (char 0)"
+  },
+  {
+    "function": "generate_truck_presentation_pdf_api",
+    "method": "GET",
+    "path": "/vessel-truck-supervision/1/presentation",
+    "params": {},
+    "role": "admin",
+    "company": "MCI-CR",
+    "status": 404
+  },
+  {
+    "function": "generate_truck_presentation_pdf_api",
+    "method": "GET",
+    "path": "/vessel-truck-supervision/1/presentation",
+    "params": {},
+    "role": "admin",
+    "company": "MSL-CR",
+    "status": 200,
+    "error": "Expecting value: line 1 column 1 (char 0)"
+  },
+  {
+    "function": "generate_truck_unified_pdf_api",
+    "method": "GET",
+    "path": "/vessel-truck-supervision/1/unified",
+    "params": {},
+    "role": "user",
+    "company": "MCI-CR",
+    "status": 404
+  },
+  {
+    "function": "generate_truck_unified_pdf_api",
+    "method": "GET",
+    "path": "/vessel-truck-supervision/1/unified",
+    "params": {},
+    "role": "user",
+    "company": "MSL-CR",
+    "status": 200,
+    "error": "Expecting value: line 1 column 1 (char 0)"
+  },
+  {
+    "function": "generate_truck_unified_pdf_api",
+    "method": "GET",
+    "path": "/vessel-truck-supervision/1/unified",
+    "params": {},
+    "role": "admin",
+    "company": "MCI-CR",
+    "status": 404
+  },
+  {
+    "function": "generate_truck_unified_pdf_api",
+    "method": "GET",
+    "path": "/vessel-truck-supervision/1/unified",
+    "params": {},
+    "role": "admin",
+    "company": "MSL-CR",
+    "status": 200,
+    "error": "Expecting value: line 1 column 1 (char 0)"
+  },
+  {
+    "function": "get_all_port_captancy_reports_api",
+    "method": "GET",
+    "path": "/port-captancy-reports",
+    "params": {},
+    "role": "user",
+    "company": "MCI-CR",
+    "status": 200,
+    "shape": "dict",
+    "count": 0
+  },
+  {
+    "function": "get_all_port_captancy_reports_api",
+    "method": "GET",
+    "path": "/port-captancy-reports",
+    "params": {},
+    "role": "user",
+    "company": "MSL-CR",
+    "status": 200,
+    "shape": "dict",
+    "count": 0
+  },
+  {
+    "function": "get_all_port_captancy_reports_api",
+    "method": "GET",
+    "path": "/port-captancy-reports",
+    "params": {},
+    "role": "admin",
+    "company": "MCI-CR",
+    "status": 200,
+    "shape": "dict",
+    "count": 0
+  },
+  {
+    "function": "get_all_port_captancy_reports_api",
+    "method": "GET",
+    "path": "/port-captancy-reports",
+    "params": {},
+    "role": "admin",
+    "company": "MSL-CR",
+    "status": 200,
+    "shape": "dict",
+    "count": 0
+  },
+  {
+    "function": "get_all_vessel_bunker_reports_api",
+    "method": "GET",
+    "path": "/vessel-bunker-reports/",
+    "params": {
+      "limit": 200,
+      "offset": 0
+    },
+    "role": "user",
+    "company": "MCI-CR",
+    "status": 200,
+    "shape": "dict",
+    "count": 8
+  },
+  {
+    "function": "get_all_vessel_bunker_reports_api",
+    "method": "GET",
+    "path": "/vessel-bunker-reports/",
+    "params": {
+      "limit": 200,
+      "offset": 0
+    },
+    "role": "user",
+    "company": "MSL-CR",
+    "status": 200,
+    "shape": "dict",
+    "count": 8
+  },
+  {
+    "function": "get_all_vessel_bunker_reports_api",
+    "method": "GET",
+    "path": "/vessel-bunker-reports/",
+    "params": {
+      "limit": 200,
+      "offset": 0
+    },
+    "role": "admin",
+    "company": "MCI-CR",
+    "status": 200,
+    "shape": "dict",
+    "count": 8
+  },
+  {
+    "function": "get_all_vessel_bunker_reports_api",
+    "method": "GET",
+    "path": "/vessel-bunker-reports/",
+    "params": {
+      "limit": 200,
+      "offset": 0
+    },
+    "role": "admin",
+    "company": "MSL-CR",
+    "status": 200,
+    "shape": "dict",
+    "count": 8
+  },
+  {
+    "function": "get_all_vessel_cargo_condition_api",
+    "method": "GET",
+    "path": "/vessel-cargo-condition-surveys/",
+    "params": {},
+    "role": "user",
+    "company": "MCI-CR",
+    "status": 200,
+    "shape": "dict",
+    "count": 1
+  },
+  {
+    "function": "get_all_vessel_cargo_condition_api",
+    "method": "GET",
+    "path": "/vessel-cargo-condition-surveys/",
+    "params": {},
+    "role": "user",
+    "company": "MSL-CR",
+    "status": 200,
+    "shape": "dict",
+    "count": 1
+  },
+  {
+    "function": "get_all_vessel_cargo_condition_api",
+    "method": "GET",
+    "path": "/vessel-cargo-condition-surveys/",
+    "params": {},
+    "role": "admin",
+    "company": "MCI-CR",
+    "status": 200,
+    "shape": "dict",
+    "count": 1
+  },
+  {
+    "function": "get_all_vessel_cargo_condition_api",
+    "method": "GET",
+    "path": "/vessel-cargo-condition-surveys/",
+    "params": {},
+    "role": "admin",
+    "company": "MSL-CR",
+    "status": 200,
+    "shape": "dict",
+    "count": 1
+  },
+  {
+    "function": "get_all_vessel_condition_surveys_api",
+    "method": "GET",
+    "path": "/vessel-condition-surveys",
+    "params": {},
+    "role": "user",
+    "company": "MCI-CR",
+    "status": 200,
+    "shape": "dict",
+    "count": 2
+  },
+  {
+    "function": "get_all_vessel_condition_surveys_api",
+    "method": "GET",
+    "path": "/vessel-condition-surveys",
+    "params": {},
+    "role": "user",
+    "company": "MSL-CR",
+    "status": 200,
+    "shape": "dict",
+    "count": 2
+  },
+  {
+    "function": "get_all_vessel_condition_surveys_api",
+    "method": "GET",
+    "path": "/vessel-condition-surveys",
+    "params": {},
+    "role": "admin",
+    "company": "MCI-CR",
+    "status": 200,
+    "shape": "dict",
+    "count": 2
+  },
+  {
+    "function": "get_all_vessel_condition_surveys_api",
+    "method": "GET",
+    "path": "/vessel-condition-surveys",
+    "params": {},
+    "role": "admin",
+    "company": "MSL-CR",
+    "status": 200,
+    "shape": "dict",
+    "count": 2
+  },
+  {
+    "function": "get_clientes_api",
+    "method": "GET",
+    "path": "/clientes",
+    "params": {},
+    "role": "user",
+    "company": "MCI-CR",
+    "status": 200,
+    "shape": "dict",
+    "count": 36
+  },
+  {
+    "function": "get_clientes_api",
+    "method": "GET",
+    "path": "/clientes",
+    "params": {},
+    "role": "user",
+    "company": "MSL-CR",
+    "status": 200,
+    "shape": "dict",
+    "count": 32
+  },
+  {
+    "function": "get_clientes_api",
+    "method": "GET",
+    "path": "/clientes",
+    "params": {},
+    "role": "admin",
+    "company": "MCI-CR",
+    "status": 200,
+    "shape": "dict",
+    "count": 36
+  },
+  {
+    "function": "get_clientes_api",
+    "method": "GET",
+    "path": "/clientes",
+    "params": {},
+    "role": "admin",
+    "company": "MSL-CR",
+    "status": 200,
+    "shape": "dict",
+    "count": 32
+  },
+  {
+    "function": "get_comercial_board_api",
+    "method": "GET",
+    "path": "/comercial/board",
+    "params": {},
+    "role": "user",
+    "company": "MCI-CR",
+    "status": 200,
+    "shape": "list",
+    "count": 0
+  },
+  {
+    "function": "get_comercial_board_api",
+    "method": "GET",
+    "path": "/comercial/board",
+    "params": {},
+    "role": "user",
+    "company": "MSL-CR",
+    "status": 200,
+    "shape": "list",
+    "count": 0
+  },
+  {
+    "function": "get_comercial_board_api",
+    "method": "GET",
+    "path": "/comercial/board",
+    "params": {},
+    "role": "admin",
+    "company": "MCI-CR",
+    "status": 200,
+    "shape": "list",
+    "count": 0
+  },
+  {
+    "function": "get_comercial_board_api",
+    "method": "GET",
+    "path": "/comercial/board",
+    "params": {},
+    "role": "admin",
+    "company": "MSL-CR",
+    "status": 200,
+    "shape": "list",
+    "count": 0
+  },
+  {
+    "function": "get_comercial_client_view_api",
+    "method": "GET",
+    "path": "/comercial/client-view",
+    "params": {},
+    "role": "user",
+    "company": "MCI-CR",
+    "status": 403
+  },
+  {
+    "function": "get_comercial_client_view_api",
+    "method": "GET",
+    "path": "/comercial/client-view",
+    "params": {},
+    "role": "user",
+    "company": "MSL-CR",
+    "status": 403
+  },
+  {
+    "function": "get_comercial_client_view_api",
+    "method": "GET",
+    "path": "/comercial/client-view",
+    "params": {},
+    "role": "admin",
+    "company": "MCI-CR",
+    "status": 200,
+    "shape": "dict",
+    "count": 24
+  },
+  {
+    "function": "get_comercial_client_view_api",
+    "method": "GET",
+    "path": "/comercial/client-view",
+    "params": {},
+    "role": "admin",
+    "company": "MSL-CR",
+    "status": 200,
+    "shape": "dict",
+    "count": 86
+  },
+  {
+    "function": "get_comercial_clientes_api",
+    "method": "GET",
+    "path": "/comercial/clientes",
+    "params": {},
+    "role": "user",
+    "company": "MCI-CR",
+    "status": 403
+  },
+  {
+    "function": "get_comercial_clientes_api",
+    "method": "GET",
+    "path": "/comercial/clientes",
+    "params": {},
+    "role": "user",
+    "company": "MSL-CR",
+    "status": 403
+  },
+  {
+    "function": "get_comercial_clientes_api",
+    "method": "GET",
+    "path": "/comercial/clientes",
+    "params": {},
+    "role": "admin",
+    "company": "MCI-CR",
+    "status": 200,
+    "shape": "dict",
+    "count": 36
+  },
+  {
+    "function": "get_comercial_clientes_api",
+    "method": "GET",
+    "path": "/comercial/clientes",
+    "params": {},
+    "role": "admin",
+    "company": "MSL-CR",
+    "status": 200,
+    "shape": "dict",
+    "count": 32
+  },
+  {
+    "function": "get_comercial_costos_surveyor_pareto_api",
+    "method": "GET",
+    "path": "/comercial/analytics/servicios/costos-surveyor-pareto",
+    "params": {},
+    "role": "user",
+    "company": "MCI-CR",
+    "status": 403
+  },
+  {
+    "function": "get_comercial_costos_surveyor_pareto_api",
+    "method": "GET",
+    "path": "/comercial/analytics/servicios/costos-surveyor-pareto",
+    "params": {},
+    "role": "user",
+    "company": "MSL-CR",
+    "status": 403
+  },
+  {
+    "function": "get_comercial_costos_surveyor_pareto_api",
+    "method": "GET",
+    "path": "/comercial/analytics/servicios/costos-surveyor-pareto",
+    "params": {},
+    "role": "admin",
+    "company": "MCI-CR",
+    "status": 200,
+    "shape": "dict",
+    "count": 11
+  },
+  {
+    "function": "get_comercial_costos_surveyor_pareto_api",
+    "method": "GET",
+    "path": "/comercial/analytics/servicios/costos-surveyor-pareto",
+    "params": {},
+    "role": "admin",
+    "company": "MSL-CR",
+    "status": 200,
+    "shape": "dict",
+    "count": 32
+  },
+  {
+    "function": "get_comercial_cotizacion_api",
+    "method": "GET",
+    "path": "/comercial/cotizaciones/1/detail",
+    "params": {},
+    "role": "user",
+    "company": "MCI-CR",
+    "status": 403
+  },
+  {
+    "function": "get_comercial_cotizacion_api",
+    "method": "GET",
+    "path": "/comercial/cotizaciones/1/detail",
+    "params": {},
+    "role": "user",
+    "company": "MSL-CR",
+    "status": 403
+  },
+  {
+    "function": "get_comercial_cotizacion_api",
+    "method": "GET",
+    "path": "/comercial/cotizaciones/1/detail",
+    "params": {},
+    "role": "admin",
+    "company": "MCI-CR",
+    "status": 404
+  },
+  {
+    "function": "get_comercial_cotizacion_api",
+    "method": "GET",
+    "path": "/comercial/cotizaciones/1/detail",
+    "params": {},
+    "role": "admin",
+    "company": "MSL-CR",
+    "status": 200,
+    "shape": "dict",
+    "count": null
+  },
+  {
+    "function": "get_comercial_cotizaciones_api",
+    "method": "GET",
+    "path": "/comercial/cotizaciones",
+    "params": {},
+    "role": "user",
+    "company": "MCI-CR",
+    "status": 403
+  },
+  {
+    "function": "get_comercial_cotizaciones_api",
+    "method": "GET",
+    "path": "/comercial/cotizaciones",
+    "params": {},
+    "role": "user",
+    "company": "MSL-CR",
+    "status": 403
+  },
+  {
+    "function": "get_comercial_cotizaciones_api",
+    "method": "GET",
+    "path": "/comercial/cotizaciones",
+    "params": {},
+    "role": "admin",
+    "company": "MCI-CR",
+    "status": 200,
+    "shape": "dict",
+    "count": 0
+  },
+  {
+    "function": "get_comercial_cotizaciones_api",
+    "method": "GET",
+    "path": "/comercial/cotizaciones",
+    "params": {},
+    "role": "admin",
+    "company": "MSL-CR",
+    "status": 200,
+    "shape": "dict",
+    "count": 44
+  },
+  {
+    "function": "get_comercial_cotizaciones_kpis_api",
+    "method": "GET",
+    "path": "/comercial/cotizaciones/kpis",
+    "params": {},
+    "role": "user",
+    "company": "MCI-CR",
+    "status": 403
+  },
+  {
+    "function": "get_comercial_cotizaciones_kpis_api",
+    "method": "GET",
+    "path": "/comercial/cotizaciones/kpis",
+    "params": {},
+    "role": "user",
+    "company": "MSL-CR",
+    "status": 403
+  },
+  {
+    "function": "get_comercial_cotizaciones_kpis_api",
+    "method": "GET",
+    "path": "/comercial/cotizaciones/kpis",
+    "params": {},
+    "role": "admin",
+    "company": "MCI-CR",
+    "status": 200,
+    "shape": "dict",
+    "count": null
+  },
+  {
+    "function": "get_comercial_cotizaciones_kpis_api",
+    "method": "GET",
+    "path": "/comercial/cotizaciones/kpis",
+    "params": {},
+    "role": "admin",
+    "company": "MSL-CR",
+    "status": 200,
+    "shape": "dict",
+    "count": null
+  },
+  {
+    "function": "get_comercial_next_quotation_number_api",
+    "method": "GET",
+    "path": "/comercial/cotizaciones/next-quotation-number",
+    "params": {},
+    "role": "user",
+    "company": "MCI-CR",
+    "status": 403
+  },
+  {
+    "function": "get_comercial_next_quotation_number_api",
+    "method": "GET",
+    "path": "/comercial/cotizaciones/next-quotation-number",
+    "params": {},
+    "role": "user",
+    "company": "MSL-CR",
+    "status": 403
+  },
+  {
+    "function": "get_comercial_next_quotation_number_api",
+    "method": "GET",
+    "path": "/comercial/cotizaciones/next-quotation-number",
+    "params": {},
+    "role": "admin",
+    "company": "MCI-CR",
+    "status": 200,
+    "shape": "dict",
+    "count": null
+  },
+  {
+    "function": "get_comercial_next_quotation_number_api",
+    "method": "GET",
+    "path": "/comercial/cotizaciones/next-quotation-number",
+    "params": {},
+    "role": "admin",
+    "company": "MSL-CR",
+    "status": 200,
+    "shape": "dict",
+    "count": null
+  },
+  {
+    "function": "get_comercial_ports_analytics_api",
+    "method": "GET",
+    "path": "/comercial/analytics/puertos",
+    "params": {},
+    "role": "user",
+    "company": "MCI-CR",
+    "status": 403
+  },
+  {
+    "function": "get_comercial_ports_analytics_api",
+    "method": "GET",
+    "path": "/comercial/analytics/puertos",
+    "params": {},
+    "role": "user",
+    "company": "MSL-CR",
+    "status": 403
+  },
+  {
+    "function": "get_comercial_ports_analytics_api",
+    "method": "GET",
+    "path": "/comercial/analytics/puertos",
+    "params": {},
+    "role": "admin",
+    "company": "MCI-CR",
+    "status": 200,
+    "shape": "dict",
+    "count": 8
+  },
+  {
+    "function": "get_comercial_ports_analytics_api",
+    "method": "GET",
+    "path": "/comercial/analytics/puertos",
+    "params": {},
+    "role": "admin",
+    "company": "MSL-CR",
+    "status": 200,
+    "shape": "dict",
+    "count": 130
+  },
+  {
+    "function": "get_comercial_ports_coverage_api",
+    "method": "GET",
+    "path": "/comercial/ports-coverage",
+    "params": {
+      "min_ops": 3
+    },
+    "role": "user",
+    "company": "MCI-CR",
+    "status": 403
+  },
+  {
+    "function": "get_comercial_ports_coverage_api",
+    "method": "GET",
+    "path": "/comercial/ports-coverage",
+    "params": {
+      "min_ops": 3
+    },
+    "role": "user",
+    "company": "MSL-CR",
+    "status": 403
+  },
+  {
+    "function": "get_comercial_ports_coverage_api",
+    "method": "GET",
+    "path": "/comercial/ports-coverage",
+    "params": {
+      "min_ops": 3
+    },
+    "role": "admin",
+    "company": "MCI-CR",
+    "status": 200,
+    "shape": "dict",
+    "count": 138
+  },
+  {
+    "function": "get_comercial_ports_coverage_api",
+    "method": "GET",
+    "path": "/comercial/ports-coverage",
+    "params": {
+      "min_ops": 3
+    },
+    "role": "admin",
+    "company": "MSL-CR",
+    "status": 200,
+    "shape": "dict",
+    "count": 138
+  },
+  {
+    "function": "get_comercial_ports_filters_api",
+    "method": "GET",
+    "path": "/comercial/analytics/puertos/filtros",
+    "params": {},
+    "role": "user",
+    "company": "MCI-CR",
+    "status": 403
+  },
+  {
+    "function": "get_comercial_ports_filters_api",
+    "method": "GET",
+    "path": "/comercial/analytics/puertos/filtros",
+    "params": {},
+    "role": "user",
+    "company": "MSL-CR",
+    "status": 403
+  },
+  {
+    "function": "get_comercial_ports_filters_api",
+    "method": "GET",
+    "path": "/comercial/analytics/puertos/filtros",
+    "params": {},
+    "role": "admin",
+    "company": "MCI-CR",
+    "status": 200,
+    "shape": "dict",
+    "count": null
+  },
+  {
+    "function": "get_comercial_ports_filters_api",
+    "method": "GET",
+    "path": "/comercial/analytics/puertos/filtros",
+    "params": {},
+    "role": "admin",
+    "company": "MSL-CR",
+    "status": 200,
+    "shape": "dict",
+    "count": null
+  },
+  {
+    "function": "get_comercial_ports_kpis_api",
+    "method": "GET",
+    "path": "/comercial/analytics/puertos/kpis",
+    "params": {},
+    "role": "user",
+    "company": "MCI-CR",
+    "status": 403
+  },
+  {
+    "function": "get_comercial_ports_kpis_api",
+    "method": "GET",
+    "path": "/comercial/analytics/puertos/kpis",
+    "params": {},
+    "role": "user",
+    "company": "MSL-CR",
+    "status": 403
+  },
+  {
+    "function": "get_comercial_ports_kpis_api",
+    "method": "GET",
+    "path": "/comercial/analytics/puertos/kpis",
+    "params": {},
+    "role": "admin",
+    "company": "MCI-CR",
+    "status": 200,
+    "shape": "dict",
+    "count": null
+  },
+  {
+    "function": "get_comercial_ports_kpis_api",
+    "method": "GET",
+    "path": "/comercial/analytics/puertos/kpis",
+    "params": {},
+    "role": "admin",
+    "company": "MSL-CR",
+    "status": 200,
+    "shape": "dict",
+    "count": null
+  },
+  {
+    "function": "get_comercial_precios_api",
+    "method": "GET",
+    "path": "/comercial/precios",
+    "params": {},
+    "role": "user",
+    "company": "MCI-CR",
+    "status": 403
+  },
+  {
+    "function": "get_comercial_precios_api",
+    "method": "GET",
+    "path": "/comercial/precios",
+    "params": {},
+    "role": "user",
+    "company": "MSL-CR",
+    "status": 403
+  },
+  {
+    "function": "get_comercial_precios_api",
+    "method": "GET",
+    "path": "/comercial/precios",
+    "params": {},
+    "role": "admin",
+    "company": "MCI-CR",
+    "status": 200,
+    "shape": "dict",
+    "count": 3
+  },
+  {
+    "function": "get_comercial_precios_api",
+    "method": "GET",
+    "path": "/comercial/precios",
+    "params": {},
+    "role": "admin",
+    "company": "MSL-CR",
+    "status": 200,
+    "shape": "dict",
+    "count": 301
+  },
+  {
+    "function": "get_comercial_precios_meta_api",
+    "method": "GET",
+    "path": "/comercial/precios/meta",
+    "params": {},
+    "role": "user",
+    "company": "MCI-CR",
+    "status": 403
+  },
+  {
+    "function": "get_comercial_precios_meta_api",
+    "method": "GET",
+    "path": "/comercial/precios/meta",
+    "params": {},
+    "role": "user",
+    "company": "MSL-CR",
+    "status": 403
+  },
+  {
+    "function": "get_comercial_precios_meta_api",
+    "method": "GET",
+    "path": "/comercial/precios/meta",
+    "params": {},
+    "role": "admin",
+    "company": "MCI-CR",
+    "status": 200,
+    "shape": "dict",
+    "count": null
+  },
+  {
+    "function": "get_comercial_precios_meta_api",
+    "method": "GET",
+    "path": "/comercial/precios/meta",
+    "params": {},
+    "role": "admin",
+    "company": "MSL-CR",
+    "status": 200,
+    "shape": "dict",
+    "count": null
+  },
+  {
+    "function": "get_comercial_servicios_by_servicio_api",
+    "method": "GET",
+    "path": "/comercial/analytics/servicios/by-servicio",
+    "params": {},
+    "role": "user",
+    "company": "MCI-CR",
+    "status": 403
+  },
+  {
+    "function": "get_comercial_servicios_by_servicio_api",
+    "method": "GET",
+    "path": "/comercial/analytics/servicios/by-servicio",
+    "params": {},
+    "role": "user",
+    "company": "MSL-CR",
+    "status": 403
+  },
+  {
+    "function": "get_comercial_servicios_by_servicio_api",
+    "method": "GET",
+    "path": "/comercial/analytics/servicios/by-servicio",
+    "params": {},
+    "role": "admin",
+    "company": "MCI-CR",
+    "status": 200,
+    "shape": "dict",
+    "count": 16
+  },
+  {
+    "function": "get_comercial_servicios_by_servicio_api",
+    "method": "GET",
+    "path": "/comercial/analytics/servicios/by-servicio",
+    "params": {},
+    "role": "admin",
+    "company": "MSL-CR",
+    "status": 200,
+    "shape": "dict",
+    "count": 46
+  },
+  {
+    "function": "get_comercial_servicios_kpis_api",
+    "method": "GET",
+    "path": "/comercial/analytics/servicios/kpis",
+    "params": {},
+    "role": "user",
+    "company": "MCI-CR",
+    "status": 403
+  },
+  {
+    "function": "get_comercial_servicios_kpis_api",
+    "method": "GET",
+    "path": "/comercial/analytics/servicios/kpis",
+    "params": {},
+    "role": "user",
+    "company": "MSL-CR",
+    "status": 403
+  },
+  {
+    "function": "get_comercial_servicios_kpis_api",
+    "method": "GET",
+    "path": "/comercial/analytics/servicios/kpis",
+    "params": {},
+    "role": "admin",
+    "company": "MCI-CR",
+    "status": 200,
+    "shape": "dict",
+    "count": null
+  },
+  {
+    "function": "get_comercial_servicios_kpis_api",
+    "method": "GET",
+    "path": "/comercial/analytics/servicios/kpis",
+    "params": {},
+    "role": "admin",
+    "company": "MSL-CR",
+    "status": 200,
+    "shape": "dict",
+    "count": null
+  },
+  {
+    "function": "get_comercial_servicios_no_ofrecidos_api",
+    "method": "GET",
+    "path": "/comercial/analytics/servicios/not-offered",
+    "params": {},
+    "role": "user",
+    "company": "MCI-CR",
+    "status": 403
+  },
+  {
+    "function": "get_comercial_servicios_no_ofrecidos_api",
+    "method": "GET",
+    "path": "/comercial/analytics/servicios/not-offered",
+    "params": {},
+    "role": "user",
+    "company": "MSL-CR",
+    "status": 403
+  },
+  {
+    "function": "get_comercial_servicios_no_ofrecidos_api",
+    "method": "GET",
+    "path": "/comercial/analytics/servicios/not-offered",
+    "params": {},
+    "role": "admin",
+    "company": "MCI-CR",
+    "status": 200,
+    "shape": "dict",
+    "count": 99
+  },
+  {
+    "function": "get_comercial_servicios_no_ofrecidos_api",
+    "method": "GET",
+    "path": "/comercial/analytics/servicios/not-offered",
+    "params": {},
+    "role": "admin",
+    "company": "MSL-CR",
+    "status": 200,
+    "shape": "dict",
+    "count": 70
+  },
+  {
+    "function": "get_container_presentation_data_api",
+    "method": "GET",
+    "path": "/container-presentation/1",
+    "params": {},
+    "role": "user",
+    "company": "MCI-CR",
+    "status": 200,
+    "shape": "dict",
+    "count": null
+  },
+  {
+    "function": "get_container_presentation_data_api",
+    "method": "GET",
+    "path": "/container-presentation/1",
+    "params": {},
+    "role": "user",
+    "company": "MSL-CR",
+    "status": 200,
+    "shape": "dict",
+    "count": null
+  },
+  {
+    "function": "get_container_presentation_data_api",
+    "method": "GET",
+    "path": "/container-presentation/1",
+    "params": {},
+    "role": "admin",
+    "company": "MCI-CR",
+    "status": 200,
+    "shape": "dict",
+    "count": null
+  },
+  {
+    "function": "get_container_presentation_data_api",
+    "method": "GET",
+    "path": "/container-presentation/1",
+    "params": {},
+    "role": "admin",
+    "company": "MSL-CR",
+    "status": 200,
+    "shape": "dict",
+    "count": null
+  },
+  {
+    "function": "get_container_report_by_id_api",
+    "method": "GET",
+    "path": "/container-reports/1",
+    "params": {},
+    "role": "user",
+    "company": "MCI-CR",
+    "status": 404
+  },
+  {
+    "function": "get_container_report_by_id_api",
+    "method": "GET",
+    "path": "/container-reports/1",
+    "params": {},
+    "role": "user",
+    "company": "MSL-CR",
+    "status": 200,
+    "shape": "dict",
+    "count": null
+  },
+  {
+    "function": "get_container_report_by_id_api",
+    "method": "GET",
+    "path": "/container-reports/1",
+    "params": {},
+    "role": "admin",
+    "company": "MCI-CR",
+    "status": 404
+  },
+  {
+    "function": "get_container_report_by_id_api",
+    "method": "GET",
+    "path": "/container-reports/1",
+    "params": {},
+    "role": "admin",
+    "company": "MSL-CR",
+    "status": 200,
+    "shape": "dict",
+    "count": null
+  },
+  {
+    "function": "get_container_report_filters_api",
+    "method": "GET",
+    "path": "/container-reports/filters",
+    "params": {},
+    "role": "user",
+    "company": "MCI-CR",
+    "status": 200,
+    "shape": "dict",
+    "count": null
+  },
+  {
+    "function": "get_container_report_filters_api",
+    "method": "GET",
+    "path": "/container-reports/filters",
+    "params": {},
+    "role": "user",
+    "company": "MSL-CR",
+    "status": 200,
+    "shape": "dict",
+    "count": null
+  },
+  {
+    "function": "get_container_report_filters_api",
+    "method": "GET",
+    "path": "/container-reports/filters",
+    "params": {},
+    "role": "admin",
+    "company": "MCI-CR",
+    "status": 200,
+    "shape": "dict",
+    "count": null
+  },
+  {
+    "function": "get_container_report_filters_api",
+    "method": "GET",
+    "path": "/container-reports/filters",
+    "params": {},
+    "role": "admin",
+    "company": "MSL-CR",
+    "status": 200,
+    "shape": "dict",
+    "count": null
+  },
+  {
+    "function": "get_container_report_statuses_api",
+    "method": "GET",
+    "path": "/container-reports/statuses",
+    "params": {},
+    "role": "user",
+    "company": "MCI-CR",
+    "status": 200,
+    "shape": "dict",
+    "count": 2
+  },
+  {
+    "function": "get_container_report_statuses_api",
+    "method": "GET",
+    "path": "/container-reports/statuses",
+    "params": {},
+    "role": "user",
+    "company": "MSL-CR",
+    "status": 200,
+    "shape": "dict",
+    "count": 2
+  },
+  {
+    "function": "get_container_report_statuses_api",
+    "method": "GET",
+    "path": "/container-reports/statuses",
+    "params": {},
+    "role": "admin",
+    "company": "MCI-CR",
+    "status": 200,
+    "shape": "dict",
+    "count": 2
+  },
+  {
+    "function": "get_container_report_statuses_api",
+    "method": "GET",
+    "path": "/container-reports/statuses",
+    "params": {},
+    "role": "admin",
+    "company": "MSL-CR",
+    "status": 200,
+    "shape": "dict",
+    "count": 2
+  },
+  {
+    "function": "get_continentes_cpp_api",
+    "method": "GET",
+    "path": "/cpp/continentes",
+    "params": {},
+    "role": "user",
+    "company": "MCI-CR",
+    "status": 200,
+    "shape": "list",
+    "count": 5
+  },
+  {
+    "function": "get_continentes_cpp_api",
+    "method": "GET",
+    "path": "/cpp/continentes",
+    "params": {},
+    "role": "user",
+    "company": "MSL-CR",
+    "status": 200,
+    "shape": "list",
+    "count": 5
+  },
+  {
+    "function": "get_continentes_cpp_api",
+    "method": "GET",
+    "path": "/cpp/continentes",
+    "params": {},
+    "role": "admin",
+    "company": "MCI-CR",
+    "status": 200,
+    "shape": "list",
+    "count": 5
+  },
+  {
+    "function": "get_continentes_cpp_api",
+    "method": "GET",
+    "path": "/cpp/continentes",
+    "params": {},
+    "role": "admin",
+    "company": "MSL-CR",
+    "status": 200,
+    "shape": "list",
+    "count": 5
+  },
+  {
+    "function": "get_crane_inspection_api",
+    "method": "GET",
+    "path": "/vessel-crane-inspection/1",
+    "params": {},
+    "role": "user",
+    "company": "MCI-CR",
+    "status": 200,
+    "shape": "dict",
+    "count": null
+  },
+  {
+    "function": "get_crane_inspection_api",
+    "method": "GET",
+    "path": "/vessel-crane-inspection/1",
+    "params": {},
+    "role": "user",
+    "company": "MSL-CR",
+    "status": 200,
+    "shape": "dict",
+    "count": null
+  },
+  {
+    "function": "get_crane_inspection_api",
+    "method": "GET",
+    "path": "/vessel-crane-inspection/1",
+    "params": {},
+    "role": "admin",
+    "company": "MCI-CR",
+    "status": 200,
+    "shape": "dict",
+    "count": null
+  },
+  {
+    "function": "get_crane_inspection_api",
+    "method": "GET",
+    "path": "/vessel-crane-inspection/1",
+    "params": {},
+    "role": "admin",
+    "company": "MSL-CR",
+    "status": 200,
+    "shape": "dict",
+    "count": null
+  },
+  {
+    "function": "get_crane_inspections_api",
+    "method": "GET",
+    "path": "/vessel-crane-inspection",
+    "params": {},
+    "role": "user",
+    "company": "MCI-CR",
+    "status": 200,
+    "shape": "dict",
+    "count": 2
+  },
+  {
+    "function": "get_crane_inspections_api",
+    "method": "GET",
+    "path": "/vessel-crane-inspection",
+    "params": {},
+    "role": "user",
+    "company": "MSL-CR",
+    "status": 200,
+    "shape": "dict",
+    "count": 2
+  },
+  {
+    "function": "get_crane_inspections_api",
+    "method": "GET",
+    "path": "/vessel-crane-inspection",
+    "params": {},
+    "role": "admin",
+    "company": "MCI-CR",
+    "status": 200,
+    "shape": "dict",
+    "count": 2
+  },
+  {
+    "function": "get_crane_inspections_api",
+    "method": "GET",
+    "path": "/vessel-crane-inspection",
+    "params": {},
+    "role": "admin",
+    "company": "MSL-CR",
+    "status": 200,
+    "shape": "dict",
+    "count": 2
+  },
+  {
+    "function": "get_dashboard_servicios_api",
+    "method": "GET",
+    "path": "/dashboard/servicios",
+    "params": {},
+    "role": "user",
+    "company": "MCI-CR",
+    "status": 200,
+    "shape": "dict",
+    "count": null
+  },
+  {
+    "function": "get_dashboard_servicios_api",
+    "method": "GET",
+    "path": "/dashboard/servicios",
+    "params": {},
+    "role": "user",
+    "company": "MSL-CR",
+    "status": 200,
+    "shape": "dict",
+    "count": null
+  },
+  {
+    "function": "get_dashboard_servicios_api",
+    "method": "GET",
+    "path": "/dashboard/servicios",
+    "params": {},
+    "role": "admin",
+    "company": "MCI-CR",
+    "status": 200,
+    "shape": "dict",
+    "count": null
+  },
+  {
+    "function": "get_dashboard_servicios_api",
+    "method": "GET",
+    "path": "/dashboard/servicios",
+    "params": {},
+    "role": "admin",
+    "company": "MSL-CR",
+    "status": 200,
+    "shape": "dict",
+    "count": null
+  },
+  {
+    "function": "get_draft_survey_filters_api",
+    "method": "GET",
+    "path": "/draft-survey-filters/",
+    "params": {},
+    "role": "user",
+    "company": "MCI-CR",
+    "status": 200,
+    "shape": "dict",
+    "count": null
+  },
+  {
+    "function": "get_draft_survey_filters_api",
+    "method": "GET",
+    "path": "/draft-survey-filters/",
+    "params": {},
+    "role": "user",
+    "company": "MSL-CR",
+    "status": 200,
+    "shape": "dict",
+    "count": null
+  },
+  {
+    "function": "get_draft_survey_filters_api",
+    "method": "GET",
+    "path": "/draft-survey-filters/",
+    "params": {},
+    "role": "admin",
+    "company": "MCI-CR",
+    "status": 200,
+    "shape": "dict",
+    "count": null
+  },
+  {
+    "function": "get_draft_survey_filters_api",
+    "method": "GET",
+    "path": "/draft-survey-filters/",
+    "params": {},
+    "role": "admin",
+    "company": "MSL-CR",
+    "status": 200,
+    "shape": "dict",
+    "count": null
+  },
+  {
+    "function": "get_draft_survey_headers_api",
+    "method": "GET",
+    "path": "/draft-survey-headers/",
+    "params": {},
+    "role": "user",
+    "company": "MCI-CR",
+    "status": 200,
+    "shape": "dict",
+    "count": 10
+  },
+  {
+    "function": "get_draft_survey_headers_api",
+    "method": "GET",
+    "path": "/draft-survey-headers/",
+    "params": {},
+    "role": "user",
+    "company": "MSL-CR",
+    "status": 200,
+    "shape": "dict",
+    "count": 10
+  },
+  {
+    "function": "get_draft_survey_headers_api",
+    "method": "GET",
+    "path": "/draft-survey-headers/",
+    "params": {},
+    "role": "admin",
+    "company": "MCI-CR",
+    "status": 200,
+    "shape": "dict",
+    "count": 10
+  },
+  {
+    "function": "get_draft_survey_headers_api",
+    "method": "GET",
+    "path": "/draft-survey-headers/",
+    "params": {},
+    "role": "admin",
+    "company": "MSL-CR",
+    "status": 200,
+    "shape": "dict",
+    "count": 10
+  },
+  {
+    "function": "get_filtros_servicios_api",
+    "method": "GET",
+    "path": "/servicios/_meta/filtros",
+    "params": {},
+    "role": "user",
+    "company": "MCI-CR",
+    "status": 200,
+    "shape": "dict",
+    "count": null
+  },
+  {
+    "function": "get_filtros_servicios_api",
+    "method": "GET",
+    "path": "/servicios/_meta/filtros",
+    "params": {},
+    "role": "user",
+    "company": "MSL-CR",
+    "status": 200,
+    "shape": "dict",
+    "count": null
+  },
+  {
+    "function": "get_filtros_servicios_api",
+    "method": "GET",
+    "path": "/servicios/_meta/filtros",
+    "params": {},
+    "role": "admin",
+    "company": "MCI-CR",
+    "status": 200,
+    "shape": "dict",
+    "count": null
+  },
+  {
+    "function": "get_filtros_servicios_api",
+    "method": "GET",
+    "path": "/servicios/_meta/filtros",
+    "params": {},
+    "role": "admin",
+    "company": "MSL-CR",
+    "status": 200,
+    "shape": "dict",
+    "count": null
+  },
+  {
+    "function": "get_full_draft_survey_api",
+    "method": "GET",
+    "path": "/draft-survey/unified/1",
+    "params": {},
+    "role": "user",
+    "company": "MCI-CR",
+    "status": 404
+  },
+  {
+    "function": "get_full_draft_survey_api",
+    "method": "GET",
+    "path": "/draft-survey/unified/1",
+    "params": {},
+    "role": "user",
+    "company": "MSL-CR",
+    "status": 404
+  },
+  {
+    "function": "get_full_draft_survey_api",
+    "method": "GET",
+    "path": "/draft-survey/unified/1",
+    "params": {},
+    "role": "admin",
+    "company": "MCI-CR",
+    "status": 404
+  },
+  {
+    "function": "get_full_draft_survey_api",
+    "method": "GET",
+    "path": "/draft-survey/unified/1",
+    "params": {},
+    "role": "admin",
+    "company": "MSL-CR",
+    "status": 404
+  },
+  {
+    "function": "get_lashing_certificate_api",
+    "method": "GET",
+    "path": "/lashing-certificates/1",
+    "params": {},
+    "role": "user",
+    "company": "MCI-CR",
+    "status": 500,
+    "error": "{\"detail\":\"404: Record not found\"}"
+  },
+  {
+    "function": "get_lashing_certificate_api",
+    "method": "GET",
+    "path": "/lashing-certificates/1",
+    "params": {},
+    "role": "user",
+    "company": "MSL-CR",
+    "status": 500,
+    "error": "{\"detail\":\"404: Record not found\"}"
+  },
+  {
+    "function": "get_lashing_certificate_api",
+    "method": "GET",
+    "path": "/lashing-certificates/1",
+    "params": {},
+    "role": "admin",
+    "company": "MCI-CR",
+    "status": 500,
+    "error": "{\"detail\":\"404: Record not found\"}"
+  },
+  {
+    "function": "get_lashing_certificate_api",
+    "method": "GET",
+    "path": "/lashing-certificates/1",
+    "params": {},
+    "role": "admin",
+    "company": "MSL-CR",
+    "status": 500,
+    "error": "{\"detail\":\"404: Record not found\"}"
+  },
+  {
+    "function": "get_lashing_certificates_api",
+    "method": "GET",
+    "path": "/lashing-certificates",
+    "params": {},
+    "role": "user",
+    "company": "MCI-CR",
+    "status": 200,
+    "shape": "list",
+    "count": 0
+  },
+  {
+    "function": "get_lashing_certificates_api",
+    "method": "GET",
+    "path": "/lashing-certificates",
+    "params": {},
+    "role": "user",
+    "company": "MSL-CR",
+    "status": 200,
+    "shape": "list",
+    "count": 0
+  },
+  {
+    "function": "get_lashing_certificates_api",
+    "method": "GET",
+    "path": "/lashing-certificates",
+    "params": {},
+    "role": "admin",
+    "company": "MCI-CR",
+    "status": 200,
+    "shape": "list",
+    "count": 0
+  },
+  {
+    "function": "get_lashing_certificates_api",
+    "method": "GET",
+    "path": "/lashing-certificates",
+    "params": {},
+    "role": "admin",
+    "company": "MSL-CR",
+    "status": 200,
+    "shape": "list",
+    "count": 0
+  },
+  {
+    "function": "get_paises_cpp_api",
+    "method": "GET",
+    "path": "/cpp/paises",
+    "params": {
+      "continente": 1
+    },
+    "role": "user",
+    "company": "MCI-CR",
+    "status": 200,
+    "shape": "list",
+    "count": 0
+  },
+  {
+    "function": "get_paises_cpp_api",
+    "method": "GET",
+    "path": "/cpp/paises",
+    "params": {
+      "continente": 1
+    },
+    "role": "user",
+    "company": "MSL-CR",
+    "status": 200,
+    "shape": "list",
+    "count": 0
+  },
+  {
+    "function": "get_paises_cpp_api",
+    "method": "GET",
+    "path": "/cpp/paises",
+    "params": {
+      "continente": 1
+    },
+    "role": "admin",
+    "company": "MCI-CR",
+    "status": 200,
+    "shape": "list",
+    "count": 0
+  },
+  {
+    "function": "get_paises_cpp_api",
+    "method": "GET",
+    "path": "/cpp/paises",
+    "params": {
+      "continente": 1
+    },
+    "role": "admin",
+    "company": "MSL-CR",
+    "status": 200,
+    "shape": "list",
+    "count": 0
+  },
+  {
+    "function": "get_payslips_api",
+    "method": "GET",
+    "path": "/hr/payroll/payslips",
+    "params": {
+      "page": 1,
+      "page_size": 20
+    },
+    "role": "user",
+    "company": "MCI-CR",
+    "status": 200,
+    "shape": "dict",
+    "count": 0
+  },
+  {
+    "function": "get_payslips_api",
+    "method": "GET",
+    "path": "/hr/payroll/payslips",
+    "params": {
+      "page": 1,
+      "page_size": 20
+    },
+    "role": "user",
+    "company": "MSL-CR",
+    "status": 200,
+    "shape": "dict",
+    "count": 18
+  },
+  {
+    "function": "get_payslips_api",
+    "method": "GET",
+    "path": "/hr/payroll/payslips",
+    "params": {
+      "page": 1,
+      "page_size": 20
+    },
+    "role": "admin",
+    "company": "MCI-CR",
+    "status": 200,
+    "shape": "dict",
+    "count": 0
+  },
+  {
+    "function": "get_payslips_api",
+    "method": "GET",
+    "path": "/hr/payroll/payslips",
+    "params": {
+      "page": 1,
+      "page_size": 20
+    },
+    "role": "admin",
+    "company": "MSL-CR",
+    "status": 200,
+    "shape": "dict",
+    "count": 20
+  },
+  {
+    "function": "get_port_captancy_report_api",
+    "method": "GET",
+    "path": "/port-captancy-reports/1",
+    "params": {},
+    "role": "user",
+    "company": "MCI-CR",
+    "status": 404
+  },
+  {
+    "function": "get_port_captancy_report_api",
+    "method": "GET",
+    "path": "/port-captancy-reports/1",
+    "params": {},
+    "role": "user",
+    "company": "MSL-CR",
+    "status": 404
+  },
+  {
+    "function": "get_port_captancy_report_api",
+    "method": "GET",
+    "path": "/port-captancy-reports/1",
+    "params": {},
+    "role": "admin",
+    "company": "MCI-CR",
+    "status": 404
+  },
+  {
+    "function": "get_port_captancy_report_api",
+    "method": "GET",
+    "path": "/port-captancy-reports/1",
+    "params": {},
+    "role": "admin",
+    "company": "MSL-CR",
+    "status": 404
+  },
+  {
+    "function": "get_proyecto_calculo_by_nombre_api",
+    "method": "GET",
+    "path": "/proyectos-calculo/1",
+    "params": {},
+    "role": "user",
+    "company": "MCI-CR",
+    "status": 404
+  },
+  {
+    "function": "get_proyecto_calculo_by_nombre_api",
+    "method": "GET",
+    "path": "/proyectos-calculo/1",
+    "params": {},
+    "role": "user",
+    "company": "MSL-CR",
+    "status": 404
+  },
+  {
+    "function": "get_proyecto_calculo_by_nombre_api",
+    "method": "GET",
+    "path": "/proyectos-calculo/1",
+    "params": {},
+    "role": "admin",
+    "company": "MCI-CR",
+    "status": 404
+  },
+  {
+    "function": "get_proyecto_calculo_by_nombre_api",
+    "method": "GET",
+    "path": "/proyectos-calculo/1",
+    "params": {},
+    "role": "admin",
+    "company": "MSL-CR",
+    "status": 404
+  },
+  {
+    "function": "get_proyectos_calculo_api",
+    "method": "GET",
+    "path": "/proyectos-calculo",
+    "params": {},
+    "role": "user",
+    "company": "MCI-CR",
+    "status": 200,
+    "shape": "dict",
+    "count": 2
+  },
+  {
+    "function": "get_proyectos_calculo_api",
+    "method": "GET",
+    "path": "/proyectos-calculo",
+    "params": {},
+    "role": "user",
+    "company": "MSL-CR",
+    "status": 200,
+    "shape": "dict",
+    "count": 2
+  },
+  {
+    "function": "get_proyectos_calculo_api",
+    "method": "GET",
+    "path": "/proyectos-calculo",
+    "params": {},
+    "role": "admin",
+    "company": "MCI-CR",
+    "status": 200,
+    "shape": "dict",
+    "count": 2
+  },
+  {
+    "function": "get_proyectos_calculo_api",
+    "method": "GET",
+    "path": "/proyectos-calculo",
+    "params": {},
+    "role": "admin",
+    "company": "MSL-CR",
+    "status": 200,
+    "shape": "dict",
+    "count": 2
+  },
+  {
+    "function": "get_puertos_all_api",
+    "method": "GET",
+    "path": "/cpp/puertos_all",
+    "params": {},
+    "role": "user",
+    "company": "MCI-CR",
+    "status": 200,
+    "shape": "list",
+    "count": 138
+  },
+  {
+    "function": "get_puertos_all_api",
+    "method": "GET",
+    "path": "/cpp/puertos_all",
+    "params": {},
+    "role": "user",
+    "company": "MSL-CR",
+    "status": 200,
+    "shape": "list",
+    "count": 138
+  },
+  {
+    "function": "get_puertos_all_api",
+    "method": "GET",
+    "path": "/cpp/puertos_all",
+    "params": {},
+    "role": "admin",
+    "company": "MCI-CR",
+    "status": 200,
+    "shape": "list",
+    "count": 138
+  },
+  {
+    "function": "get_puertos_all_api",
+    "method": "GET",
+    "path": "/cpp/puertos_all",
+    "params": {},
+    "role": "admin",
+    "company": "MSL-CR",
+    "status": 200,
+    "shape": "list",
+    "count": 138
+  },
+  {
+    "function": "get_puertos_cpp_api",
+    "method": "GET",
+    "path": "/cpp/puertos",
+    "params": {
+      "pais": 1
+    },
+    "role": "user",
+    "company": "MCI-CR",
+    "status": 200,
+    "shape": "list",
+    "count": 0
+  },
+  {
+    "function": "get_puertos_cpp_api",
+    "method": "GET",
+    "path": "/cpp/puertos",
+    "params": {
+      "pais": 1
+    },
+    "role": "user",
+    "company": "MSL-CR",
+    "status": 200,
+    "shape": "list",
+    "count": 0
+  },
+  {
+    "function": "get_puertos_cpp_api",
+    "method": "GET",
+    "path": "/cpp/puertos",
+    "params": {
+      "pais": 1
+    },
+    "role": "admin",
+    "company": "MCI-CR",
+    "status": 200,
+    "shape": "list",
+    "count": 0
+  },
+  {
+    "function": "get_puertos_cpp_api",
+    "method": "GET",
+    "path": "/cpp/puertos",
+    "params": {
+      "pais": 1
+    },
+    "role": "admin",
+    "company": "MSL-CR",
+    "status": 200,
+    "shape": "list",
+    "count": 0
+  },
+  {
+    "function": "get_sampling_certificate_api",
+    "method": "GET",
+    "path": "/sampling-certificates/1",
+    "params": {},
+    "role": "user",
+    "company": "MCI-CR",
+    "status": 500,
+    "error": "{\"detail\":\"404: Record not found\"}"
+  },
+  {
+    "function": "get_sampling_certificate_api",
+    "method": "GET",
+    "path": "/sampling-certificates/1",
+    "params": {},
+    "role": "user",
+    "company": "MSL-CR",
+    "status": 500,
+    "error": "{\"detail\":\"404: Record not found\"}"
+  },
+  {
+    "function": "get_sampling_certificate_api",
+    "method": "GET",
+    "path": "/sampling-certificates/1",
+    "params": {},
+    "role": "admin",
+    "company": "MCI-CR",
+    "status": 500,
+    "error": "{\"detail\":\"404: Record not found\"}"
+  },
+  {
+    "function": "get_sampling_certificate_api",
+    "method": "GET",
+    "path": "/sampling-certificates/1",
+    "params": {},
+    "role": "admin",
+    "company": "MSL-CR",
+    "status": 500,
+    "error": "{\"detail\":\"404: Record not found\"}"
+  },
+  {
+    "function": "get_sampling_certificates_api",
+    "method": "GET",
+    "path": "/sampling-certificates",
+    "params": {},
+    "role": "user",
+    "company": "MCI-CR",
+    "status": 200,
+    "shape": "list",
+    "count": 0
+  },
+  {
+    "function": "get_sampling_certificates_api",
+    "method": "GET",
+    "path": "/sampling-certificates",
+    "params": {},
+    "role": "user",
+    "company": "MSL-CR",
+    "status": 200,
+    "shape": "list",
+    "count": 0
+  },
+  {
+    "function": "get_sampling_certificates_api",
+    "method": "GET",
+    "path": "/sampling-certificates",
+    "params": {},
+    "role": "admin",
+    "company": "MCI-CR",
+    "status": 200,
+    "shape": "list",
+    "count": 0
+  },
+  {
+    "function": "get_sampling_certificates_api",
+    "method": "GET",
+    "path": "/sampling-certificates",
+    "params": {},
+    "role": "admin",
+    "company": "MSL-CR",
+    "status": 200,
+    "shape": "list",
+    "count": 0
+  },
+  {
+    "function": "get_sealing_certificate_api",
+    "method": "GET",
+    "path": "/sealing-certificates/1",
+    "params": {},
+    "role": "user",
+    "company": "MCI-CR",
+    "status": 404
+  },
+  {
+    "function": "get_sealing_certificate_api",
+    "method": "GET",
+    "path": "/sealing-certificates/1",
+    "params": {},
+    "role": "user",
+    "company": "MSL-CR",
+    "status": 404
+  },
+  {
+    "function": "get_sealing_certificate_api",
+    "method": "GET",
+    "path": "/sealing-certificates/1",
+    "params": {},
+    "role": "admin",
+    "company": "MCI-CR",
+    "status": 404
+  },
+  {
+    "function": "get_sealing_certificate_api",
+    "method": "GET",
+    "path": "/sealing-certificates/1",
+    "params": {},
+    "role": "admin",
+    "company": "MSL-CR",
+    "status": 404
+  },
+  {
+    "function": "get_sealing_certificates_api",
+    "method": "GET",
+    "path": "/sealing-certificates",
+    "params": {},
+    "role": "user",
+    "company": "MCI-CR",
+    "status": 200,
+    "shape": "list",
+    "count": 0
+  },
+  {
+    "function": "get_sealing_certificates_api",
+    "method": "GET",
+    "path": "/sealing-certificates",
+    "params": {},
+    "role": "user",
+    "company": "MSL-CR",
+    "status": 200,
+    "shape": "list",
+    "count": 0
+  },
+  {
+    "function": "get_sealing_certificates_api",
+    "method": "GET",
+    "path": "/sealing-certificates",
+    "params": {},
+    "role": "admin",
+    "company": "MCI-CR",
+    "status": 200,
+    "shape": "list",
+    "count": 0
+  },
+  {
+    "function": "get_sealing_certificates_api",
+    "method": "GET",
+    "path": "/sealing-certificates",
+    "params": {},
+    "role": "admin",
+    "company": "MSL-CR",
+    "status": 200,
+    "shape": "list",
+    "count": 0
+  },
+  {
+    "function": "get_services_for_grain_sampling_api",
+    "method": "GET",
+    "path": "/vessel-grain-sampling/services-selector",
+    "params": {},
+    "role": "user",
+    "company": "MCI-CR",
+    "status": 200,
+    "shape": "dict",
+    "count": 427
+  },
+  {
+    "function": "get_services_for_grain_sampling_api",
+    "method": "GET",
+    "path": "/vessel-grain-sampling/services-selector",
+    "params": {},
+    "role": "user",
+    "company": "MSL-CR",
+    "status": 200,
+    "shape": "dict",
+    "count": 427
+  },
+  {
+    "function": "get_services_for_grain_sampling_api",
+    "method": "GET",
+    "path": "/vessel-grain-sampling/services-selector",
+    "params": {},
+    "role": "admin",
+    "company": "MCI-CR",
+    "status": 200,
+    "shape": "dict",
+    "count": 427
+  },
+  {
+    "function": "get_services_for_grain_sampling_api",
+    "method": "GET",
+    "path": "/vessel-grain-sampling/services-selector",
+    "params": {},
+    "role": "admin",
+    "company": "MSL-CR",
+    "status": 200,
+    "shape": "dict",
+    "count": 427
+  },
+  {
+    "function": "get_servicio_api",
+    "method": "GET",
+    "path": "/servicios/1",
+    "params": {},
+    "role": "user",
+    "company": "MCI-CR",
+    "status": 404
+  },
+  {
+    "function": "get_servicio_api",
+    "method": "GET",
+    "path": "/servicios/1",
+    "params": {},
+    "role": "user",
+    "company": "MSL-CR",
+    "status": 200,
+    "shape": "dict",
+    "count": null
+  },
+  {
+    "function": "get_servicio_api",
+    "method": "GET",
+    "path": "/servicios/1",
+    "params": {},
+    "role": "admin",
+    "company": "MCI-CR",
+    "status": 404
+  },
+  {
+    "function": "get_servicio_api",
+    "method": "GET",
+    "path": "/servicios/1",
+    "params": {},
+    "role": "admin",
+    "company": "MSL-CR",
+    "status": 200,
+    "shape": "dict",
+    "count": null
+  },
+  {
+    "function": "get_servicio_surveyors_api",
+    "method": "GET",
+    "path": "/servicios-surveyors/1",
+    "params": {},
+    "role": "user",
+    "company": "MCI-CR",
+    "status": 200,
+    "shape": "dict",
+    "count": 0
+  },
+  {
+    "function": "get_servicio_surveyors_api",
+    "method": "GET",
+    "path": "/servicios-surveyors/1",
+    "params": {},
+    "role": "user",
+    "company": "MSL-CR",
+    "status": 200,
+    "shape": "dict",
+    "count": 0
+  },
+  {
+    "function": "get_servicio_surveyors_api",
+    "method": "GET",
+    "path": "/servicios-surveyors/1",
+    "params": {},
+    "role": "admin",
+    "company": "MCI-CR",
+    "status": 200,
+    "shape": "dict",
+    "count": 0
+  },
+  {
+    "function": "get_servicio_surveyors_api",
+    "method": "GET",
+    "path": "/servicios-surveyors/1",
+    "params": {},
+    "role": "admin",
+    "company": "MSL-CR",
+    "status": 200,
+    "shape": "dict",
+    "count": 0
+  },
+  {
+    "function": "get_serviciosmd_api",
+    "method": "GET",
+    "path": "/servicios_md",
+    "params": {},
+    "role": "user",
+    "company": "MCI-CR",
+    "status": 200,
+    "shape": "dict",
+    "count": 50
+  },
+  {
+    "function": "get_serviciosmd_api",
+    "method": "GET",
+    "path": "/servicios_md",
+    "params": {},
+    "role": "user",
+    "company": "MSL-CR",
+    "status": 200,
+    "shape": "dict",
+    "count": 50
+  },
+  {
+    "function": "get_serviciosmd_api",
+    "method": "GET",
+    "path": "/servicios_md",
+    "params": {},
+    "role": "admin",
+    "company": "MCI-CR",
+    "status": 200,
+    "shape": "dict",
+    "count": 50
+  },
+  {
+    "function": "get_serviciosmd_api",
+    "method": "GET",
+    "path": "/servicios_md",
+    "params": {},
+    "role": "admin",
+    "company": "MSL-CR",
+    "status": 200,
+    "shape": "dict",
+    "count": 50
+  },
+  {
+    "function": "get_status_informes_api",
+    "method": "GET",
+    "path": "/status-informes",
+    "params": {},
+    "role": "user",
+    "company": "MCI-CR",
+    "status": 200,
+    "shape": "dict",
+    "count": 18
+  },
+  {
+    "function": "get_status_informes_api",
+    "method": "GET",
+    "path": "/status-informes",
+    "params": {},
+    "role": "user",
+    "company": "MSL-CR",
+    "status": 200,
+    "shape": "dict",
+    "count": 54
+  },
+  {
+    "function": "get_status_informes_api",
+    "method": "GET",
+    "path": "/status-informes",
+    "params": {},
+    "role": "admin",
+    "company": "MCI-CR",
+    "status": 200,
+    "shape": "dict",
+    "count": 18
+  },
+  {
+    "function": "get_status_informes_api",
+    "method": "GET",
+    "path": "/status-informes",
+    "params": {},
+    "role": "admin",
+    "company": "MSL-CR",
+    "status": 200,
+    "shape": "dict",
+    "count": 54
+  },
+  {
+    "function": "get_status_informes_statuses_api",
+    "method": "GET",
+    "path": "/status-informes/statuses",
+    "params": {},
+    "role": "user",
+    "company": "MCI-CR",
+    "status": 200,
+    "shape": "dict",
+    "count": 2
+  },
+  {
+    "function": "get_status_informes_statuses_api",
+    "method": "GET",
+    "path": "/status-informes/statuses",
+    "params": {},
+    "role": "user",
+    "company": "MSL-CR",
+    "status": 200,
+    "shape": "dict",
+    "count": 3
+  },
+  {
+    "function": "get_status_informes_statuses_api",
+    "method": "GET",
+    "path": "/status-informes/statuses",
+    "params": {},
+    "role": "admin",
+    "company": "MCI-CR",
+    "status": 200,
+    "shape": "dict",
+    "count": 2
+  },
+  {
+    "function": "get_status_informes_statuses_api",
+    "method": "GET",
+    "path": "/status-informes/statuses",
+    "params": {},
+    "role": "admin",
+    "company": "MSL-CR",
+    "status": 200,
+    "shape": "dict",
+    "count": 3
+  },
+  {
+    "function": "get_surveyores_display_api",
+    "method": "GET",
+    "path": "/surveyores",
+    "params": {},
+    "role": "user",
+    "company": "MCI-CR",
+    "status": 200,
+    "shape": "dict",
+    "count": 38
+  },
+  {
+    "function": "get_surveyores_display_api",
+    "method": "GET",
+    "path": "/surveyores",
+    "params": {},
+    "role": "user",
+    "company": "MSL-CR",
+    "status": 200,
+    "shape": "dict",
+    "count": 39
+  },
+  {
+    "function": "get_surveyores_display_api",
+    "method": "GET",
+    "path": "/surveyores",
+    "params": {},
+    "role": "admin",
+    "company": "MCI-CR",
+    "status": 200,
+    "shape": "dict",
+    "count": 38
+  },
+  {
+    "function": "get_surveyores_display_api",
+    "method": "GET",
+    "path": "/surveyores",
+    "params": {},
+    "role": "admin",
+    "company": "MSL-CR",
+    "status": 200,
+    "shape": "dict",
+    "count": 39
+  },
+  {
+    "function": "get_surveyors_catalog_api",
+    "method": "GET",
+    "path": "/servicios-surveyors/catalogo/lista",
+    "params": {},
+    "role": "user",
+    "company": "MCI-CR",
+    "status": 200,
+    "shape": "dict",
+    "count": 17
+  },
+  {
+    "function": "get_surveyors_catalog_api",
+    "method": "GET",
+    "path": "/servicios-surveyors/catalogo/lista",
+    "params": {},
+    "role": "user",
+    "company": "MSL-CR",
+    "status": 200,
+    "shape": "dict",
+    "count": 17
+  },
+  {
+    "function": "get_surveyors_catalog_api",
+    "method": "GET",
+    "path": "/servicios-surveyors/catalogo/lista",
+    "params": {},
+    "role": "admin",
+    "company": "MCI-CR",
+    "status": 200,
+    "shape": "dict",
+    "count": 17
+  },
+  {
+    "function": "get_surveyors_catalog_api",
+    "method": "GET",
+    "path": "/servicios-surveyors/catalogo/lista",
+    "params": {},
+    "role": "admin",
+    "company": "MSL-CR",
+    "status": 200,
+    "shape": "dict",
+    "count": 17
+  },
+  {
+    "function": "get_vessel_bunker_presentation_pdf",
+    "method": "GET",
+    "path": "/vessel-bunker-reports/presentation/1",
+    "params": {},
+    "role": "user",
+    "company": "MCI-CR",
+    "status": 200,
+    "error": "Expecting value: line 1 column 1 (char 0)"
+  },
+  {
+    "function": "get_vessel_bunker_presentation_pdf",
+    "method": "GET",
+    "path": "/vessel-bunker-reports/presentation/1",
+    "params": {},
+    "role": "user",
+    "company": "MSL-CR",
+    "status": 200,
+    "error": "Expecting value: line 1 column 1 (char 0)"
+  },
+  {
+    "function": "get_vessel_bunker_presentation_pdf",
+    "method": "GET",
+    "path": "/vessel-bunker-reports/presentation/1",
+    "params": {},
+    "role": "admin",
+    "company": "MCI-CR",
+    "status": 200,
+    "error": "Expecting value: line 1 column 1 (char 0)"
+  },
+  {
+    "function": "get_vessel_bunker_presentation_pdf",
+    "method": "GET",
+    "path": "/vessel-bunker-reports/presentation/1",
+    "params": {},
+    "role": "admin",
+    "company": "MSL-CR",
+    "status": 200,
+    "error": "Expecting value: line 1 column 1 (char 0)"
+  },
+  {
+    "function": "get_vessel_bunker_report_api",
+    "method": "GET",
+    "path": "/vessel-bunker-reports/1",
+    "params": {},
+    "role": "user",
+    "company": "MCI-CR",
+    "status": 200,
+    "shape": "dict",
+    "count": null
+  },
+  {
+    "function": "get_vessel_bunker_report_api",
+    "method": "GET",
+    "path": "/vessel-bunker-reports/1",
+    "params": {},
+    "role": "user",
+    "company": "MSL-CR",
+    "status": 200,
+    "shape": "dict",
+    "count": null
+  },
+  {
+    "function": "get_vessel_bunker_report_api",
+    "method": "GET",
+    "path": "/vessel-bunker-reports/1",
+    "params": {},
+    "role": "admin",
+    "company": "MCI-CR",
+    "status": 200,
+    "shape": "dict",
+    "count": null
+  },
+  {
+    "function": "get_vessel_bunker_report_api",
+    "method": "GET",
+    "path": "/vessel-bunker-reports/1",
+    "params": {},
+    "role": "admin",
+    "company": "MSL-CR",
+    "status": 200,
+    "shape": "dict",
+    "count": null
+  },
+  {
+    "function": "get_vessel_cargo_condition_by_id_api",
+    "method": "GET",
+    "path": "/vessel-cargo-condition-surveys/1",
+    "params": {},
+    "role": "user",
+    "company": "MCI-CR",
+    "status": 500,
+    "error": "{\"detail\":\"404: Not found\"}"
+  },
+  {
+    "function": "get_vessel_cargo_condition_by_id_api",
+    "method": "GET",
+    "path": "/vessel-cargo-condition-surveys/1",
+    "params": {},
+    "role": "user",
+    "company": "MSL-CR",
+    "status": 500,
+    "error": "{\"detail\":\"404: Not found\"}"
+  },
+  {
+    "function": "get_vessel_cargo_condition_by_id_api",
+    "method": "GET",
+    "path": "/vessel-cargo-condition-surveys/1",
+    "params": {},
+    "role": "admin",
+    "company": "MCI-CR",
+    "status": 500,
+    "error": "{\"detail\":\"404: Not found\"}"
+  },
+  {
+    "function": "get_vessel_cargo_condition_by_id_api",
+    "method": "GET",
+    "path": "/vessel-cargo-condition-surveys/1",
+    "params": {},
+    "role": "admin",
+    "company": "MSL-CR",
+    "status": 500,
+    "error": "{\"detail\":\"404: Not found\"}"
+  },
+  {
+    "function": "get_vessel_condition_survey_api",
+    "method": "GET",
+    "path": "/vessel-condition-surveys/1",
+    "params": {},
+    "role": "user",
+    "company": "MCI-CR",
+    "status": 404
+  },
+  {
+    "function": "get_vessel_condition_survey_api",
+    "method": "GET",
+    "path": "/vessel-condition-surveys/1",
+    "params": {},
+    "role": "user",
+    "company": "MSL-CR",
+    "status": 404
+  },
+  {
+    "function": "get_vessel_condition_survey_api",
+    "method": "GET",
+    "path": "/vessel-condition-surveys/1",
+    "params": {},
+    "role": "admin",
+    "company": "MCI-CR",
+    "status": 404
+  },
+  {
+    "function": "get_vessel_condition_survey_api",
+    "method": "GET",
+    "path": "/vessel-condition-surveys/1",
+    "params": {},
+    "role": "admin",
+    "company": "MSL-CR",
+    "status": 404
+  },
+  {
+    "function": "get_vessel_condition_survey_by_id_api",
+    "method": "GET",
+    "path": "/vessel-condition-surveys/id/1",
+    "params": {},
+    "role": "user",
+    "company": "MCI-CR",
+    "status": 200,
+    "shape": "dict",
+    "count": null
+  },
+  {
+    "function": "get_vessel_condition_survey_by_id_api",
+    "method": "GET",
+    "path": "/vessel-condition-surveys/id/1",
+    "params": {},
+    "role": "user",
+    "company": "MSL-CR",
+    "status": 200,
+    "shape": "dict",
+    "count": null
+  },
+  {
+    "function": "get_vessel_condition_survey_by_id_api",
+    "method": "GET",
+    "path": "/vessel-condition-surveys/id/1",
+    "params": {},
+    "role": "admin",
+    "company": "MCI-CR",
+    "status": 200,
+    "shape": "dict",
+    "count": null
+  },
+  {
+    "function": "get_vessel_condition_survey_by_id_api",
+    "method": "GET",
+    "path": "/vessel-condition-surveys/id/1",
+    "params": {},
+    "role": "admin",
+    "company": "MSL-CR",
+    "status": 200,
+    "shape": "dict",
+    "count": null
+  },
+  {
+    "function": "get_vessel_grain_sampling_by_id_api",
+    "method": "GET",
+    "path": "/vessel-grain-sampling/1",
+    "params": {},
+    "role": "user",
+    "company": "MCI-CR",
+    "status": 404
+  },
+  {
+    "function": "get_vessel_grain_sampling_by_id_api",
+    "method": "GET",
+    "path": "/vessel-grain-sampling/1",
+    "params": {},
+    "role": "user",
+    "company": "MSL-CR",
+    "status": 200,
+    "shape": "dict",
+    "count": null
+  },
+  {
+    "function": "get_vessel_grain_sampling_by_id_api",
+    "method": "GET",
+    "path": "/vessel-grain-sampling/1",
+    "params": {},
+    "role": "admin",
+    "company": "MCI-CR",
+    "status": 404
+  },
+  {
+    "function": "get_vessel_grain_sampling_by_id_api",
+    "method": "GET",
+    "path": "/vessel-grain-sampling/1",
+    "params": {},
+    "role": "admin",
+    "company": "MSL-CR",
+    "status": 200,
+    "shape": "dict",
+    "count": null
+  },
+  {
+    "function": "get_vessel_grain_sampling_list_api",
+    "method": "GET",
+    "path": "/vessel-grain-sampling",
+    "params": {},
+    "role": "user",
+    "company": "MCI-CR",
+    "status": 200,
+    "shape": "dict",
+    "count": 0
+  },
+  {
+    "function": "get_vessel_grain_sampling_list_api",
+    "method": "GET",
+    "path": "/vessel-grain-sampling",
+    "params": {},
+    "role": "user",
+    "company": "MSL-CR",
+    "status": 200,
+    "shape": "dict",
+    "count": 7
+  },
+  {
+    "function": "get_vessel_grain_sampling_list_api",
+    "method": "GET",
+    "path": "/vessel-grain-sampling",
+    "params": {},
+    "role": "admin",
+    "company": "MCI-CR",
+    "status": 200,
+    "shape": "dict",
+    "count": 0
+  },
+  {
+    "function": "get_vessel_grain_sampling_list_api",
+    "method": "GET",
+    "path": "/vessel-grain-sampling",
+    "params": {},
+    "role": "admin",
+    "company": "MSL-CR",
+    "status": 200,
+    "shape": "dict",
+    "count": 7
+  },
+  {
+    "function": "get_vessel_holds_certificate_api",
+    "method": "GET",
+    "path": "/vessel-holds-inspection-certificates/1",
+    "params": {},
+    "role": "user",
+    "company": "MCI-CR",
+    "status": 500,
+    "error": "{\"detail\":\"404: Record not found\"}"
+  },
+  {
+    "function": "get_vessel_holds_certificate_api",
+    "method": "GET",
+    "path": "/vessel-holds-inspection-certificates/1",
+    "params": {},
+    "role": "user",
+    "company": "MSL-CR",
+    "status": 500,
+    "error": "{\"detail\":\"404: Record not found\"}"
+  },
+  {
+    "function": "get_vessel_holds_certificate_api",
+    "method": "GET",
+    "path": "/vessel-holds-inspection-certificates/1",
+    "params": {},
+    "role": "admin",
+    "company": "MCI-CR",
+    "status": 500,
+    "error": "{\"detail\":\"404: Record not found\"}"
+  },
+  {
+    "function": "get_vessel_holds_certificate_api",
+    "method": "GET",
+    "path": "/vessel-holds-inspection-certificates/1",
+    "params": {},
+    "role": "admin",
+    "company": "MSL-CR",
+    "status": 500,
+    "error": "{\"detail\":\"404: Record not found\"}"
+  },
+  {
+    "function": "get_vessel_holds_certificates_api",
+    "method": "GET",
+    "path": "/vessel-holds-inspection-certificates",
+    "params": {},
+    "role": "user",
+    "company": "MCI-CR",
+    "status": 200,
+    "shape": "list",
+    "count": 0
+  },
+  {
+    "function": "get_vessel_holds_certificates_api",
+    "method": "GET",
+    "path": "/vessel-holds-inspection-certificates",
+    "params": {},
+    "role": "user",
+    "company": "MSL-CR",
+    "status": 200,
+    "shape": "list",
+    "count": 0
+  },
+  {
+    "function": "get_vessel_holds_certificates_api",
+    "method": "GET",
+    "path": "/vessel-holds-inspection-certificates",
+    "params": {},
+    "role": "admin",
+    "company": "MCI-CR",
+    "status": 200,
+    "shape": "list",
+    "count": 0
+  },
+  {
+    "function": "get_vessel_holds_certificates_api",
+    "method": "GET",
+    "path": "/vessel-holds-inspection-certificates",
+    "params": {},
+    "role": "admin",
+    "company": "MSL-CR",
+    "status": 200,
+    "shape": "list",
+    "count": 0
+  },
+  {
+    "function": "get_vessel_presentation_data_api",
+    "method": "GET",
+    "path": "/vessel-grain-sampling/1/presentation-data",
+    "params": {},
+    "role": "user",
+    "company": "MCI-CR",
+    "status": 200,
+    "shape": "dict",
+    "count": null
+  },
+  {
+    "function": "get_vessel_presentation_data_api",
+    "method": "GET",
+    "path": "/vessel-grain-sampling/1/presentation-data",
+    "params": {},
+    "role": "user",
+    "company": "MSL-CR",
+    "status": 200,
+    "shape": "dict",
+    "count": null
+  },
+  {
+    "function": "get_vessel_presentation_data_api",
+    "method": "GET",
+    "path": "/vessel-grain-sampling/1/presentation-data",
+    "params": {},
+    "role": "admin",
+    "company": "MCI-CR",
+    "status": 200,
+    "shape": "dict",
+    "count": null
+  },
+  {
+    "function": "get_vessel_presentation_data_api",
+    "method": "GET",
+    "path": "/vessel-grain-sampling/1/presentation-data",
+    "params": {},
+    "role": "admin",
+    "company": "MSL-CR",
+    "status": 200,
+    "shape": "dict",
+    "count": null
+  },
+  {
+    "function": "get_vessel_truck_supervision_by_id_api",
+    "method": "GET",
+    "path": "/vessel-truck-supervision/1",
+    "params": {},
+    "role": "user",
+    "company": "MCI-CR",
+    "status": 404
+  },
+  {
+    "function": "get_vessel_truck_supervision_by_id_api",
+    "method": "GET",
+    "path": "/vessel-truck-supervision/1",
+    "params": {},
+    "role": "user",
+    "company": "MSL-CR",
+    "status": 200,
+    "shape": "dict",
+    "count": null
+  },
+  {
+    "function": "get_vessel_truck_supervision_by_id_api",
+    "method": "GET",
+    "path": "/vessel-truck-supervision/1",
+    "params": {},
+    "role": "admin",
+    "company": "MCI-CR",
+    "status": 404
+  },
+  {
+    "function": "get_vessel_truck_supervision_by_id_api",
+    "method": "GET",
+    "path": "/vessel-truck-supervision/1",
+    "params": {},
+    "role": "admin",
+    "company": "MSL-CR",
+    "status": 200,
+    "shape": "dict",
+    "count": null
+  },
+  {
+    "function": "get_vessel_truck_supervision_list_api",
+    "method": "GET",
+    "path": "/vessel-truck-supervision/",
+    "params": {},
+    "role": "user",
+    "company": "MCI-CR",
+    "status": 200,
+    "shape": "dict",
+    "count": 3
+  },
+  {
+    "function": "get_vessel_truck_supervision_list_api",
+    "method": "GET",
+    "path": "/vessel-truck-supervision/",
+    "params": {},
+    "role": "user",
+    "company": "MSL-CR",
+    "status": 200,
+    "shape": "dict",
+    "count": 8
+  },
+  {
+    "function": "get_vessel_truck_supervision_list_api",
+    "method": "GET",
+    "path": "/vessel-truck-supervision/",
+    "params": {},
+    "role": "admin",
+    "company": "MCI-CR",
+    "status": 200,
+    "shape": "dict",
+    "count": 3
+  },
+  {
+    "function": "get_vessel_truck_supervision_list_api",
+    "method": "GET",
+    "path": "/vessel-truck-supervision/",
+    "params": {},
+    "role": "admin",
+    "company": "MSL-CR",
+    "status": 200,
+    "shape": "dict",
+    "count": 8
+  },
+  {
+    "function": "get_weight_certificate_api",
+    "method": "GET",
+    "path": "/weight-certificates/1",
+    "params": {},
+    "role": "user",
+    "company": "MCI-CR",
+    "status": 200,
+    "shape": "dict",
+    "count": null
+  },
+  {
+    "function": "get_weight_certificate_api",
+    "method": "GET",
+    "path": "/weight-certificates/1",
+    "params": {},
+    "role": "user",
+    "company": "MSL-CR",
+    "status": 200,
+    "shape": "dict",
+    "count": null
+  },
+  {
+    "function": "get_weight_certificate_api",
+    "method": "GET",
+    "path": "/weight-certificates/1",
+    "params": {},
+    "role": "admin",
+    "company": "MCI-CR",
+    "status": 200,
+    "shape": "dict",
+    "count": null
+  },
+  {
+    "function": "get_weight_certificate_api",
+    "method": "GET",
+    "path": "/weight-certificates/1",
+    "params": {},
+    "role": "admin",
+    "company": "MSL-CR",
+    "status": 200,
+    "shape": "dict",
+    "count": null
+  },
+  {
+    "function": "get_weight_certificates_api",
+    "method": "GET",
+    "path": "/weight-certificates",
+    "params": {},
+    "role": "user",
+    "company": "MCI-CR",
+    "status": 200,
+    "shape": "list",
+    "count": 1
+  },
+  {
+    "function": "get_weight_certificates_api",
+    "method": "GET",
+    "path": "/weight-certificates",
+    "params": {},
+    "role": "user",
+    "company": "MSL-CR",
+    "status": 200,
+    "shape": "list",
+    "count": 1
+  },
+  {
+    "function": "get_weight_certificates_api",
+    "method": "GET",
+    "path": "/weight-certificates",
+    "params": {},
+    "role": "admin",
+    "company": "MCI-CR",
+    "status": 200,
+    "shape": "list",
+    "count": 1
+  },
+  {
+    "function": "get_weight_certificates_api",
+    "method": "GET",
+    "path": "/weight-certificates",
+    "params": {},
+    "role": "admin",
+    "company": "MSL-CR",
+    "status": 200,
+    "shape": "list",
+    "count": 1
+  },
+  {
+    "function": "hr_calculate_payroll",
+    "method": "GET",
+    "path": "/hr/payroll/calculate",
+    "params": {
+      "usuario": "surveyor01",
+      "year": 2026,
+      "month": 10
+    },
+    "role": "user",
+    "company": "MCI-CR",
+    "status": 403
+  },
+  {
+    "function": "hr_calculate_payroll",
+    "method": "GET",
+    "path": "/hr/payroll/calculate",
+    "params": {
+      "usuario": "surveyor01",
+      "year": 2026,
+      "month": 10
+    },
+    "role": "user",
+    "company": "MSL-CR",
+    "status": 403
+  },
+  {
+    "function": "hr_calculate_payroll",
+    "method": "GET",
+    "path": "/hr/payroll/calculate",
+    "params": {
+      "usuario": "surveyor01",
+      "year": 2026,
+      "month": 10
+    },
+    "role": "admin",
+    "company": "MCI-CR",
+    "status": 400
+  },
+  {
+    "function": "hr_calculate_payroll",
+    "method": "GET",
+    "path": "/hr/payroll/calculate",
+    "params": {
+      "usuario": "surveyor01",
+      "year": 2026,
+      "month": 10
+    },
+    "role": "admin",
+    "company": "MSL-CR",
+    "status": 400
+  },
+  {
+    "function": "hr_get_hours_summary",
+    "method": "GET",
+    "path": "/hr/ot-log/summary",
+    "params": {},
+    "role": "user",
+    "company": "MCI-CR",
+    "status": 200,
+    "shape": "dict",
+    "count": 1
+  },
+  {
+    "function": "hr_get_hours_summary",
+    "method": "GET",
+    "path": "/hr/ot-log/summary",
+    "params": {},
+    "role": "user",
+    "company": "MSL-CR",
+    "status": 200,
+    "shape": "dict",
+    "count": 1
+  },
+  {
+    "function": "hr_get_hours_summary",
+    "method": "GET",
+    "path": "/hr/ot-log/summary",
+    "params": {},
+    "role": "admin",
+    "company": "MCI-CR",
+    "status": 200,
+    "shape": "dict",
+    "count": 8
+  },
+  {
+    "function": "hr_get_hours_summary",
+    "method": "GET",
+    "path": "/hr/ot-log/summary",
+    "params": {},
+    "role": "admin",
+    "company": "MSL-CR",
+    "status": 200,
+    "shape": "dict",
+    "count": 8
+  },
+  {
+    "function": "hr_get_my_summary",
+    "method": "GET",
+    "path": "/hr/ot-log/me/summary",
+    "params": {},
+    "role": "user",
+    "company": "MCI-CR",
+    "status": 200,
+    "shape": "dict",
+    "count": null
+  },
+  {
+    "function": "hr_get_my_summary",
+    "method": "GET",
+    "path": "/hr/ot-log/me/summary",
+    "params": {},
+    "role": "user",
+    "company": "MSL-CR",
+    "status": 200,
+    "shape": "dict",
+    "count": null
+  },
+  {
+    "function": "hr_get_my_summary",
+    "method": "GET",
+    "path": "/hr/ot-log/me/summary",
+    "params": {},
+    "role": "admin",
+    "company": "MCI-CR",
+    "status": 200,
+    "shape": "dict",
+    "count": null
+  },
+  {
+    "function": "hr_get_my_summary",
+    "method": "GET",
+    "path": "/hr/ot-log/me/summary",
+    "params": {},
+    "role": "admin",
+    "company": "MSL-CR",
+    "status": 200,
+    "shape": "dict",
+    "count": null
+  },
+  {
+    "function": "hr_list_ot_logs",
+    "method": "GET",
+    "path": "/hr/ot-log",
+    "params": {
+      "page": 1,
+      "page_size": 50
+    },
+    "role": "user",
+    "company": "MCI-CR",
+    "status": 200,
+    "shape": "dict",
+    "count": 13
+  },
+  {
+    "function": "hr_list_ot_logs",
+    "method": "GET",
+    "path": "/hr/ot-log",
+    "params": {
+      "page": 1,
+      "page_size": 50
+    },
+    "role": "user",
+    "company": "MSL-CR",
+    "status": 200,
+    "shape": "dict",
+    "count": 13
+  },
+  {
+    "function": "hr_list_ot_logs",
+    "method": "GET",
+    "path": "/hr/ot-log",
+    "params": {
+      "page": 1,
+      "page_size": 50
+    },
+    "role": "admin",
+    "company": "MCI-CR",
+    "status": 200,
+    "shape": "dict",
+    "count": 25
+  },
+  {
+    "function": "hr_list_ot_logs",
+    "method": "GET",
+    "path": "/hr/ot-log",
+    "params": {
+      "page": 1,
+      "page_size": 50
+    },
+    "role": "admin",
+    "company": "MSL-CR",
+    "status": 200,
+    "shape": "dict",
+    "count": 25
+  },
+  {
+    "function": "hr_list_payroll_employees",
+    "method": "GET",
+    "path": "/hr/payroll/employees",
+    "params": {},
+    "role": "user",
+    "company": "MCI-CR",
+    "status": 403
+  },
+  {
+    "function": "hr_list_payroll_employees",
+    "method": "GET",
+    "path": "/hr/payroll/employees",
+    "params": {},
+    "role": "user",
+    "company": "MSL-CR",
+    "status": 403
+  },
+  {
+    "function": "hr_list_payroll_employees",
+    "method": "GET",
+    "path": "/hr/payroll/employees",
+    "params": {},
+    "role": "admin",
+    "company": "MCI-CR",
+    "status": 200,
+    "shape": "dict",
+    "count": 4
+  },
+  {
+    "function": "hr_list_payroll_employees",
+    "method": "GET",
+    "path": "/hr/payroll/employees",
+    "params": {},
+    "role": "admin",
+    "company": "MSL-CR",
+    "status": 200,
+    "shape": "dict",
+    "count": 4
+  },
+  {
+    "function": "hr_listar_empleados",
+    "method": "GET",
+    "path": "/hr/employees",
+    "params": {
+      "page": 1,
+      "page_size": 50
+    },
+    "role": "user",
+    "company": "MCI-CR",
+    "status": 403
+  },
+  {
+    "function": "hr_listar_empleados",
+    "method": "GET",
+    "path": "/hr/employees",
+    "params": {
+      "page": 1,
+      "page_size": 50
+    },
+    "role": "user",
+    "company": "MSL-CR",
+    "status": 403
+  },
+  {
+    "function": "hr_listar_empleados",
+    "method": "GET",
+    "path": "/hr/employees",
+    "params": {
+      "page": 1,
+      "page_size": 50
+    },
+    "role": "admin",
+    "company": "MCI-CR",
+    "status": 200,
+    "shape": "dict",
+    "count": 8
+  },
+  {
+    "function": "hr_listar_empleados",
+    "method": "GET",
+    "path": "/hr/employees",
+    "params": {
+      "page": 1,
+      "page_size": 50
+    },
+    "role": "admin",
+    "company": "MSL-CR",
+    "status": 200,
+    "shape": "dict",
+    "count": 8
+  },
+  {
+    "function": "hr_medical_network_filters_api",
+    "method": "GET",
+    "path": "/hr/medical-network/filters",
+    "params": {},
+    "role": "user",
+    "company": "MCI-CR",
+    "status": 200,
+    "shape": "dict",
+    "count": null
+  },
+  {
+    "function": "hr_medical_network_filters_api",
+    "method": "GET",
+    "path": "/hr/medical-network/filters",
+    "params": {},
+    "role": "user",
+    "company": "MSL-CR",
+    "status": 200,
+    "shape": "dict",
+    "count": null
+  },
+  {
+    "function": "hr_medical_network_filters_api",
+    "method": "GET",
+    "path": "/hr/medical-network/filters",
+    "params": {},
+    "role": "admin",
+    "company": "MCI-CR",
+    "status": 200,
+    "shape": "dict",
+    "count": null
+  },
+  {
+    "function": "hr_medical_network_filters_api",
+    "method": "GET",
+    "path": "/hr/medical-network/filters",
+    "params": {},
+    "role": "admin",
+    "company": "MSL-CR",
+    "status": 200,
+    "shape": "dict",
+    "count": null
+  },
+  {
+    "function": "hr_medical_network_search_api",
+    "method": "GET",
+    "path": "/hr/medical-network/search",
+    "params": {},
+    "role": "user",
+    "company": "MCI-CR",
+    "status": 200,
+    "shape": "dict",
+    "count": 100
+  },
+  {
+    "function": "hr_medical_network_search_api",
+    "method": "GET",
+    "path": "/hr/medical-network/search",
+    "params": {},
+    "role": "user",
+    "company": "MSL-CR",
+    "status": 200,
+    "shape": "dict",
+    "count": 100
+  },
+  {
+    "function": "hr_medical_network_search_api",
+    "method": "GET",
+    "path": "/hr/medical-network/search",
+    "params": {},
+    "role": "admin",
+    "company": "MCI-CR",
+    "status": 200,
+    "shape": "dict",
+    "count": 100
+  },
+  {
+    "function": "hr_medical_network_search_api",
+    "method": "GET",
+    "path": "/hr/medical-network/search",
+    "params": {},
+    "role": "admin",
+    "company": "MSL-CR",
+    "status": 200,
+    "shape": "dict",
+    "count": 100
+  },
+  {
+    "function": "hr_obtener_ultima_noticia",
+    "method": "GET",
+    "path": "/noticias/latest",
+    "params": {},
+    "role": "user",
+    "company": "MCI-CR",
+    "status": 200,
+    "shape": "dict",
+    "count": null
+  },
+  {
+    "function": "hr_obtener_ultima_noticia",
+    "method": "GET",
+    "path": "/noticias/latest",
+    "params": {},
+    "role": "user",
+    "company": "MSL-CR",
+    "status": 200,
+    "shape": "dict",
+    "count": null
+  },
+  {
+    "function": "hr_obtener_ultima_noticia",
+    "method": "GET",
+    "path": "/noticias/latest",
+    "params": {},
+    "role": "admin",
+    "company": "MCI-CR",
+    "status": 200,
+    "shape": "dict",
+    "count": null
+  },
+  {
+    "function": "hr_obtener_ultima_noticia",
+    "method": "GET",
+    "path": "/noticias/latest",
+    "params": {},
+    "role": "admin",
+    "company": "MSL-CR",
+    "status": 200,
+    "shape": "dict",
+    "count": null
+  },
+  {
+    "function": "hr_salary_calculator_history_api",
+    "method": "GET",
+    "path": "/hr/salary-calculator/history",
+    "params": {
+      "limit": 50
+    },
+    "role": "user",
+    "company": "MCI-CR",
+    "status": 200,
+    "shape": "dict",
+    "count": 0
+  },
+  {
+    "function": "hr_salary_calculator_history_api",
+    "method": "GET",
+    "path": "/hr/salary-calculator/history",
+    "params": {
+      "limit": 50
+    },
+    "role": "user",
+    "company": "MSL-CR",
+    "status": 200,
+    "shape": "dict",
+    "count": 0
+  },
+  {
+    "function": "hr_salary_calculator_history_api",
+    "method": "GET",
+    "path": "/hr/salary-calculator/history",
+    "params": {
+      "limit": 50
+    },
+    "role": "admin",
+    "company": "MCI-CR",
+    "status": 200,
+    "shape": "dict",
+    "count": 0
+  },
+  {
+    "function": "hr_salary_calculator_history_api",
+    "method": "GET",
+    "path": "/hr/salary-calculator/history",
+    "params": {
+      "limit": 50
+    },
+    "role": "admin",
+    "company": "MSL-CR",
+    "status": 200,
+    "shape": "dict",
+    "count": 0
+  },
+  {
+    "function": "hr_salary_calculator_rules_api",
+    "method": "GET",
+    "path": "/hr/salary-calculator/rules",
+    "params": {},
+    "role": "user",
+    "company": "MCI-CR",
+    "status": 200,
+    "shape": "dict",
+    "count": null
+  },
+  {
+    "function": "hr_salary_calculator_rules_api",
+    "method": "GET",
+    "path": "/hr/salary-calculator/rules",
+    "params": {},
+    "role": "user",
+    "company": "MSL-CR",
+    "status": 200,
+    "shape": "dict",
+    "count": null
+  },
+  {
+    "function": "hr_salary_calculator_rules_api",
+    "method": "GET",
+    "path": "/hr/salary-calculator/rules",
+    "params": {},
+    "role": "admin",
+    "company": "MCI-CR",
+    "status": 200,
+    "shape": "dict",
+    "count": null
+  },
+  {
+    "function": "hr_salary_calculator_rules_api",
+    "method": "GET",
+    "path": "/hr/salary-calculator/rules",
+    "params": {},
+    "role": "admin",
+    "company": "MSL-CR",
+    "status": 200,
+    "shape": "dict",
+    "count": null
+  },
+  {
+    "function": "listar_eventos_hr",
+    "method": "GET",
+    "path": "/hr/events/",
+    "params": {},
+    "role": "user",
+    "company": "MCI-CR",
+    "status": 200,
+    "shape": "list",
+    "count": 1
+  },
+  {
+    "function": "listar_eventos_hr",
+    "method": "GET",
+    "path": "/hr/events/",
+    "params": {},
+    "role": "user",
+    "company": "MSL-CR",
+    "status": 200,
+    "shape": "list",
+    "count": 1
+  },
+  {
+    "function": "listar_eventos_hr",
+    "method": "GET",
+    "path": "/hr/events/",
+    "params": {},
+    "role": "admin",
+    "company": "MCI-CR",
+    "status": 200,
+    "shape": "list",
+    "count": 2
+  },
+  {
+    "function": "listar_eventos_hr",
+    "method": "GET",
+    "path": "/hr/events/",
+    "params": {},
+    "role": "admin",
+    "company": "MSL-CR",
+    "status": 200,
+    "shape": "list",
+    "count": 2
+  },
+  {
+    "function": "listar_politicas_hr",
+    "method": "GET",
+    "path": "/hr/policies",
+    "params": {
+      "solo_activas": true
+    },
+    "role": "user",
+    "company": "MCI-CR",
+    "status": 200,
+    "shape": "dict",
+    "count": 9
+  },
+  {
+    "function": "listar_politicas_hr",
+    "method": "GET",
+    "path": "/hr/policies",
+    "params": {
+      "solo_activas": true
+    },
+    "role": "user",
+    "company": "MSL-CR",
+    "status": 200,
+    "shape": "dict",
+    "count": 9
+  },
+  {
+    "function": "listar_politicas_hr",
+    "method": "GET",
+    "path": "/hr/policies",
+    "params": {
+      "solo_activas": true
+    },
+    "role": "admin",
+    "company": "MCI-CR",
+    "status": 200,
+    "shape": "dict",
+    "count": 9
+  },
+  {
+    "function": "listar_politicas_hr",
+    "method": "GET",
+    "path": "/hr/policies",
+    "params": {
+      "solo_activas": true
+    },
+    "role": "admin",
+    "company": "MSL-CR",
+    "status": 200,
+    "shape": "dict",
+    "count": 9
+  }
+]

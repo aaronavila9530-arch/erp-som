@@ -35,7 +35,8 @@ class PopupAgregarPrecio(tk.Toplevel):
         self.grab_set()
 
         self._load_meta()
-        self._build_ui()
+        if self.winfo_exists():
+            self._build_ui()
 
     # =========================================================
     # DATA

@@ -3,7 +3,7 @@ from tkinter import ttk, messagebox
 
 from api_client import (
     get_draft_survey_headers_api,
-    update_draft_survey_api
+    update_draft_survey_status_api
 )
 
 
@@ -548,12 +548,7 @@ class DraftSurveyTable(ttk.Frame):
             return
 
         try:
-            payload = {"status": new_status}
-
-            result = update_draft_survey_api(
-                draft_report_number=str(draft_report_number),
-                payload=payload
-            )
+            result = update_draft_survey_status_api(str(draft_report_number), new_status)
 
             if not result.get("success"):
                 messagebox.showerror(
@@ -641,10 +636,7 @@ class DraftSurveyTable(ttk.Frame):
             # -------------------------------------------------
             # 3️⃣ ACTUALIZAR STATUS A APPROVED
             # -------------------------------------------------
-            update_result = update_draft_survey_api(
-                str(draft_report_number),
-                {"status": "Approved"}
-            )
+            update_result = update_draft_survey_status_api(str(draft_report_number), "Approved")
 
             if not update_result.get("success"):
                 messagebox.showwarning(

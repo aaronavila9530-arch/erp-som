@@ -1,0 +1,1654 @@
+[
+  {
+    "file": "Modulos\\Informes\\container_report_form.py",
+    "class": "ContainerReportForm",
+    "role": "user",
+    "errors": [],
+    "result": "PASS"
+  },
+  {
+    "file": "Modulos\\Informes\\crane_inspection\\crane_inspection_form.py",
+    "class": "CraneInspectionForm",
+    "role": "user",
+    "errors": [],
+    "result": "PASS"
+  },
+  {
+    "file": "Modulos\\Informes\\crane_inspection\\crane_inspection_table.py",
+    "class": "CraneInspectionTable",
+    "role": "user",
+    "errors": [],
+    "result": "PASS"
+  },
+  {
+    "file": "Modulos\\Informes\\crane_inspection\\popup_ai_crane_inspection_control.py",
+    "class": "PopupAICraneInspectionControl",
+    "role": "user",
+    "errors": [],
+    "result": "PASS"
+  },
+  {
+    "file": "Modulos\\Informes\\crane_inspection\\popup_crane_inspection_presentation.py",
+    "class": "PopupCraneInspectionPresentation",
+    "role": "user",
+    "errors": [],
+    "result": "PASS"
+  },
+  {
+    "file": "Modulos\\Informes\\informes_home_ui.py",
+    "class": "InformesHomeUI",
+    "role": "user",
+    "errors": [],
+    "result": "PASS"
+  },
+  {
+    "file": "Modulos\\Informes\\informes_table.py",
+    "class": "InformesTable",
+    "role": "user",
+    "errors": [],
+    "result": "PASS"
+  },
+  {
+    "file": "Modulos\\Informes\\informes_vessel_grain_table.py",
+    "class": "VesselGrainSamplingTable",
+    "role": "user",
+    "errors": [],
+    "result": "PASS"
+  },
+  {
+    "file": "Modulos\\Informes\\lashing_certificate\\lashing_certificate_form.py",
+    "class": "LashingCertificateForm",
+    "role": "user",
+    "errors": [],
+    "result": "PASS"
+  },
+  {
+    "file": "Modulos\\Informes\\lashing_certificate\\lashing_certificates_table.py",
+    "class": "LashingCertificatesTable",
+    "role": "user",
+    "errors": [],
+    "result": "PASS"
+  },
+  {
+    "file": "Modulos\\Informes\\logra_questionnaires_form.py",
+    "class": "LograQuestionnairesForm",
+    "role": "user",
+    "errors": [],
+    "result": "PASS"
+  },
+  {
+    "file": "Modulos\\Informes\\logra_questionnaires_form.py",
+    "class": "PopupLograOpen",
+    "role": "user",
+    "errors": [],
+    "result": "PASS"
+  },
+  {
+    "file": "Modulos\\Informes\\logra_questionnaires_form.py",
+    "class": "PopupLograAgenda",
+    "role": "user",
+    "errors": [],
+    "result": "PASS"
+  },
+  {
+    "file": "Modulos\\Informes\\logra_questionnaires_form.py",
+    "class": "PopupLograAgendaSearch",
+    "role": "user",
+    "errors": [],
+    "result": "PASS"
+  },
+  {
+    "file": "Modulos\\Informes\\logra_questionnaires_form.py",
+    "class": "PopupLograPortia",
+    "role": "user",
+    "errors": [],
+    "result": "PASS"
+  },
+  {
+    "file": "Modulos\\Informes\\logra_reports_table.py",
+    "class": "LograReportsTable",
+    "role": "user",
+    "errors": [],
+    "result": "PASS"
+  },
+  {
+    "file": "Modulos\\Informes\\popup\\popup_ai_compare.py",
+    "class": "PopupAICompare",
+    "role": "user",
+    "errors": [],
+    "result": "PASS"
+  },
+  {
+    "file": "Modulos\\Informes\\popup\\popup_certificate_report_selector.py",
+    "class": "PopupCertificateReportSelector",
+    "role": "user",
+    "errors": [],
+    "result": "PASS"
+  },
+  {
+    "file": "Modulos\\Informes\\popup\\popup_container_report_preview.py",
+    "class": "PopupContainerReportPreview",
+    "role": "user",
+    "errors": [],
+    "result": "PASS"
+  },
+  {
+    "file": "Modulos\\Informes\\popup\\popup_container_report_selector.py",
+    "class": "PopupContainerReportSelector",
+    "role": "user",
+    "errors": [],
+    "result": "PASS"
+  },
+  {
+    "file": "Modulos\\Informes\\popup\\popup_generate_container_presentation.py",
+    "class": "PopupGenerateContainerPresentation",
+    "role": "user",
+    "errors": [],
+    "result": "PASS"
+  },
+  {
+    "file": "Modulos\\Informes\\popup\\popup_grain_service_selector.py",
+    "class": "PopupGrainServiceSelector",
+    "role": "user",
+    "errors": [],
+    "result": "PASS"
+  },
+  {
+    "file": "Modulos\\Informes\\popup\\popup_proyecto_calculadora.py",
+    "class": "PopupProyectoCalculadora",
+    "role": "user",
+    "errors": [],
+    "result": "PASS"
+  },
+  {
+    "file": "Modulos\\Informes\\popup\\popup_vessel_final_report.py",
+    "class": "PopupVesselFinalReport",
+    "role": "user",
+    "errors": [],
+    "result": "PASS"
+  },
+  {
+    "file": "Modulos\\Informes\\popup\\popup_vessel_grain_sampling_preview.py",
+    "class": "PopupVesselGrainSamplingPreview",
+    "role": "user",
+    "errors": [],
+    "result": "PASS"
+  },
+  {
+    "file": "Modulos\\Informes\\popup\\popup_vessel_report_selector.py",
+    "class": "PopupVesselReportSelector",
+    "role": "user",
+    "errors": [],
+    "result": "PASS"
+  },
+  {
+    "file": "Modulos\\Informes\\port_captancy\\popup_ai_maritime_control_port_captancy.py",
+    "class": "PopupAIMaritimeControlPortCaptancy",
+    "role": "user",
+    "errors": [],
+    "result": "PASS"
+  },
+  {
+    "file": "Modulos\\Informes\\port_captancy\\popup_pdf_merge_port_captancy.py",
+    "class": "PopupPDFMergePortCaptancy",
+    "role": "user",
+    "errors": [],
+    "result": "PASS"
+  },
+  {
+    "file": "Modulos\\Informes\\port_captancy\\port_captancy_form.py",
+    "class": "PortCaptancyForm",
+    "role": "user",
+    "errors": [],
+    "result": "PASS"
+  },
+  {
+    "file": "Modulos\\Informes\\port_captancy\\port_captancy_table.py",
+    "class": "PortCaptancyTable",
+    "role": "user",
+    "errors": [],
+    "result": "PASS"
+  },
+  {
+    "file": "Modulos\\Informes\\proyectos_calculo_ui.py",
+    "class": "ProyectosCalculoUI",
+    "role": "user",
+    "errors": [],
+    "result": "PASS"
+  },
+  {
+    "file": "Modulos\\Informes\\report_type_selector.py",
+    "class": "ReportTypeSelector",
+    "role": "user",
+    "errors": [],
+    "result": "PASS"
+  },
+  {
+    "file": "Modulos\\Informes\\sampling_certificate\\sampling_certificate_form.py",
+    "class": "SamplingCertificateForm",
+    "role": "user",
+    "errors": [],
+    "result": "PASS"
+  },
+  {
+    "file": "Modulos\\Informes\\sampling_certificate\\sampling_certificate_table.py",
+    "class": "SamplingCertificatesTable",
+    "role": "user",
+    "errors": [],
+    "result": "PASS"
+  },
+  {
+    "file": "Modulos\\Informes\\sealing_certificate\\sealing_certificate_form.py",
+    "class": "SealingCertificateForm",
+    "role": "user",
+    "errors": [],
+    "result": "PASS"
+  },
+  {
+    "file": "Modulos\\Informes\\sealing_certificate\\sealing_certificate_table.py",
+    "class": "SealingCertificatesTable",
+    "role": "user",
+    "errors": [],
+    "result": "PASS"
+  },
+  {
+    "file": "Modulos\\Informes\\status_informes_table.py",
+    "class": "StatusInformesTable",
+    "role": "user",
+    "errors": [],
+    "result": "PASS"
+  },
+  {
+    "file": "Modulos\\Informes\\vessel\\vessel_grain_sampling_form.py",
+    "class": "GrainSamplingVesselForm",
+    "role": "user",
+    "errors": [],
+    "result": "PASS"
+  },
+  {
+    "file": "Modulos\\Informes\\vessel_bunker\\popup_vessel_bunker_pdf.py",
+    "class": "PopupVesselBunkerPDF",
+    "role": "user",
+    "errors": [],
+    "result": "PASS"
+  },
+  {
+    "file": "Modulos\\Informes\\vessel_bunker\\vessel_bunker_form.py",
+    "class": "VesselBunkerReportForm",
+    "role": "user",
+    "errors": [],
+    "result": "PASS"
+  },
+  {
+    "file": "Modulos\\Informes\\vessel_bunker\\vessel_bunker_table.py",
+    "class": "VesselBunkerTable",
+    "role": "user",
+    "errors": [],
+    "result": "PASS"
+  },
+  {
+    "file": "Modulos\\Informes\\vessel_cargo_condition_survey\\popup_ai_maritime_control.py",
+    "class": "PopupAIMaritimeControl",
+    "role": "user",
+    "errors": [],
+    "result": "PASS"
+  },
+  {
+    "file": "Modulos\\Informes\\vessel_cargo_condition_survey\\popup_vessel_cargo_condition_word.py",
+    "class": "PopupVesselCargoConditionWord",
+    "role": "user",
+    "errors": [],
+    "result": "PASS"
+  },
+  {
+    "file": "Modulos\\Informes\\vessel_cargo_condition_survey\\vessel_cargo_condition_survey_form.py",
+    "class": "VesselCargoConditionSurveyForm",
+    "role": "user",
+    "errors": [],
+    "result": "PASS"
+  },
+  {
+    "file": "Modulos\\Informes\\vessel_cargo_condition_survey\\vessel_cargo_condition_table.py",
+    "class": "VesselCargoConditionTable",
+    "role": "user",
+    "errors": [],
+    "result": "PASS"
+  },
+  {
+    "file": "Modulos\\Informes\\vessel_condition_survey\\popup_pdf_merge.py",
+    "class": "PopupPDFMerge",
+    "role": "user",
+    "errors": [],
+    "result": "PASS"
+  },
+  {
+    "file": "Modulos\\Informes\\vessel_condition_survey\\vessel_condition_survey_form.py",
+    "class": "VesselConditionSurveyForm",
+    "role": "user",
+    "errors": [],
+    "result": "PASS"
+  },
+  {
+    "file": "Modulos\\Informes\\vessel_condition_survey\\vessel_condition_survey_table.py",
+    "class": "VesselConditionSurveyTable",
+    "role": "user",
+    "errors": [],
+    "result": "PASS"
+  },
+  {
+    "file": "Modulos\\Informes\\Vessel_Draft_Survey\\draft_survey_form.py",
+    "class": "DraftSurveyForm",
+    "role": "user",
+    "errors": [],
+    "result": "PASS"
+  },
+  {
+    "file": "Modulos\\Informes\\Vessel_Draft_Survey\\draft_survey_table.py",
+    "class": "DraftSurveyTable",
+    "role": "user",
+    "errors": [],
+    "result": "PASS"
+  },
+  {
+    "file": "Modulos\\Informes\\Vessel_Draft_Survey\\popup_draft_survey_presentation.py",
+    "class": "PopupDraftSurveyPresentation",
+    "role": "user",
+    "errors": [],
+    "result": "PASS"
+  },
+  {
+    "file": "Modulos\\Informes\\Vessel_Draft_Survey\\popup_draft_survey_selector.py",
+    "class": "PopupDraftSurveySelector",
+    "role": "user",
+    "errors": [],
+    "result": "PASS"
+  },
+  {
+    "file": "Modulos\\Informes\\Vessel_Draft_Survey\\popup_servicio_draft_selector.py",
+    "class": "PopupServicioDraftSelector",
+    "role": "user",
+    "errors": [],
+    "result": "PASS"
+  },
+  {
+    "file": "Modulos\\Informes\\vessel_holds_inspection_certificate\\vessel_holds_inspection_certificate_form.py",
+    "class": "VesselHoldsInspectionCertificateForm",
+    "role": "user",
+    "errors": [],
+    "result": "PASS"
+  },
+  {
+    "file": "Modulos\\Informes\\vessel_holds_inspection_certificate\\vessel_holds_inspection_certificate_table.py",
+    "class": "VesselHoldsInspectionCertificateTable",
+    "role": "user",
+    "errors": [],
+    "result": "PASS"
+  },
+  {
+    "file": "Modulos\\Informes\\vessel_truck_supervision\\popup_servicio_selector.py",
+    "class": "PopupServicioSelector",
+    "role": "user",
+    "errors": [],
+    "result": "PASS"
+  },
+  {
+    "file": "Modulos\\Informes\\vessel_truck_supervision\\popup_truck_supervision_final_report.py",
+    "class": "PopupTruckSupervisionFinalReport",
+    "role": "user",
+    "errors": [],
+    "result": "PASS"
+  },
+  {
+    "file": "Modulos\\Informes\\vessel_truck_supervision\\popup_vessel_truck_supervision_review.py",
+    "class": "PopupVesselTruckSupervisionReview",
+    "role": "user",
+    "errors": [],
+    "result": "PASS"
+  },
+  {
+    "file": "Modulos\\Informes\\vessel_truck_supervision\\vessel_truck_supervision_form.py",
+    "class": "VesselTruckSupervisionForm",
+    "role": "user",
+    "errors": [],
+    "result": "PASS"
+  },
+  {
+    "file": "Modulos\\Informes\\vessel_truck_supervision\\vessel_truck_supervision_table.py",
+    "class": "VesselTruckSupervisionTable",
+    "role": "user",
+    "errors": [],
+    "result": "PASS"
+  },
+  {
+    "file": "Modulos\\Informes\\weight_certificate\\weight_certificate_form.py",
+    "class": "WeightCertificateForm",
+    "role": "user",
+    "errors": [],
+    "result": "PASS"
+  },
+  {
+    "file": "Modulos\\Informes\\weight_certificate\\weight_certificate_table.py",
+    "class": "WeightCertificateTable",
+    "role": "user",
+    "errors": [],
+    "result": "PASS"
+  },
+  {
+    "file": "Modulos\\Comercial\\comercial_client_analytics_ui.py",
+    "class": "ComercialClientAnalyticsUI",
+    "role": "user",
+    "errors": [],
+    "result": "PASS"
+  },
+  {
+    "file": "Modulos\\Comercial\\comercial_cotizaciones_ui.py",
+    "class": "ComercialCotizacionesUI",
+    "role": "user",
+    "errors": [],
+    "result": "PASS"
+  },
+  {
+    "file": "Modulos\\Comercial\\comercial_home_ui.py",
+    "class": "ComercialHomeUI",
+    "role": "user",
+    "errors": [],
+    "result": "PASS"
+  },
+  {
+    "file": "Modulos\\Comercial\\comercial_ports_analytics_ui.py",
+    "class": "ComercialPortsAnalyticsUI",
+    "role": "user",
+    "errors": [],
+    "result": "PASS"
+  },
+  {
+    "file": "Modulos\\Comercial\\comercial_precios_ui.py",
+    "class": "ComercialPreciosUI",
+    "role": "user",
+    "errors": [],
+    "result": "PASS"
+  },
+  {
+    "file": "Modulos\\Comercial\\comercial_servicios_analytics_ui.py",
+    "class": "ComercialServiciosAnalyticsUI",
+    "role": "user",
+    "errors": [],
+    "result": "PASS"
+  },
+  {
+    "file": "Modulos\\Comercial\\popup\\popup_agregar_precio.py",
+    "class": "PopupAgregarPrecio",
+    "role": "user",
+    "errors": [],
+    "result": "PASS"
+  },
+  {
+    "file": "Modulos\\Comercial\\popup\\popup_cliente_detalle.py",
+    "class": "PopupClienteDetalle",
+    "role": "user",
+    "errors": [],
+    "result": "PASS"
+  },
+  {
+    "file": "Modulos\\Comercial\\popup\\popup_costos_surveyor.py",
+    "class": "PopupCostosSurveyor",
+    "role": "user",
+    "errors": [],
+    "result": "PASS"
+  },
+  {
+    "file": "Modulos\\Comercial\\popup\\popup_editar_precio.py",
+    "class": "PopupEditarPrecio",
+    "role": "user",
+    "errors": [],
+    "result": "PASS"
+  },
+  {
+    "file": "Modulos\\Comercial\\popup\\popup_nueva_cotizacion.py",
+    "class": "PopupNuevaCotizacion",
+    "role": "user",
+    "errors": [],
+    "result": "PASS"
+  },
+  {
+    "file": "Modulos\\Comercial\\popup\\popup_ports_coverage.py",
+    "class": "PopupPortsCoverage",
+    "role": "user",
+    "errors": [],
+    "result": "PASS"
+  },
+  {
+    "file": "Modulos\\Comercial\\popup\\popup_servicios_no_ofrecidos.py",
+    "class": "PopupServiciosNoOfrecidos",
+    "role": "user",
+    "errors": [],
+    "result": "PASS"
+  },
+  {
+    "file": "Modulos\\Servicios\\popup_servicio.py",
+    "class": "PopupServicio",
+    "role": "user",
+    "errors": [],
+    "result": "PASS"
+  },
+  {
+    "file": "Modulos\\Servicios\\Popup_servicios\\popup_cancelar_servicio.py",
+    "class": "PopupCancelarServicio",
+    "role": "user",
+    "errors": [],
+    "result": "PASS"
+  },
+  {
+    "file": "Modulos\\Servicios\\Popup_servicios\\popup_demoras.py",
+    "class": "PopupDemoras",
+    "role": "user",
+    "errors": [],
+    "result": "PASS"
+  },
+  {
+    "file": "Modulos\\Servicios\\Popup_servicios\\popup_editar_servicio.py",
+    "class": "PopupEditarServicio",
+    "role": "user",
+    "errors": [],
+    "result": "PASS"
+  },
+  {
+    "file": "Modulos\\Servicios\\Popup_servicios\\popup_finalizar_servicio.py",
+    "class": "PopupFinalizarServicio",
+    "role": "user",
+    "errors": [],
+    "result": "PASS"
+  },
+  {
+    "file": "Modulos\\Servicios\\Popup_servicios\\popup_generar_consecutivo.py",
+    "class": "PopupGenerarConsecutivo",
+    "role": "user",
+    "errors": [],
+    "result": "PASS"
+  },
+  {
+    "file": "Modulos\\Servicios\\Popup_servicios\\popup_surveyors_servicio.py",
+    "class": "PopupSurveyorsServicio",
+    "role": "user",
+    "errors": [],
+    "result": "PASS"
+  },
+  {
+    "file": "Modulos\\Servicios\\Popup_servicios\\popup_ver_servicio.py",
+    "class": "PopupVerServicio",
+    "role": "user",
+    "errors": [],
+    "result": "PASS"
+  },
+  {
+    "file": "Modulos\\Servicios\\Popup_servicios\\popup_vista_informe.py",
+    "class": "PopupVistaInforme",
+    "role": "user",
+    "errors": [],
+    "result": "PASS"
+  },
+  {
+    "file": "Modulos\\Servicios\\tabla_servicios.py",
+    "class": "TablaServiciosUI",
+    "role": "user",
+    "errors": [],
+    "result": "PASS"
+  },
+  {
+    "file": "Modulos\\Servicios\\ui_servicios.py",
+    "class": "ServiciosUI",
+    "role": "user",
+    "errors": [],
+    "result": "PASS"
+  },
+  {
+    "file": "Modulos\\Servicios\\vista_servicios.py",
+    "class": "VistaServicios",
+    "role": "user",
+    "errors": [],
+    "result": "PASS"
+  },
+  {
+    "file": "Modulos\\Servicios\\widgets\\date_picker.py",
+    "class": "DatePicker",
+    "role": "user",
+    "errors": [],
+    "result": "PASS"
+  },
+  {
+    "file": "Modulos\\Servicios\\widgets\\time_picker.py",
+    "class": "TimePicker",
+    "role": "user",
+    "errors": [],
+    "result": "PASS"
+  },
+  {
+    "file": "Modulos\\HHRR\\home_ui.py",
+    "class": "HHRRHomeUI",
+    "role": "user",
+    "errors": [],
+    "result": "PASS"
+  },
+  {
+    "file": "Modulos\\HHRR\\popups\\popup_aprobacion.py",
+    "class": "PopupAprobacion",
+    "role": "user",
+    "errors": [],
+    "result": "PASS"
+  },
+  {
+    "file": "Modulos\\HHRR\\popups\\popup_aprobacion_solicitudes.py",
+    "class": "PopupAprobacion",
+    "role": "user",
+    "errors": [],
+    "result": "PASS"
+  },
+  {
+    "file": "Modulos\\HHRR\\popups\\popup_colilla_pago.py",
+    "class": "PopupColillaPago",
+    "role": "user",
+    "errors": [],
+    "result": "PASS"
+  },
+  {
+    "file": "Modulos\\HHRR\\popups\\popup_empleado.py",
+    "class": "PopupEmpleado",
+    "role": "user",
+    "errors": [],
+    "result": "PASS"
+  },
+  {
+    "file": "Modulos\\HHRR\\popups\\popup_lector_politica.py",
+    "class": "PopupLectorPolitica",
+    "role": "user",
+    "errors": [],
+    "result": "PASS"
+  },
+  {
+    "file": "Modulos\\HHRR\\popups\\popup_liquidacion.py",
+    "class": "PopupLiquidacion",
+    "role": "user",
+    "errors": [],
+    "result": "PASS"
+  },
+  {
+    "file": "Modulos\\HHRR\\popups\\popup_noticias.py",
+    "class": "PopupNoticias",
+    "role": "user",
+    "errors": [],
+    "result": "PASS"
+  },
+  {
+    "file": "Modulos\\HHRR\\popups\\popup_ot_detalle_admin.py",
+    "class": "PopupDetalleOTAdmin",
+    "role": "user",
+    "errors": [],
+    "result": "PASS"
+  },
+  {
+    "file": "Modulos\\HHRR\\popups\\popup_ot_log.py",
+    "class": "PopupRegistroHoras",
+    "role": "user",
+    "errors": [],
+    "result": "PASS"
+  },
+  {
+    "file": "Modulos\\HHRR\\popups\\popup_politica_crud.py",
+    "class": "PopupPoliticaCRUD",
+    "role": "user",
+    "errors": [],
+    "result": "PASS"
+  },
+  {
+    "file": "Modulos\\HHRR\\popups\\popup_registro_horas.py",
+    "class": "PopupRegistroHoras",
+    "role": "user",
+    "errors": [],
+    "result": "PASS"
+  },
+  {
+    "file": "Modulos\\HHRR\\popups\\popup_solicitud.py",
+    "class": "PopupSolicitud",
+    "role": "user",
+    "errors": [],
+    "result": "PASS"
+  },
+  {
+    "file": "Modulos\\HHRR\\popups\\popup_solicitudes.py",
+    "class": "PopupSolicitudesHHRR",
+    "role": "user",
+    "errors": [],
+    "result": "PASS"
+  },
+  {
+    "file": "Modulos\\HHRR\\ui_hhrre.py",
+    "class": "HHRRUI",
+    "role": "user",
+    "errors": [],
+    "result": "PASS"
+  },
+  {
+    "file": "Modulos\\HHRR\\ui_lazy_table.py",
+    "class": "TablaLazy",
+    "role": "user",
+    "errors": [],
+    "result": "PASS"
+  },
+  {
+    "file": "Modulos\\HHRR\\views\\ui_payslips.py",
+    "class": "VistaColillasEmployee",
+    "role": "user",
+    "errors": [],
+    "result": "PASS"
+  },
+  {
+    "file": "Modulos\\HHRR\\views\\ui_policies.py",
+    "class": "VistaPoliticasHHRR",
+    "role": "user",
+    "errors": [],
+    "result": "PASS"
+  },
+  {
+    "file": "Modulos\\HHRR\\views\\view_admin.py",
+    "class": "VistaAdminHHRR",
+    "role": "user",
+    "errors": [],
+    "result": "PASS"
+  },
+  {
+    "file": "Modulos\\HHRR\\views\\view_employee.py",
+    "class": "VistaEmployee",
+    "role": "user",
+    "errors": [],
+    "result": "PASS"
+  },
+  {
+    "file": "Modulos\\HHRR\\views\\view_employee_colillas.py",
+    "class": "VistaColillasEmployee",
+    "role": "user",
+    "errors": [],
+    "result": "PASS"
+  },
+  {
+    "file": "Modulos\\HHRR\\views\\view_medical_network.py",
+    "class": "VistaRedMedicaHHRR",
+    "role": "user",
+    "errors": [],
+    "result": "PASS"
+  },
+  {
+    "file": "Modulos\\HHRR\\views\\view_payroll_admin.py",
+    "class": "VistaPayrollAdmin",
+    "role": "user",
+    "errors": [],
+    "result": "PASS"
+  },
+  {
+    "file": "Modulos\\HHRR\\views\\view_registro_horas.py",
+    "class": "VistaRegistroHoras",
+    "role": "user",
+    "errors": [],
+    "result": "PASS"
+  },
+  {
+    "file": "Modulos\\HHRR\\views\\view_registro_horas_admin.py",
+    "class": "VistaRegistroHorasAdmin",
+    "role": "user",
+    "errors": [],
+    "result": "PASS"
+  },
+  {
+    "file": "Modulos\\HHRR\\views\\view_salary_calculator.py",
+    "class": "VistaCalculadoraSalarial",
+    "role": "user",
+    "errors": [],
+    "result": "PASS"
+  },
+  {
+    "file": "Modulos\\HHRR\\views\\vista_empleados.py",
+    "class": "VistaEmpleadosHHRR",
+    "role": "user",
+    "errors": [],
+    "result": "PASS"
+  },
+  {
+    "file": "Modulos\\HHRR\\views\\vista_solicitudes.py",
+    "class": "VistaSolicitudesHHRR",
+    "role": "user",
+    "errors": [],
+    "result": "PASS"
+  },
+  {
+    "file": "Modulos\\HHRR\\widgets\\badge.py",
+    "class": "Badge",
+    "role": "user",
+    "errors": [],
+    "result": "PASS"
+  },
+  {
+    "file": "Modulos\\Informes\\container_report_form.py",
+    "class": "ContainerReportForm",
+    "role": "admin",
+    "errors": [],
+    "result": "PASS"
+  },
+  {
+    "file": "Modulos\\Informes\\crane_inspection\\crane_inspection_form.py",
+    "class": "CraneInspectionForm",
+    "role": "admin",
+    "errors": [],
+    "result": "PASS"
+  },
+  {
+    "file": "Modulos\\Informes\\crane_inspection\\crane_inspection_table.py",
+    "class": "CraneInspectionTable",
+    "role": "admin",
+    "errors": [],
+    "result": "PASS"
+  },
+  {
+    "file": "Modulos\\Informes\\crane_inspection\\popup_ai_crane_inspection_control.py",
+    "class": "PopupAICraneInspectionControl",
+    "role": "admin",
+    "errors": [],
+    "result": "PASS"
+  },
+  {
+    "file": "Modulos\\Informes\\crane_inspection\\popup_crane_inspection_presentation.py",
+    "class": "PopupCraneInspectionPresentation",
+    "role": "admin",
+    "errors": [],
+    "result": "PASS"
+  },
+  {
+    "file": "Modulos\\Informes\\informes_home_ui.py",
+    "class": "InformesHomeUI",
+    "role": "admin",
+    "errors": [],
+    "result": "PASS"
+  },
+  {
+    "file": "Modulos\\Informes\\informes_table.py",
+    "class": "InformesTable",
+    "role": "admin",
+    "errors": [],
+    "result": "PASS"
+  },
+  {
+    "file": "Modulos\\Informes\\informes_vessel_grain_table.py",
+    "class": "VesselGrainSamplingTable",
+    "role": "admin",
+    "errors": [],
+    "result": "PASS"
+  },
+  {
+    "file": "Modulos\\Informes\\lashing_certificate\\lashing_certificate_form.py",
+    "class": "LashingCertificateForm",
+    "role": "admin",
+    "errors": [],
+    "result": "PASS"
+  },
+  {
+    "file": "Modulos\\Informes\\lashing_certificate\\lashing_certificates_table.py",
+    "class": "LashingCertificatesTable",
+    "role": "admin",
+    "errors": [],
+    "result": "PASS"
+  },
+  {
+    "file": "Modulos\\Informes\\logra_questionnaires_form.py",
+    "class": "LograQuestionnairesForm",
+    "role": "admin",
+    "errors": [],
+    "result": "PASS"
+  },
+  {
+    "file": "Modulos\\Informes\\logra_questionnaires_form.py",
+    "class": "PopupLograOpen",
+    "role": "admin",
+    "errors": [],
+    "result": "PASS"
+  },
+  {
+    "file": "Modulos\\Informes\\logra_questionnaires_form.py",
+    "class": "PopupLograAgenda",
+    "role": "admin",
+    "errors": [],
+    "result": "PASS"
+  },
+  {
+    "file": "Modulos\\Informes\\logra_questionnaires_form.py",
+    "class": "PopupLograAgendaSearch",
+    "role": "admin",
+    "errors": [],
+    "result": "PASS"
+  },
+  {
+    "file": "Modulos\\Informes\\logra_questionnaires_form.py",
+    "class": "PopupLograPortia",
+    "role": "admin",
+    "errors": [],
+    "result": "PASS"
+  },
+  {
+    "file": "Modulos\\Informes\\logra_reports_table.py",
+    "class": "LograReportsTable",
+    "role": "admin",
+    "errors": [],
+    "result": "PASS"
+  },
+  {
+    "file": "Modulos\\Informes\\popup\\popup_ai_compare.py",
+    "class": "PopupAICompare",
+    "role": "admin",
+    "errors": [],
+    "result": "PASS"
+  },
+  {
+    "file": "Modulos\\Informes\\popup\\popup_certificate_report_selector.py",
+    "class": "PopupCertificateReportSelector",
+    "role": "admin",
+    "errors": [],
+    "result": "PASS"
+  },
+  {
+    "file": "Modulos\\Informes\\popup\\popup_container_report_preview.py",
+    "class": "PopupContainerReportPreview",
+    "role": "admin",
+    "errors": [],
+    "result": "PASS"
+  },
+  {
+    "file": "Modulos\\Informes\\popup\\popup_container_report_selector.py",
+    "class": "PopupContainerReportSelector",
+    "role": "admin",
+    "errors": [],
+    "result": "PASS"
+  },
+  {
+    "file": "Modulos\\Informes\\popup\\popup_generate_container_presentation.py",
+    "class": "PopupGenerateContainerPresentation",
+    "role": "admin",
+    "errors": [],
+    "result": "PASS"
+  },
+  {
+    "file": "Modulos\\Informes\\popup\\popup_grain_service_selector.py",
+    "class": "PopupGrainServiceSelector",
+    "role": "admin",
+    "errors": [],
+    "result": "PASS"
+  },
+  {
+    "file": "Modulos\\Informes\\popup\\popup_proyecto_calculadora.py",
+    "class": "PopupProyectoCalculadora",
+    "role": "admin",
+    "errors": [],
+    "result": "PASS"
+  },
+  {
+    "file": "Modulos\\Informes\\popup\\popup_vessel_final_report.py",
+    "class": "PopupVesselFinalReport",
+    "role": "admin",
+    "errors": [],
+    "result": "PASS"
+  },
+  {
+    "file": "Modulos\\Informes\\popup\\popup_vessel_grain_sampling_preview.py",
+    "class": "PopupVesselGrainSamplingPreview",
+    "role": "admin",
+    "errors": [],
+    "result": "PASS"
+  },
+  {
+    "file": "Modulos\\Informes\\popup\\popup_vessel_report_selector.py",
+    "class": "PopupVesselReportSelector",
+    "role": "admin",
+    "errors": [],
+    "result": "PASS"
+  },
+  {
+    "file": "Modulos\\Informes\\port_captancy\\popup_ai_maritime_control_port_captancy.py",
+    "class": "PopupAIMaritimeControlPortCaptancy",
+    "role": "admin",
+    "errors": [],
+    "result": "PASS"
+  },
+  {
+    "file": "Modulos\\Informes\\port_captancy\\popup_pdf_merge_port_captancy.py",
+    "class": "PopupPDFMergePortCaptancy",
+    "role": "admin",
+    "errors": [],
+    "result": "PASS"
+  },
+  {
+    "file": "Modulos\\Informes\\port_captancy\\port_captancy_form.py",
+    "class": "PortCaptancyForm",
+    "role": "admin",
+    "errors": [],
+    "result": "PASS"
+  },
+  {
+    "file": "Modulos\\Informes\\port_captancy\\port_captancy_table.py",
+    "class": "PortCaptancyTable",
+    "role": "admin",
+    "errors": [],
+    "result": "PASS"
+  },
+  {
+    "file": "Modulos\\Informes\\proyectos_calculo_ui.py",
+    "class": "ProyectosCalculoUI",
+    "role": "admin",
+    "errors": [],
+    "result": "PASS"
+  },
+  {
+    "file": "Modulos\\Informes\\report_type_selector.py",
+    "class": "ReportTypeSelector",
+    "role": "admin",
+    "errors": [],
+    "result": "PASS"
+  },
+  {
+    "file": "Modulos\\Informes\\sampling_certificate\\sampling_certificate_form.py",
+    "class": "SamplingCertificateForm",
+    "role": "admin",
+    "errors": [],
+    "result": "PASS"
+  },
+  {
+    "file": "Modulos\\Informes\\sampling_certificate\\sampling_certificate_table.py",
+    "class": "SamplingCertificatesTable",
+    "role": "admin",
+    "errors": [],
+    "result": "PASS"
+  },
+  {
+    "file": "Modulos\\Informes\\sealing_certificate\\sealing_certificate_form.py",
+    "class": "SealingCertificateForm",
+    "role": "admin",
+    "errors": [],
+    "result": "PASS"
+  },
+  {
+    "file": "Modulos\\Informes\\sealing_certificate\\sealing_certificate_table.py",
+    "class": "SealingCertificatesTable",
+    "role": "admin",
+    "errors": [],
+    "result": "PASS"
+  },
+  {
+    "file": "Modulos\\Informes\\status_informes_table.py",
+    "class": "StatusInformesTable",
+    "role": "admin",
+    "errors": [],
+    "result": "PASS"
+  },
+  {
+    "file": "Modulos\\Informes\\vessel\\vessel_grain_sampling_form.py",
+    "class": "GrainSamplingVesselForm",
+    "role": "admin",
+    "errors": [],
+    "result": "PASS"
+  },
+  {
+    "file": "Modulos\\Informes\\vessel_bunker\\popup_vessel_bunker_pdf.py",
+    "class": "PopupVesselBunkerPDF",
+    "role": "admin",
+    "errors": [],
+    "result": "PASS"
+  },
+  {
+    "file": "Modulos\\Informes\\vessel_bunker\\vessel_bunker_form.py",
+    "class": "VesselBunkerReportForm",
+    "role": "admin",
+    "errors": [],
+    "result": "PASS"
+  },
+  {
+    "file": "Modulos\\Informes\\vessel_bunker\\vessel_bunker_table.py",
+    "class": "VesselBunkerTable",
+    "role": "admin",
+    "errors": [],
+    "result": "PASS"
+  },
+  {
+    "file": "Modulos\\Informes\\vessel_cargo_condition_survey\\popup_ai_maritime_control.py",
+    "class": "PopupAIMaritimeControl",
+    "role": "admin",
+    "errors": [],
+    "result": "PASS"
+  },
+  {
+    "file": "Modulos\\Informes\\vessel_cargo_condition_survey\\popup_vessel_cargo_condition_word.py",
+    "class": "PopupVesselCargoConditionWord",
+    "role": "admin",
+    "errors": [],
+    "result": "PASS"
+  },
+  {
+    "file": "Modulos\\Informes\\vessel_cargo_condition_survey\\vessel_cargo_condition_survey_form.py",
+    "class": "VesselCargoConditionSurveyForm",
+    "role": "admin",
+    "errors": [],
+    "result": "PASS"
+  },
+  {
+    "file": "Modulos\\Informes\\vessel_cargo_condition_survey\\vessel_cargo_condition_table.py",
+    "class": "VesselCargoConditionTable",
+    "role": "admin",
+    "errors": [],
+    "result": "PASS"
+  },
+  {
+    "file": "Modulos\\Informes\\vessel_condition_survey\\popup_pdf_merge.py",
+    "class": "PopupPDFMerge",
+    "role": "admin",
+    "errors": [],
+    "result": "PASS"
+  },
+  {
+    "file": "Modulos\\Informes\\vessel_condition_survey\\vessel_condition_survey_form.py",
+    "class": "VesselConditionSurveyForm",
+    "role": "admin",
+    "errors": [],
+    "result": "PASS"
+  },
+  {
+    "file": "Modulos\\Informes\\vessel_condition_survey\\vessel_condition_survey_table.py",
+    "class": "VesselConditionSurveyTable",
+    "role": "admin",
+    "errors": [],
+    "result": "PASS"
+  },
+  {
+    "file": "Modulos\\Informes\\Vessel_Draft_Survey\\draft_survey_form.py",
+    "class": "DraftSurveyForm",
+    "role": "admin",
+    "errors": [],
+    "result": "PASS"
+  },
+  {
+    "file": "Modulos\\Informes\\Vessel_Draft_Survey\\draft_survey_table.py",
+    "class": "DraftSurveyTable",
+    "role": "admin",
+    "errors": [],
+    "result": "PASS"
+  },
+  {
+    "file": "Modulos\\Informes\\Vessel_Draft_Survey\\popup_draft_survey_presentation.py",
+    "class": "PopupDraftSurveyPresentation",
+    "role": "admin",
+    "errors": [],
+    "result": "PASS"
+  },
+  {
+    "file": "Modulos\\Informes\\Vessel_Draft_Survey\\popup_draft_survey_selector.py",
+    "class": "PopupDraftSurveySelector",
+    "role": "admin",
+    "errors": [],
+    "result": "PASS"
+  },
+  {
+    "file": "Modulos\\Informes\\Vessel_Draft_Survey\\popup_servicio_draft_selector.py",
+    "class": "PopupServicioDraftSelector",
+    "role": "admin",
+    "errors": [],
+    "result": "PASS"
+  },
+  {
+    "file": "Modulos\\Informes\\vessel_holds_inspection_certificate\\vessel_holds_inspection_certificate_form.py",
+    "class": "VesselHoldsInspectionCertificateForm",
+    "role": "admin",
+    "errors": [],
+    "result": "PASS"
+  },
+  {
+    "file": "Modulos\\Informes\\vessel_holds_inspection_certificate\\vessel_holds_inspection_certificate_table.py",
+    "class": "VesselHoldsInspectionCertificateTable",
+    "role": "admin",
+    "errors": [],
+    "result": "PASS"
+  },
+  {
+    "file": "Modulos\\Informes\\vessel_truck_supervision\\popup_servicio_selector.py",
+    "class": "PopupServicioSelector",
+    "role": "admin",
+    "errors": [],
+    "result": "PASS"
+  },
+  {
+    "file": "Modulos\\Informes\\vessel_truck_supervision\\popup_truck_supervision_final_report.py",
+    "class": "PopupTruckSupervisionFinalReport",
+    "role": "admin",
+    "errors": [],
+    "result": "PASS"
+  },
+  {
+    "file": "Modulos\\Informes\\vessel_truck_supervision\\popup_vessel_truck_supervision_review.py",
+    "class": "PopupVesselTruckSupervisionReview",
+    "role": "admin",
+    "errors": [],
+    "result": "PASS"
+  },
+  {
+    "file": "Modulos\\Informes\\vessel_truck_supervision\\vessel_truck_supervision_form.py",
+    "class": "VesselTruckSupervisionForm",
+    "role": "admin",
+    "errors": [],
+    "result": "PASS"
+  },
+  {
+    "file": "Modulos\\Informes\\vessel_truck_supervision\\vessel_truck_supervision_table.py",
+    "class": "VesselTruckSupervisionTable",
+    "role": "admin",
+    "errors": [],
+    "result": "PASS"
+  },
+  {
+    "file": "Modulos\\Informes\\weight_certificate\\weight_certificate_form.py",
+    "class": "WeightCertificateForm",
+    "role": "admin",
+    "errors": [],
+    "result": "PASS"
+  },
+  {
+    "file": "Modulos\\Informes\\weight_certificate\\weight_certificate_table.py",
+    "class": "WeightCertificateTable",
+    "role": "admin",
+    "errors": [],
+    "result": "PASS"
+  },
+  {
+    "file": "Modulos\\Comercial\\comercial_client_analytics_ui.py",
+    "class": "ComercialClientAnalyticsUI",
+    "role": "admin",
+    "errors": [],
+    "result": "PASS"
+  },
+  {
+    "file": "Modulos\\Comercial\\comercial_cotizaciones_ui.py",
+    "class": "ComercialCotizacionesUI",
+    "role": "admin",
+    "errors": [],
+    "result": "PASS"
+  },
+  {
+    "file": "Modulos\\Comercial\\comercial_home_ui.py",
+    "class": "ComercialHomeUI",
+    "role": "admin",
+    "errors": [],
+    "result": "PASS"
+  },
+  {
+    "file": "Modulos\\Comercial\\comercial_ports_analytics_ui.py",
+    "class": "ComercialPortsAnalyticsUI",
+    "role": "admin",
+    "errors": [],
+    "result": "PASS"
+  },
+  {
+    "file": "Modulos\\Comercial\\comercial_precios_ui.py",
+    "class": "ComercialPreciosUI",
+    "role": "admin",
+    "errors": [],
+    "result": "PASS"
+  },
+  {
+    "file": "Modulos\\Comercial\\comercial_servicios_analytics_ui.py",
+    "class": "ComercialServiciosAnalyticsUI",
+    "role": "admin",
+    "errors": [],
+    "result": "PASS"
+  },
+  {
+    "file": "Modulos\\Comercial\\popup\\popup_agregar_precio.py",
+    "class": "PopupAgregarPrecio",
+    "role": "admin",
+    "errors": [],
+    "result": "PASS"
+  },
+  {
+    "file": "Modulos\\Comercial\\popup\\popup_cliente_detalle.py",
+    "class": "PopupClienteDetalle",
+    "role": "admin",
+    "errors": [],
+    "result": "PASS"
+  },
+  {
+    "file": "Modulos\\Comercial\\popup\\popup_costos_surveyor.py",
+    "class": "PopupCostosSurveyor",
+    "role": "admin",
+    "errors": [],
+    "result": "PASS"
+  },
+  {
+    "file": "Modulos\\Comercial\\popup\\popup_editar_precio.py",
+    "class": "PopupEditarPrecio",
+    "role": "admin",
+    "errors": [],
+    "result": "PASS"
+  },
+  {
+    "file": "Modulos\\Comercial\\popup\\popup_nueva_cotizacion.py",
+    "class": "PopupNuevaCotizacion",
+    "role": "admin",
+    "errors": [],
+    "result": "PASS"
+  },
+  {
+    "file": "Modulos\\Comercial\\popup\\popup_ports_coverage.py",
+    "class": "PopupPortsCoverage",
+    "role": "admin",
+    "errors": [],
+    "result": "PASS"
+  },
+  {
+    "file": "Modulos\\Comercial\\popup\\popup_servicios_no_ofrecidos.py",
+    "class": "PopupServiciosNoOfrecidos",
+    "role": "admin",
+    "errors": [],
+    "result": "PASS"
+  },
+  {
+    "file": "Modulos\\Servicios\\popup_servicio.py",
+    "class": "PopupServicio",
+    "role": "admin",
+    "errors": [],
+    "result": "PASS"
+  },
+  {
+    "file": "Modulos\\Servicios\\Popup_servicios\\popup_cancelar_servicio.py",
+    "class": "PopupCancelarServicio",
+    "role": "admin",
+    "errors": [],
+    "result": "PASS"
+  },
+  {
+    "file": "Modulos\\Servicios\\Popup_servicios\\popup_demoras.py",
+    "class": "PopupDemoras",
+    "role": "admin",
+    "errors": [],
+    "result": "PASS"
+  },
+  {
+    "file": "Modulos\\Servicios\\Popup_servicios\\popup_editar_servicio.py",
+    "class": "PopupEditarServicio",
+    "role": "admin",
+    "errors": [],
+    "result": "PASS"
+  },
+  {
+    "file": "Modulos\\Servicios\\Popup_servicios\\popup_finalizar_servicio.py",
+    "class": "PopupFinalizarServicio",
+    "role": "admin",
+    "errors": [],
+    "result": "PASS"
+  },
+  {
+    "file": "Modulos\\Servicios\\Popup_servicios\\popup_generar_consecutivo.py",
+    "class": "PopupGenerarConsecutivo",
+    "role": "admin",
+    "errors": [],
+    "result": "PASS"
+  },
+  {
+    "file": "Modulos\\Servicios\\Popup_servicios\\popup_surveyors_servicio.py",
+    "class": "PopupSurveyorsServicio",
+    "role": "admin",
+    "errors": [],
+    "result": "PASS"
+  },
+  {
+    "file": "Modulos\\Servicios\\Popup_servicios\\popup_ver_servicio.py",
+    "class": "PopupVerServicio",
+    "role": "admin",
+    "errors": [],
+    "result": "PASS"
+  },
+  {
+    "file": "Modulos\\Servicios\\Popup_servicios\\popup_vista_informe.py",
+    "class": "PopupVistaInforme",
+    "role": "admin",
+    "errors": [],
+    "result": "PASS"
+  },
+  {
+    "file": "Modulos\\Servicios\\tabla_servicios.py",
+    "class": "TablaServiciosUI",
+    "role": "admin",
+    "errors": [],
+    "result": "PASS"
+  },
+  {
+    "file": "Modulos\\Servicios\\ui_servicios.py",
+    "class": "ServiciosUI",
+    "role": "admin",
+    "errors": [],
+    "result": "PASS"
+  },
+  {
+    "file": "Modulos\\Servicios\\vista_servicios.py",
+    "class": "VistaServicios",
+    "role": "admin",
+    "errors": [],
+    "result": "PASS"
+  },
+  {
+    "file": "Modulos\\Servicios\\widgets\\date_picker.py",
+    "class": "DatePicker",
+    "role": "admin",
+    "errors": [],
+    "result": "PASS"
+  },
+  {
+    "file": "Modulos\\Servicios\\widgets\\time_picker.py",
+    "class": "TimePicker",
+    "role": "admin",
+    "errors": [],
+    "result": "PASS"
+  },
+  {
+    "file": "Modulos\\HHRR\\home_ui.py",
+    "class": "HHRRHomeUI",
+    "role": "admin",
+    "errors": [],
+    "result": "PASS"
+  },
+  {
+    "file": "Modulos\\HHRR\\popups\\popup_aprobacion.py",
+    "class": "PopupAprobacion",
+    "role": "admin",
+    "errors": [],
+    "result": "PASS"
+  },
+  {
+    "file": "Modulos\\HHRR\\popups\\popup_aprobacion_solicitudes.py",
+    "class": "PopupAprobacion",
+    "role": "admin",
+    "errors": [],
+    "result": "PASS"
+  },
+  {
+    "file": "Modulos\\HHRR\\popups\\popup_colilla_pago.py",
+    "class": "PopupColillaPago",
+    "role": "admin",
+    "errors": [],
+    "result": "PASS"
+  },
+  {
+    "file": "Modulos\\HHRR\\popups\\popup_empleado.py",
+    "class": "PopupEmpleado",
+    "role": "admin",
+    "errors": [],
+    "result": "PASS"
+  },
+  {
+    "file": "Modulos\\HHRR\\popups\\popup_lector_politica.py",
+    "class": "PopupLectorPolitica",
+    "role": "admin",
+    "errors": [],
+    "result": "PASS"
+  },
+  {
+    "file": "Modulos\\HHRR\\popups\\popup_liquidacion.py",
+    "class": "PopupLiquidacion",
+    "role": "admin",
+    "errors": [],
+    "result": "PASS"
+  },
+  {
+    "file": "Modulos\\HHRR\\popups\\popup_noticias.py",
+    "class": "PopupNoticias",
+    "role": "admin",
+    "errors": [],
+    "result": "PASS"
+  },
+  {
+    "file": "Modulos\\HHRR\\popups\\popup_ot_detalle_admin.py",
+    "class": "PopupDetalleOTAdmin",
+    "role": "admin",
+    "errors": [],
+    "result": "PASS"
+  },
+  {
+    "file": "Modulos\\HHRR\\popups\\popup_ot_log.py",
+    "class": "PopupRegistroHoras",
+    "role": "admin",
+    "errors": [],
+    "result": "PASS"
+  },
+  {
+    "file": "Modulos\\HHRR\\popups\\popup_politica_crud.py",
+    "class": "PopupPoliticaCRUD",
+    "role": "admin",
+    "errors": [],
+    "result": "PASS"
+  },
+  {
+    "file": "Modulos\\HHRR\\popups\\popup_registro_horas.py",
+    "class": "PopupRegistroHoras",
+    "role": "admin",
+    "errors": [],
+    "result": "PASS"
+  },
+  {
+    "file": "Modulos\\HHRR\\popups\\popup_solicitud.py",
+    "class": "PopupSolicitud",
+    "role": "admin",
+    "errors": [],
+    "result": "PASS"
+  },
+  {
+    "file": "Modulos\\HHRR\\popups\\popup_solicitudes.py",
+    "class": "PopupSolicitudesHHRR",
+    "role": "admin",
+    "errors": [],
+    "result": "PASS"
+  },
+  {
+    "file": "Modulos\\HHRR\\ui_hhrre.py",
+    "class": "HHRRUI",
+    "role": "admin",
+    "errors": [],
+    "result": "PASS"
+  },
+  {
+    "file": "Modulos\\HHRR\\ui_lazy_table.py",
+    "class": "TablaLazy",
+    "role": "admin",
+    "errors": [],
+    "result": "PASS"
+  },
+  {
+    "file": "Modulos\\HHRR\\views\\ui_payslips.py",
+    "class": "VistaColillasEmployee",
+    "role": "admin",
+    "errors": [],
+    "result": "PASS"
+  },
+  {
+    "file": "Modulos\\HHRR\\views\\ui_policies.py",
+    "class": "VistaPoliticasHHRR",
+    "role": "admin",
+    "errors": [],
+    "result": "PASS"
+  },
+  {
+    "file": "Modulos\\HHRR\\views\\view_admin.py",
+    "class": "VistaAdminHHRR",
+    "role": "admin",
+    "errors": [],
+    "result": "PASS"
+  },
+  {
+    "file": "Modulos\\HHRR\\views\\view_employee.py",
+    "class": "VistaEmployee",
+    "role": "admin",
+    "errors": [],
+    "result": "PASS"
+  },
+  {
+    "file": "Modulos\\HHRR\\views\\view_employee_colillas.py",
+    "class": "VistaColillasEmployee",
+    "role": "admin",
+    "errors": [],
+    "result": "PASS"
+  },
+  {
+    "file": "Modulos\\HHRR\\views\\view_medical_network.py",
+    "class": "VistaRedMedicaHHRR",
+    "role": "admin",
+    "errors": [],
+    "result": "PASS"
+  },
+  {
+    "file": "Modulos\\HHRR\\views\\view_payroll_admin.py",
+    "class": "VistaPayrollAdmin",
+    "role": "admin",
+    "errors": [],
+    "result": "PASS"
+  },
+  {
+    "file": "Modulos\\HHRR\\views\\view_registro_horas.py",
+    "class": "VistaRegistroHoras",
+    "role": "admin",
+    "errors": [],
+    "result": "PASS"
+  },
+  {
+    "file": "Modulos\\HHRR\\views\\view_registro_horas_admin.py",
+    "class": "VistaRegistroHorasAdmin",
+    "role": "admin",
+    "errors": [],
+    "result": "PASS"
+  },
+  {
+    "file": "Modulos\\HHRR\\views\\view_salary_calculator.py",
+    "class": "VistaCalculadoraSalarial",
+    "role": "admin",
+    "errors": [],
+    "result": "PASS"
+  },
+  {
+    "file": "Modulos\\HHRR\\views\\vista_empleados.py",
+    "class": "VistaEmpleadosHHRR",
+    "role": "admin",
+    "errors": [],
+    "result": "PASS"
+  },
+  {
+    "file": "Modulos\\HHRR\\views\\vista_solicitudes.py",
+    "class": "VistaSolicitudesHHRR",
+    "role": "admin",
+    "errors": [],
+    "result": "PASS"
+  },
+  {
+    "file": "Modulos\\HHRR\\widgets\\badge.py",
+    "class": "Badge",
+    "role": "admin",
+    "errors": [],
+    "result": "PASS"
+  }
+]
