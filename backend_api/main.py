@@ -4,6 +4,8 @@
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from services.availability import StandbyGate, runs_jobs, role
+from routers.health import router as health_router
 
 # Conexión SQL
 import database
@@ -153,20 +155,24 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+app.add_middleware(StandbyGate)
+app.include_router(health_router)
 
 # ============================================================
 # DEBUG: IMPRIMIR RUTAS REGISTRADAS EN STARTUP (SOLO /collections)
 # ============================================================
 @app.on_event("startup")
 def _debug_routes_all():
-    from services.itp_september_close import close_historical_itp
-    try:
-        close_historical_itp()
-    except Exception:
-        import logging
-        logging.getLogger(__name__).exception('ITP historical closure failed; transaction rolled back')
-    start_gmail_fiscal_scheduler()
-    start_notification_scheduler()
+    role()  # Validate deployment configuration before accepting requests.
+    if runs_jobs():
+        from services.itp_september_close import close_historical_itp
+        try:
+            close_historical_itp()
+        except Exception:
+            import logging
+            logging.getLogger(__name__).exception('ITP historical closure failed; transaction rolled back')
+        start_gmail_fiscal_scheduler()
+        start_notification_scheduler()
     print("\n=== TODAS LAS RUTAS REGISTRADAS ===")
     for r in app.router.routes:
         path = getattr(r, "path", "")

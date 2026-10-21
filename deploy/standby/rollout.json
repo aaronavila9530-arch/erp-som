@@ -1,0 +1,32 @@
+{
+  "status": "preparation_only_not_deployed",
+  "additional_monthly_budget_usd": 100,
+  "providers": {"primary": "Railway", "standby": "DigitalOcean", "routing": "Cloudflare"},
+  "account_registration": "user_must_complete_password_terms_and_billing_in_official_pages",
+  "planned_base_costs_usd": {"standby_droplet_4gb": 24, "load_balancing_starting_price": 5},
+  "cost_exclusions": ["existing Railway charges", "tax", "usage overages", "database HA", "shared file storage", "backup storage"],
+  "production_changes_applied": false,
+  "automatic_failover_enabled": false,
+  "required_before_traffic": [
+    "Verify both accounts and confirm billing total below authorized budget",
+    "Confirm domain ownership and inventory all DNS including email MX/TXT before any change",
+    "Build immutable image from clean committed sources, excluding secrets and business documents",
+    "Verify a common authoritative PostgreSQL database with TLS and restricted access",
+    "Configure shared durable attachments, reports and fiscal XML; local files are not replicated",
+    "Provision existing encryption/session secrets securely without logging them",
+    "Keep exactly one owner of email/notification and accounting startup jobs",
+    "Implement transactional idempotency for financial and service writes before enabling replay",
+    "Inventory desktop hardcoded URLs and move them to the approved stable origin",
+    "Use health/ready, not root or health/live, for routing probes",
+    "Verify readiness failure on pool exhaustion and read-only/unreachable database",
+    "Test login, permissions, service creation, billing and report files in isolated staging",
+    "Test lost-response scenarios without duplicate services, payments or journal entries",
+    "Confirm rollback and test backup restoration before production activation",
+    "Set SOM_STANDBY_VALIDATED=true only after all checks and approval"
+  ],
+  "database_limitations": "Two APIs using one PostgreSQL server do not protect against its outage. Database promotion requires fencing the old primary and an explicit tested recovery policy.",
+  "retry_policy": "Do not replay POST, PUT, PATCH or DELETE after uncertain outcomes. No automatic client/proxy write retries until transaction-level idempotency is verified.",
+  "scheduler_failover": "Manual ownership handoff only; a standby never launches background jobs even when accepting API traffic.",
+  "estimated_recovery_time": null,
+  "estimated_data_loss_window": null
+}

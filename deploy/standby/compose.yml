@@ -1,0 +1,23 @@
+# Only a preparation profile. No traffic or jobs until validation is complete.
+services:
+  api:
+    image: ${SOM_IMAGE:?Set an immutable tested image digest}
+    restart: unless-stopped
+    init: true
+    env_file: /etc/som/backend.env
+    environment:
+      SOM_DEPLOYMENT_ROLE: standby
+      SOM_BACKGROUND_JOBS: "false"
+      SOM_STANDBY_VALIDATED: "false"
+    ports:
+      - "127.0.0.1:8000:8000"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health/live', timeout=3)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"

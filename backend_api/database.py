@@ -96,6 +96,33 @@ def release_conn(conn):
         _connection_pool.putconn(conn, close=discard)
 
 
+def probe_database():
+    """Probe the application's pool, not a separate healthy-looking connection.
+
+    No retry/wait on pool exhaustion; the monitor can switch away immediately.
+    The connect timeout still applies when opening a new connection.
+    """
+    conn = None
+    ready = False
+    try:
+        _initialize_pool()
+        conn = _connection_pool.getconn()
+        with conn.cursor() as cur:
+            cur.execute("SET LOCAL statement_timeout = '1500ms'")
+            cur.execute("SELECT NOT pg_is_in_recovery(), current_setting('transaction_read_only') = 'off'")
+            row = cur.fetchone()
+            ready = bool(row and row[0] and row[1])
+    except Exception:
+        ready = False
+    finally:
+        if conn is not None:
+            try:
+                release_conn(conn)
+            except Exception:
+                ready = False
+    return ready
+
+
 # =====================================================
 # CONEXIÓN DIRECTA (legacy)
 # =====================================================
