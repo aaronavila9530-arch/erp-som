@@ -1392,19 +1392,19 @@ def som_web_home() -> HTMLResponse:
     <div class="login-card">
       <h1>ERP-SOM Web</h1>
       <p>Ingresa con tu usuario de SOM y guarda este dispositivo para entrar luego con Windows Hello, passkey, iris o huella cuando el navegador lo permita.</p>
-      <div id="loginForm" class="form">
-        <input id="user" autocomplete="username" placeholder="Usuario" />
-        <input id="pass" autocomplete="current-password" placeholder="Contraseña" type="password" />
+      <form id="loginForm" name="som-sign-in" class="form" method="post" autocomplete="on">
+        <input id="user" name="username" autocomplete="username" autocapitalize="none" spellcheck="false" aria-label="Usuario" placeholder="Usuario" required />
+        <input id="pass" name="password" autocomplete="current-password" aria-label="Contraseña" placeholder="Contraseña" type="password" required />
         <select id="loginCompany">
           <option value="MSL-CR">MSL-CR | MSL MARINE SURVEYORS AND LOGISTICS GROUP SRL</option>
           <option value="MCI-CR">MCI-CR | MSL MARINE CLAIMS RISK & INTELLIGENCE</option>
         </select>
-        <label class="remember"><input id="rememberDevice" type="checkbox" /> Guardar credenciales en este dispositivo</label>
-        <button id="loginBtn">Ingresar</button>
+        <label class="remember"><input id="rememberDevice" type="checkbox" /> Recordar usuario y empresa en este dispositivo</label>
+        <button id="loginBtn" type="submit">Ingresar</button>
         <button id="bioBtn" class="secondary" type="button">Entrar con passkey / biometria</button>
         <div id="loginMsg" class="muted"></div>
         <a href="/som/privacy" target="_blank" rel="noopener">Política de privacidad de Gmail</a>
-      </div>
+      </form>
       <div id="totpForm" class="form hidden">
         <img id="qr" class="qr hidden" alt="QR Authenticator" />
         <input id="code" inputmode="numeric" autocomplete="one-time-code" placeholder="Código Authenticator" />
@@ -2242,6 +2242,8 @@ def som_web_home() -> HTMLResponse:
       startNotificationPolling();
     }
     async function login() {
+      if ($("loginBtn").disabled) return;
+      $("loginBtn").disabled = true;
       $("loginMsg").textContent = "Validando...";
       try {
         const data = await postJSON("/auth/mobile/login", { usuario:$("user").value, password:$("pass").value });
@@ -2258,6 +2260,8 @@ def som_web_home() -> HTMLResponse:
         $("totpMsg").textContent = data.action === "ENROLL_TOTP" ? "Escanea el QR y valida el primer código." : "Ingresa tu código Authenticator.";
       } catch (err) {
         $("loginMsg").innerHTML = `<span class="error">${err.message}</span>`;
+      } finally {
+        $("loginBtn").disabled = false;
       }
     }
     async function validateTotp() {
@@ -10454,7 +10458,7 @@ def som_web_home() -> HTMLResponse:
     function renderComingSoon(mod) {
       $("content").innerHTML = `<div class="card panel"><div class="panel-head"><h2>${mod.title}</h2></div><div class="status">Seleccione una opción del módulo para continuar.</div></div>`;
     }
-    $("loginBtn").onclick = login;
+    $("loginForm").onsubmit = event => { event.preventDefault(); login(); };
     $("totpBtn").onclick = validateTotp;
     $("bioBtn").onclick = unlockWithPasskey;
     $("backLogin").onclick = showLogin;
