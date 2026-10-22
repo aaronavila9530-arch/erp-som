@@ -5,11 +5,56 @@ from decimal import Decimal, InvalidOperation
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
-from docx.shared import Pt, RGBColor
+from docx.shared import Pt, RGBColor, Inches
 
 
 def normalize_draft_layout(doc, presentation=False):
     """Fix only Draft templates' floating website and space-aligned footer."""
+    # Keep the original typography, numbering, images and signatures. Only
+    # constrain spacing that can push content out of the template's page area.
+    for p in doc.paragraphs:
+        text = p.text.strip()
+        if not presentation and text in ('EXTRACT TIME SHEET', 'CARGO QUANTITY DISCHARGED BY DRAFT SURVEY'):
+            p.paragraph_format.page_break_before = True
+        if not presentation:
+            for anchor in list(p._p.xpath('.//wp:anchor')):
+                if not list(anchor.iter(qn('pic:pic'))):
+                    continue
+                # Preserve the original signature image, but reserve its space
+                # in the text flow so it cannot overlap the preceding disclaimer.
+                inline = OxmlElement('wp:inline')
+                extent = anchor.find(qn('wp:extent'))
+                old_height = int(extent.get('cy'))
+                scale = min(1, int(Inches(.65)) / old_height)
+                for target in [extent] + list(anchor.iter(qn('a:ext'))):
+                    if target is extent or target.get('cx') is not None:
+                        target.set('cx', str(int(int(target.get('cx')) * scale)))
+                        target.set('cy', str(int(int(target.get('cy')) * scale)))
+                for tag in ('wp:extent', 'wp:effectExtent', 'wp:docPr',
+                            'wp:cNvGraphicFramePr', 'a:graphic'):
+                    child = anchor.find(qn(tag))
+                    if child is not None:
+                        inline.append(child)
+                anchor.getparent().replace(anchor, inline)
+                p.paragraph_format.line_spacing = 1.0
+                p.paragraph_format.space_before = Pt(6)
+                p.paragraph_format.space_after = Pt(0)
+                p.paragraph_format.keep_with_next = True
+        if not presentation and '\t' in text and text.startswith(
+                ('Draft Survey Figure', 'B/L Figures', 'Difference', 'Percentage', 'Shore Scale Figures')):
+            p.paragraph_format.space_before = Pt(0)
+            p.paragraph_format.space_after = Pt(3)
+        if not presentation and not text and not p._p.xpath('.//w:drawing | .//w:pict'):
+            p.paragraph_format.space_before = Pt(0)
+            p.paragraph_format.space_after = Pt(0)
+            p.paragraph_format.line_spacing = Pt(5)
+            for run in p.runs:
+                run.font.size = Pt(5)
+        if not presentation and (text.isupper() or text in ('Purpose', 'Instructions', 'Representatives')
+                                 or text.startswith('Total Discharged')):
+            p.paragraph_format.keep_with_next = True
+        if not presentation and text.startswith(('Surveyor.', 'Marine Master Surveyor.')):
+            p.paragraph_format.keep_with_next = True
     roots = [doc._element]
     seen = set()
     for section in doc.sections:
@@ -71,6 +116,27 @@ def normalize_draft_layout(doc, presentation=False):
                     p.add_run(suffix).font.size = Pt(8)
 
         if presentation:
+            # Preserve the template's logo, but anchor it to the page instead
+            # of a negative offset from a footer paragraph that can move.
+            for anchor in section.footer._element.xpath('.//wp:anchor'):
+                if not list(anchor.iter(qn('pic:pic'))):
+                    continue
+                extent = anchor.find(qn('wp:extent'))
+                ratio = int(extent.get('cy')) / int(extent.get('cx'))
+                width = int(Inches(2.4))
+                height = int(width * ratio)
+                for target in [extent] + list(anchor.iter(qn('a:ext'))):
+                    if target is extent or target.get('cx') is not None:
+                        target.set('cx', str(width))
+                        target.set('cy', str(height))
+                for axis, offset in (('H', int(Inches(2.55))), ('V', int(Inches(6.15)))):
+                    pos = anchor.find(qn('wp:position' + axis))
+                    pos.set('relativeFrom', 'page')
+                    for child in list(pos):
+                        pos.remove(child)
+                    child = OxmlElement('wp:posOffset')
+                    child.text = str(offset)
+                    pos.append(child)
             # The template background exceeded the page height and was anchored
             # relative to a paragraph. Fit it proportionally to the actual page.
             for anchor in section.header._element.xpath('.//wp:anchor'):

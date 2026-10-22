@@ -5,6 +5,7 @@ import subprocess
 from typing import Dict
 from datetime import datetime
 from docx import Document
+from docx.shared import Inches, Pt
 try:
     from services.template_autofit import apply_docx_autofit
     from services.document_branding import apply_mci_docx_branding
@@ -246,11 +247,11 @@ def generate_draft_survey_presentation_pdf(data: dict, *, output_format="pdf") -
     apply_mci_docx_branding(doc, data)
     apply_docx_autofit(doc)
     normalize_draft_layout(doc, presentation=True)
-    try:
-        from services.draft_survey_layout import build_presentation
-    except ModuleNotFoundError:
-        from backend_api.services.draft_survey_layout import build_presentation
-    doc = build_presentation(data, report_place_line(data))
+    for paragraph in doc.paragraphs:
+        if paragraph.text.strip() == client and client:
+            paragraph.paragraph_format.right_indent = Inches(1.25)
+            for run in paragraph.runs:
+                run.font.size = Pt(20)
     doc.save(temp_docx)
     if output_format == "docx":
         return temp_docx

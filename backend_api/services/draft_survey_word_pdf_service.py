@@ -343,11 +343,6 @@ def generate_draft_survey_word_pdf(data: dict, *, output_format="pdf") -> str:
     apply_mci_docx_branding(doc, data)
     apply_docx_autofit(doc)
     normalize_draft_layout(doc)
-    try:
-        from services.draft_survey_layout import harden_written_report
-    except ModuleNotFoundError:
-        from backend_api.services.draft_survey_layout import harden_written_report
-    harden_written_report(doc, data)
     doc.save(temp_docx)
     if output_format == "docx":
         return temp_docx

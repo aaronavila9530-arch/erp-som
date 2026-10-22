@@ -13,6 +13,21 @@ from backend_api.services.draft_survey_report_formatting import (
 
 
 class DraftFormattingTests(unittest.TestCase):
+    def test_layout_preserves_original_template_media_and_numbering(self):
+        import hashlib
+        root = Path(__file__).resolve().parents[1]
+        for name, cover in [('draft_word_template.docx', False),
+                            ('presentation_draft_survey.docx', True)]:
+            doc = Document(root / 'templates' / name)
+            media = lambda: {str(p.partname): hashlib.sha256(p.blob).hexdigest()
+                             for p in doc.part.package.parts if '/media/' in str(p.partname)}
+            original = media()
+            numbering = [p.blob for p in doc.part.package.parts if str(p.partname).endswith('/numbering.xml')]
+            normalize_draft_layout(doc, presentation=cover)
+            self.assertEqual(media(), original)
+            self.assertEqual([p.blob for p in doc.part.package.parts if str(p.partname).endswith('/numbering.xml')], numbering)
+            self.assertEqual(len(doc.tables), 0)
+
     def test_long_vessel_footer_has_separate_label_and_live_page_fields(self):
         root = Path(__file__).resolve().parents[1]
         doc = Document(root / 'templates/draft_word_template.docx')
