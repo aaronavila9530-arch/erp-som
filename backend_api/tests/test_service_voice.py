@@ -10,10 +10,58 @@ from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
 from pydantic import ValidationError
 from routers import service_voice as web
-from services.service_voice import ServiceDraft, extract
+from services.service_voice import ServiceDraft, extract, validate_vessel
 
 
 class VoiceTests(unittest.TestCase):
+    def test_vessel_rejects_other_fields_without_losing_valid_data(self):
+        cases = [
+            'Buque MV prueba, cliente Pandi',
+            'MV prueba cliente Pandi',
+            'MV Laura contacto Diego Vargas',
+            'MV Laura operaci\u00f3n Draft Survey',
+            'MV Laura descarga maiz',
+            'MV Laura, puerto Caldera',
+            'MV Laura en el puerto Caldera',
+            'MV Laura; pa\u00eds Costa Rica',
+            'MV Laura fecha inicio 24 de octubre',
+            'MV Laura hora 10:00',
+            'MV Laura surveyor Pavel Pe\u00f1a',
+            'MV Laura honorarios 300',
+            'MV Laura perd\u00f3n MV prueba',
+            'MV Laura customer Pandi',
+            'MV Laura operation Draft Survey',
+            'MV Laura at port Caldera',
+        ]
+        for name in cases:
+            with self.subTest(name=name):
+                d = ServiceDraft(buque_contenedor=name, cliente='Pandi', detalle='Maiz')
+                validate_vessel(d, name)
+                self.assertIsNone(d.buque_contenedor)
+                self.assertEqual(d.cliente, 'Pandi')
+                self.assertEqual(d.detalle, 'Maiz')
+                self.assertTrue(d.advertencias)
+
+    def test_preserves_names_identifiers_and_empty_values(self):
+        for name in ['MV Santa Carolina V2', 'MV Puerto Limon', 'MT Costa Rica',
+                     'MV Pacific 1', 'MSCU1234567', 'MV Pandi', None]:
+            with self.subTest(name=name):
+                d = ServiceDraft(buque_contenedor=name)
+                validate_vessel(d, 'Cliente Pandi buque ' + (name or ''))
+                self.assertEqual(d.buque_contenedor, name)
+                self.assertFalse(d.advertencias)
+
+    def test_model_contamination_is_blocked_at_extraction(self):
+        model = MagicMock()
+        model.chat.completions.create.return_value.choices[0].message.content = json.dumps({
+            'buque_contenedor': 'Buque MV prueba, cliente Pandi', 'cliente': 'Pandi'})
+        with patch('ai.maritime_ai._get_openai_client') as factory:
+            factory.return_value.with_options.return_value.__enter__.return_value = model
+            result = extract('Buque MV prueba, cliente Pandi')
+        self.assertIsNone(result['buque_contenedor'])
+        self.assertEqual(result['cliente'], 'Pandi')
+        self.assertTrue(result['advertencias'])
+
     def setUp(self):
         app = FastAPI(); app.include_router(web.router)
         app.dependency_overrides[web.access] = lambda: {'usuario':'qa'}
