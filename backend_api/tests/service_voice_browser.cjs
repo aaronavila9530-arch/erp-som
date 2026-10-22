@@ -41,6 +41,15 @@ const shell=fs.readFileSync(path.join(root,'backend_api/routers/som_web.py'),'ut
    assert.equal(await page.locator('#svcForm_cliente').inputValue(),'');
    assert.equal(await page.locator('#svcForm_operacion').inputValue(),'');
    assert.equal(await page.evaluate(()=>window.locationApplied.continente),'America');
+   assert.deepEqual(await page.evaluate(()=>ServiceVoice.clientMatches('PANDI',[
+    {value:'P & I Costa Rica, S.A.',aliases:['Pandi Costa Rica']}
+   ])),['P & I Costa Rica, S.A.']);
+   assert.deepEqual(await page.evaluate(()=>ServiceVoice.clientMatches('P and I',[
+    {value:'Pandi Costa Rica, S.A.',aliases:[]}
+   ])),['Pandi Costa Rica, S.A.']);
+   assert.equal(await page.evaluate(()=>ServiceVoice.clientMatches('PANDI',[
+    {value:'Pandi Costa Rica',aliases:[]},{value:'Pandi Panama',aliases:[]}
+   ]).length),2);
    assert.deepEqual(await page.evaluate(()=>ServiceVoice.matches('off-hire bunker and condition survey',['OFF HIRE BUNKER & CONDITION SURVEY'])),['OFF HIRE BUNKER & CONDITION SURVEY']);
    assert.equal(await page.evaluate(()=>ServiceVoice.matches('Pavel Pena',['Pabel Pena Barreto','Pabel Pena Diaz'],true).length),2);
    fs.mkdirSync(path.join(root,'tmp/voice-qa'),{recursive:true});

@@ -34,7 +34,7 @@
         const response = await api.audio(blob, controller.signal);
         if (dead) return;
         if (!response.text?.trim()) { status('No se reconocio voz.'); return; }
-        const draft = await api.parse(response.text, controller.signal);
+        const draft = response.draft || await api.parse(response.text, controller.signal);
         if (!dead) await applyDraft(draft, baseline);
       } catch (e) { if (!dead) status(e.message); }
       finally { if (!dead) idle(); }
@@ -63,7 +63,7 @@
       for (const key of Object.keys(labels)) {
         if (['continente','pais','puerto'].includes(key) || draft[key] == null || draft[key] === '') continue;
         const field = document.getElementById('svcForm_'+key); if (!field) continue;
-        const choices = field.tagName === 'SELECT' ? matches(draft[key],[...field.options].map(o=>o.value)) : [String(draft[key])];
+        const choices = key === 'cliente' && api.clients ? clientMatches(draft[key],api.clients()) : field.tagName === 'SELECT' ? matches(draft[key],[...field.options].map(o=>o.value)) : [String(draft[key])];
         if (choices.length === 1) updates.push(() => {field.value=choices[0];});
         else pending.push(labels[key]+': '+draft[key]);
       }
@@ -93,5 +93,13 @@
     }
     return () => { dead=true; controller.abort(); if(recorder?.state==='recording') recorder.stop(); tracksOff(); chunks=[]; };
   }
-  window.ServiceVoice = {mount,matches};
+  function clientMatches(said, rows) {
+    const alias = value => norm(value).replace(/\bp\s+(?:and\s+|y\s+)?i\b/g,'pandi');
+    const query = alias(said);
+    if (!query) return [];
+    // Resolve aliases to the actual option value, never to another company's catalog.
+    const found = rows.filter(row => [row.value,...row.aliases].some(value => (` ${alias(value)} `).includes(` ${query} `)));
+    return [...new Set(found.map(row=>row.value))];
+  }
+  window.ServiceVoice = {mount,matches,clientMatches};
 })();

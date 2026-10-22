@@ -74,6 +74,19 @@ class VoiceTests(unittest.TestCase):
         self.assertIsNone(result['fecha_fin']); self.assertTrue(result['advertencias'])
         self.assertIsNone(result['cliente'])
 
+    def test_combined_audio_draft(self):
+        model = MagicMock()
+        model.audio.transcriptions.create.return_value.text = 'Cliente PANDI'
+        with patch.dict(os.environ, {'OPENAI_API_KEY':'test'}), \
+             patch('ai.maritime_ai._get_openai_client') as factory, \
+             patch.object(web, 'extract', return_value={'cliente':'PANDI'}) as parse:
+            factory.return_value.with_options.return_value.__enter__.return_value = model
+            r = self.client.post('/servicios/voice/transcribe?prepare=true', content=b'a'*200,
+                                 headers={'Content-Type':'audio/webm'})
+            self.assertEqual(r.status_code, 200)
+            self.assertEqual(r.json()['draft']['cliente'], 'PANDI')
+            parse.assert_called_once_with('Cliente PANDI')
+
     def test_rate_limit(self):
         for _ in range(8): web.rate_limit({'usuario':'qa'})
         with self.assertRaises(HTTPException) as err: web.rate_limit({'usuario':'qa'})

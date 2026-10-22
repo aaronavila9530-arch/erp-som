@@ -77,7 +77,7 @@ def draft(payload: TextDraft, user=Depends(access)):
 
 
 @router.post('/transcribe')
-async def transcribe(request: Request, user=Depends(access)):
+async def transcribe(request: Request, prepare: bool = False, user=Depends(access)):
     rate_limit(user)
     mime = request.headers.get('content-type', '').split(';')[0].lower()
     if mime not in MIMES:
@@ -95,7 +95,8 @@ async def transcribe(request: Request, user=Depends(access)):
             result = client.audio.transcriptions.create(
                 model=os.getenv('SERVICE_VOICE_TRANSCRIBE_MODEL', 'gpt-4o-mini-transcribe'),
                 file=('dictado.' + MIMES[mime], bytes(audio), mime))
-        return {'text': result.text[:6000]}
+        text = result.text[:6000]
+        return {'text': text, 'draft': extract(text)} if prepare and len(text.strip()) >= 3 else {'text': text}
     # No database lease or audio file is retained while the provider processes audio.
     return await run_in_threadpool(bounded_call, process)
 

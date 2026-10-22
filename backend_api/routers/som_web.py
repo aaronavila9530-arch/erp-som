@@ -1479,7 +1479,7 @@ def som_web_home() -> HTMLResponse:
   <link rel="stylesheet" href="/portia/assets/portia.css?v={asset_version}">
   <script src="/portia/assets/portia.js?v={asset_version}"></script>
   <link rel="stylesheet" href="/servicios/voice/assets/voice.css?v=1" />
-  <script src="/servicios/voice/assets/voice.js?v=2"></script>
+  <script src="/servicios/voice/assets/voice.js?v=3"></script>
   <script>
     const DEFAULT_COMPANIES = [
       { company_code:"MSL-CR", company_name:"MSL MARINE SURVEYORS AND LOGISTICS GROUP SRL" },
@@ -8735,7 +8735,11 @@ def som_web_home() -> HTMLResponse:
           } finally { clearTimeout(timeout); opts.signal?.removeEventListener('abort',cancel); }
         };
         disposeServiceVoice = ServiceVoice.mount($('svcVoiceHost'), {
-          audio:(blob,signal) => voiceRequest('transcribe',{method:'POST',body:blob,signal,headers:{'Content-Type':blob.type || 'application/octet-stream'}}),
+          audio:(blob,signal) => voiceRequest('transcribe?prepare=true',{method:'POST',body:blob,signal,headers:{'Content-Type':blob.type || 'application/octet-stream'}}),
+          clients:() => rowsList(serviceMeta.clientesCatalog).map(r=>({
+            value:catalogOptionText(r,["nombrejuridico","NombreJuridico","nombrecomercial","NombreComercial"]),
+            aliases:[r.nombrejuridico,r.NombreJuridico,r.nombrecomercial,r.NombreComercial].filter(Boolean)
+          })).filter(r=>r.value && [...$('svcForm_cliente').options].some(o=>o.value===r.value)),
           parse:(text,signal) => voiceRequest('draft',{method:'POST',body:JSON.stringify({text}),signal,headers:{'Content-Type':'application/json'}}),
           locations:(pais,puerto,signal) => voiceRequest(`locations?pais=${encodeURIComponent(pais)}&puerto=${encodeURIComponent(puerto)}`,{signal}),
           snapshot:() => JSON.stringify(servicePayload()),
