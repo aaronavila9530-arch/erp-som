@@ -37,7 +37,7 @@ MODULES_WEB = [
     {"code": "finanzas", "title": "Finanzas", "subtitle": "Facturación, Collections, ITP, bancos, Accounting, fiscal y tarjetas."},
     {"code": "hhrre", "title": "HHRR", "subtitle": "Horas, solicitudes, vacaciones, payroll, colillas, red médica y calculadora."},
     {"code": "comercial", "title": "Comercial", "subtitle": "Cotizaciones, precios, analítica y exportables."},
-    {"code": "informes", "title": "Informes", "subtitle": "Tally Control por proyecto y bodega."},
+    {"code": "informes", "title": "Informes", "subtitle": ""},
     {"code": "portia", "title": "PORTIA", "subtitle": "Asistente operativo, contable y documental."},
     {"code": "qa_som", "title": "Q&A SOM", "subtitle": "Base de conocimiento por módulo."},
     {"code": "admin_users", "title": "Admin", "subtitle": "Usuarios, permisos, roles y auditoría."},
@@ -1465,13 +1465,13 @@ def som_web_home() -> HTMLResponse:
   <link rel="stylesheet" href="/som/tally-assets/tally.css?v=1">
   <script src="/som/tally-assets/tabulator.min.js?v=1"></script>
   <script src="/som/tally-assets/papaparse.min.js?v=1"></script>
-  <script src="/som/tally-assets/tally.js?v=1"></script>
+  <script src="/som/tally-assets/tally.js?v=20261022-4"></script>
   <link rel="stylesheet" href="/informes/containers/assets/containers.css?v=20261019-1">
-  <script src="/informes/containers/assets/containers.js?v=20261019-2"></script>
+  <script src="/informes/containers/assets/containers.js?v=20261022-4"></script>
   <link rel="stylesheet" href="/informes/logra/assets/logra.css?v=20261019-1">
   <script src="/informes/logra/assets/logra.js?v=20261019-1"></script>
-  <link rel="stylesheet" href="/informes/certificates/assets/certificates.css?v=20261022-3">
-  <script src="/informes/certificates/assets/certificates.js?v=20261022-3"></script>
+  <link rel="stylesheet" href="/informes/certificates/assets/certificates.css?v=20261022-4">
+  <script src="/informes/certificates/assets/certificates.js?v=20261022-4"></script>
   <link rel="stylesheet" href="/comercial/web/assets/comercial.css?v={asset_version}">
   <script src="/comercial/web/assets/comercial.js?v={asset_version}"></script>
   <link rel="stylesheet" href="/som/admin-assets/admin.css?v={asset_version}">

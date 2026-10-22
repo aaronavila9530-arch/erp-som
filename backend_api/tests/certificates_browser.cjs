@@ -38,8 +38,8 @@ async function main(){
       await page.locator(`[data-kind=${kind}]`).click();
       await page.locator('[data-open]').click();
       await page.locator('#cert-form').waitFor();
-      assert.equal(await page.locator('#cert-format').isVisible(),false);
-      assert.equal(await page.locator('#cert-approve').isVisible(),false);
+      assert.equal(await page.locator('#cert-format').isVisible(),true);
+      assert.equal(await page.locator('#cert-approve').isVisible(),true);
       assert.equal(await page.evaluate(()=>SOMCertificates.canLeave()),true);
       assert.equal(await page.locator('#cert-save-state').textContent(),'');
       const fieldCount=types[kind].sections.flatMap(x=>x.fields).length;
@@ -62,11 +62,11 @@ async function main(){
       await page.locator('#cert-submit').click();
       await page.getByText('Guardado',{exact:true}).waitFor();
       assert.equal(writes.at(-1).body.submit,true);
-      await page.locator('[data-mode=review]').click();
+      await page.locator('#cert-back').click();
       assert.equal(await page.locator('#cert-new').count(),0);
       await page.locator('[data-open]').click();
-      assert(await page.locator(`[name=${key}]`).isDisabled());
-      assert.equal(await page.locator('#cert-submit').count(),0);
+      assert.equal(await page.locator(`[name=${key}]`).isDisabled(),false);
+      assert.equal(await page.locator('#cert-submit').count(),1);
       await page.locator('#cert-format').selectOption('pdf');
       await page.locator('#cert-approve').click();
       await page.getByText('Aprobado',{exact:true}).waitFor();
@@ -74,8 +74,9 @@ async function main(){
       await page.locator('#cert-reject').click();
       await page.getByText('Rechazado',{exact:true}).waitFor();
       await page.locator('#cert-back').click();
-      await page.locator('[data-mode=edit]').click();
-      await page.locator('#cert-new').click();
+      await page.locator('[data-mode=create]').click();
+      await page.locator('[data-service]').waitFor();
+      assert.equal(await page.locator('[data-open]').count(),0);
       await page.locator('[data-service]').click();
       assert.equal(await page.locator(`[name=${types[kind].number}]`).inputValue(),'QA-NEW');
       await page.locator('button[type=submit]').click();
@@ -111,7 +112,7 @@ async function main(){
     await page.locator('[data-accept]').click();
     assert.equal(await page.locator('[name=conclusion]').inputValue(),'Propuesta QA revisada');
     await page.locator('#cert-back').click();
-    await page.locator('#cert-new').click();
+    await page.locator('[data-mode=create]').click();
     await page.locator('[data-service]').click();
     assert.equal(await page.locator('[name=vessel_name]').inputValue(),'QA NEW VESSEL');
     assert.equal(await page.locator('[name=requested_by]').inputValue(),'QA CLIENT');

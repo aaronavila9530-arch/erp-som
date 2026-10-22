@@ -363,7 +363,7 @@
         const parts=f.elements.holds.value.split(/[,;\s]+/).filter(Boolean);if(!parts.length||parts.some(x=>!/^\d+$/.test(x)))throw Error('Indique numeros de bodega separados por comas.');
         const body={name:f.elements.name.value,holds:parts.map(Number),service_id:Number(f.elements.service.value)||null,revision:p?.revision||0};
         const result=edit?await api.sendJSON('PUT',`/tally/projects/${p.id}`,body):await api.postJSON('/tally/projects',body);
-        await refreshBootstrap();projectOptions();d.close();$('#tallyProject').value=result.id;await chooseProject(result.id);
+        await refreshBootstrap();projectOptions();d.close();$('#tallyProject').value=result.id;await chooseProject(result.id);await tallyMode('review');
       }catch(err){d.querySelector('[role=alert]').textContent=err.message;}finally{btn.disabled=false;}};
     }
     async function catalogDialog() {
@@ -388,6 +388,21 @@
     }
     function download(blob,name) {const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download=name;a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);}
     $('#tallyProject').onchange=wrap(e=>chooseProject(e.target.value));
+    const workflow=document.createElement('nav');workflow.className='cert-workflows';workflow.setAttribute('aria-label','Flujo de informes');
+    workflow.innerHTML='<button type="button" data-tally-mode="create">Crear</button><button type="button" data-tally-mode="review" aria-pressed="true">Revisar</button>';
+    const creation=document.createElement('section');creation.hidden=true;creation.append($('#tallyNew'));
+    $('.tally-workspace h2').after(workflow,creation);
+    async function tallyMode(mode) {
+      if(!await flush())return;
+      creation.hidden=mode!=='create';
+      for(const el of $('.tally-workspace').children) {
+        if(el===workflow||el===creation||el.tagName==='H2')continue;
+        el.hidden=mode==='create';
+      }
+      workflow.querySelectorAll('button').forEach(b=>b.setAttribute('aria-pressed',String(b.dataset.tallyMode===mode)));
+      if(mode==='review')grid?.redraw?.(true);
+    }
+    workflow.querySelectorAll('button').forEach(b=>b.onclick=wrap(()=>tallyMode(b.dataset.tallyMode)));
     $('#tallyNew').onclick=wrap(()=>projectDialog());$('#tallySettings').onclick=wrap(()=>projectDialog(true));$('#tallyCatalog').onclick=wrap(catalogDialog);
     $('#tallyAdd').onclick=wrap(async()=>{await grid.addData(Array.from({length:20},()=>enrich(blank())),false);grid.scrollToRow(grid.getRows().at(-1),'bottom',false);});
     $('#tallyDelete').onclick=wrap(()=>deleteRows([...new Set(grid.getRanges().flatMap(r=>r.getRows()))]));
@@ -416,7 +431,7 @@
     }
     $('#tallyHistory').onclick=wrap(async()=>{const rows=await api.getJSON(`/tally/projects/${current.id}/history`);dialog('Historial',`<table><thead><tr><th>Fecha</th><th>Usuario</th><th>Bodega</th><th>Version</th></tr></thead><tbody>${rows.map(r=>`<tr><td>${esc(new Date(r.created_at).toLocaleString())}</td><td>${esc(r.performed_by)}</td><td>${r.hold??'Proyecto'}</td><td>${r.revision??'-'}</td></tr>`).join('')}</tbody></table>`);});
     active={destroy(){settleEditor();destroyed=true;clearTimeout(timer);document.removeEventListener('visibilitychange',background);window.removeEventListener('beforeunload',unload);$('.tally-grid').removeEventListener('keydown',startTyping,true);if(grid)grid.destroy();},canLeave(){settleEditor();return !dirty()||confirm('Hay cambios pendientes. El borrador se conservara en esta pestana. Salir?');}};
-    try {await refreshBootstrap();if(destroyed)return;projectOptions();controls();if(boot.projects.length){$('#tallyProject').value=boot.projects[0].id;await chooseProject(boot.projects[0].id);}else{$('.tally-footer').textContent='Sin proyectos';}}
+    try {await refreshBootstrap();if(destroyed)return;workflow.hidden=!!boot.restricted;workflow.querySelector('[data-tally-mode="create"]').hidden=!boot.editable;projectOptions();controls();if(boot.projects.length){$('#tallyProject').value=boot.projects[0].id;await chooseProject(boot.projects[0].id);}else{$('.tally-footer').textContent='Sin proyectos';}}
     catch(err){fail(err);}
   }
   window.SOMTally={mount,canLeave:()=>!active||active.canLeave(),destroy:()=>{active?.destroy();active=null;},plateKey,payloadRows,pasteValue,metrics};

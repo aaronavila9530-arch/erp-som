@@ -17,7 +17,7 @@
   }
   async function mount(root, options) {
     destroy();
-    const s = current = {root, options, controller:new AbortController(), dirty:false, busy:false, mode:"edit", kind:options.kind || "weight", offset:0, q:"", status:"", record:null};
+    const s = current = {root, options, controller:new AbortController(), dirty:false, busy:false, mode:"review", kind:options.kind || "weight", offset:0, q:"", status:"", record:null};
     const $ = sel => root.querySelector(sel);
     const alive = () => current === s;
     s.unload = e => {if (s.dirty || s.busy) {e.preventDefault(); e.returnValue = "";}};
@@ -45,21 +45,22 @@
     function shell(body) {
       const spec = s.boot.types[s.kind];
       root.innerHTML = `<header class="cert-head"><h2>${options.kind === 'grain' ? 'Muestreos de Granos' : 'Certificados'}</h2><span class="cert-meta">${esc(s.boot.company)}</span></header>
-        <nav class="cert-workflows" aria-label="Flujo de informes"><button type="button" data-mode="edit" aria-pressed="${s.mode==='edit'}">Crear y editar</button><button type="button" data-mode="review" aria-pressed="${s.mode==='review'}">Revisar y exportar</button></nav>
+        <nav class="cert-workflows" aria-label="Flujo de informes">${s.boot.permissions.create?`<button type="button" data-mode="create" aria-pressed="${s.mode==='create'}">Crear</button>`:''}<button type="button" data-mode="review" aria-pressed="${s.mode==='review'}">Revisar</button></nav>
         <nav class="cert-types" role="tablist" aria-label="Certificados">${Object.entries(s.boot.types).map(([k,v]) => `<button role="tab" data-kind="${k}" aria-selected="${k===s.kind}">${esc(v.label)}</button>`).join("")}</nav>
         <div id="cert-error" role="alert"></div><h3>${esc(spec.title)}</h3>${body}`;
       if(options.kind==='grain') {$(".cert-types").hidden=true;root.querySelector('h3').hidden=true;}
       root.querySelectorAll('[data-mode]').forEach(b=>b.onclick=()=>{
         if(s.busy || s.mode===b.dataset.mode || !canLeave())return;
-        s.mode=b.dataset.mode;s.dirty=false;s.offset=0;s.status=s.mode==='review'?'Pending for review':'';
-        run(list);
+        s.mode=b.dataset.mode;s.dirty=false;s.offset=0;s.status='';
+        run(s.mode==='create'?pickService:list);
       });
       root.querySelectorAll("[data-kind]").forEach(b => b.onclick = () => {
         if (s.busy || !canLeave()) return;
-        s.kind=b.dataset.kind; s.offset=0; s.q=""; s.status=""; s.dirty=false; s.record=null; run(list);
+        s.kind=b.dataset.kind; s.offset=0; s.q=""; s.status=""; s.dirty=false; s.record=null; run(s.mode==='create'?pickService:list);
       });
     }
     async function list() {
+      s.mode='review';
       const data = await api(`/${s.kind}?q=${encodeURIComponent(s.q)}&status=${encodeURIComponent(s.status)}&offset=${s.offset}`);
       if (!alive()) return;
       s.record=null;
@@ -73,9 +74,10 @@
       if ($("#cert-new")) $("#cert-new").onclick=()=>run(()=>pickService());
       $("#cert-prev").onclick=()=>{s.offset=Math.max(0,s.offset-50);run(list);};
       $("#cert-next").onclick=()=>{s.offset+=50;run(list);};
-      root.querySelectorAll("[data-open]").forEach(b=>b.onclick=()=>run(async()=>{const d=await api(`/${s.kind}/${b.dataset.open}`); if(alive()) editor(d);}));
+      root.querySelectorAll("[data-open]").forEach(b=>{b.textContent='Revisar informe';b.onclick=()=>run(async()=>{const d=await api(`/${s.kind}/${b.dataset.open}`); if(alive()) editor(d);});});
     }
     async function pickService(q="",offset=0) {
+      s.mode='create';
       const data=await api(`/services?q=${encodeURIComponent(q)}&offset=${offset}`);
       if(!alive())return;
       shell(`<form id="cert-service-search" class="cert-tools"><input name="q" value="${esc(q)}" placeholder="Informe, buque o cliente" aria-label="Buscar servicio"><button>Buscar servicio</button><button type="button" id="cert-back">Volver</button></form>
@@ -103,7 +105,8 @@
       if(!alive())return;
       s.record=payload;
       const spec=s.boot.types[s.kind], row=payload.data;
-      const editable=s.mode==='edit' && (row.id ? s.boot.permissions.edit && row.status!=="Approved" : s.boot.permissions.create);
+      if(row.id)s.mode='review';
+      const editable=row.id ? s.boot.permissions.edit && row.status!=="Approved" : s.boot.permissions.create;
       shell(`<div class="cert-tools"><button id="cert-back">Volver</button><strong>${esc(row[spec.number])}</strong><span class="cert-status">${esc(statusText(row.status || "Draft"))}</span></div>
         <form id="cert-form"><div class="cert-editor"><nav class="cert-sections">${spec.sections.map((g,i)=>`<a href="#cert-section-${i}">${esc(g.title)}</a>`).join("")}</nav><div>${spec.sections.map((g,i)=>`<details class="cert-section" id="cert-section-${i}" ${s.kind!=="grain" || i<3 ? "open" : ""}><summary>${esc(g.title)}</summary><div class="cert-fields">${g.fields.map(f=>{
           const value=f.type==="date"?dateText(row[f.key]):row[f.key];
@@ -115,7 +118,7 @@
         </div><span id="cert-save-state" class="cert-meta" role="status"></span></footer></form>`);
       $("#cert-form").prepend($(".cert-actions"));
       const groups=root.querySelectorAll('.cert-action-group');
-      groups[0].hidden=s.mode!=='edit';
+      groups[0].hidden=!editable;
       groups[1].hidden=s.mode!=='review';
       groups[2].hidden=s.mode!=='review';
       root.querySelectorAll(".cert-sections a").forEach(a=>a.onclick=()=>{const section=$(a.getAttribute("href"));if(section)section.open=true;});

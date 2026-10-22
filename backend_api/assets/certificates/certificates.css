@@ -33,6 +33,10 @@
 .som-certificates .cert-section[open] summary {color:#007c82}
 .som-report-tabs {display:flex;gap:6px;flex-wrap:wrap;border-bottom:1px solid #d5dfe3;padding:12px 0;background:#fff}
 .som-report-tabs {align-items:center;padding:16px;gap:20px}
+.cert-workflows {display:flex;gap:4px;padding:16px 0}
+.cert-workflows button {min-height:40px;padding:8px 24px;border:1px solid #bdced4;background:white;color:#25444c}
+.cert-workflows [aria-pressed=true] {background:#e8f5f2;border-bottom:3px solid #007c82}
+.tally-workspace > [hidden],.som-containers [hidden] {display:none!important}
 .som-report-tabs select {width:auto;max-width:100%;min-height:40px;flex:0 1 340px}
 #reportAdministration {margin-left:auto}
 .som-certificates .cert-workflows {display:flex;gap:0;padding:20px 0 8px;flex-wrap:wrap}

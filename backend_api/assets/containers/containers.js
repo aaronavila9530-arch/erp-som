@@ -14,7 +14,7 @@
     const $ = selector => root.querySelector(selector);
     root.classList.add('som-containers');
     root.innerHTML = `<header class="cw-header"><div class="cw-title">${icon('file-pen-line')}<div><h2>Containers</h2><span>${esc(api.company)}</span></div></div><button type="button" data-action="new">Nuevo informe</button></header>
-      <p class="cw-message" role="status" hidden></p><div class="cw-body"></div>`;
+      <nav class="cert-workflows" aria-label="Flujo de informes"><button type="button" data-workflow="create">Crear</button><button type="button" data-workflow="review" aria-pressed="true">Revisar</button></nav><p class="cw-message" role="status" hidden></p><div class="cw-body"></div>`;
     const message = (text = '', error = false) => {
       if (disposed) return;
       const node = $('.cw-message'); node.hidden = !text; node.textContent = text; node.classList.toggle('cw-error', error);
@@ -147,6 +147,7 @@
       await working(async () => { const result = await request(`/${report.id}/status`,'POST',{version:revision,status:value}); if(!disposed) editor(result); });
     }
     async function showList() {
+      root.querySelectorAll('[data-workflow]').forEach(b=>b.setAttribute('aria-pressed',String(b.dataset.workflow==='review')));
       report = null; message();
       $('.cw-body').innerHTML = `<form class="cw-filters"><label>Buscar<input name="q" placeholder="Informe, contenedor, cliente, buque o usuario"></label><label>Estado<select name="status"><option value="">Todos</option><option value="draft">Borrador</option><option>Pending for review</option><option>Approved</option><option>Rejected</option></select></label><button>Buscar</button></form>
         <div class="cw-table-wrap"><table class="cw-table" data-no-excel-filter="true"><thead><tr><th>Informe</th><th>Contenedor</th><th>Cliente</th><th>Buque</th><th>Usuario</th><th>Estado</th><th>Fecha</th><th></th></tr></thead><tbody></tbody></table></div><footer class="cw-pagination"><span></span><button type="button" data-prev>Anterior</button><button type="button" data-next>Siguiente</button></footer>`;
@@ -159,7 +160,7 @@
         $('.cw-table tbody').innerHTML = result.data.map(r => `<tr><td><strong>${esc(r.linked_report_number || '-')}</strong></td><td>${esc(r.report_no)}</td><td>${esc(r.customer)}</td><td>${esc(r.vessel)}</td><td>${esc(r.user)}</td><td><span class="cw-state">${esc(r.status)}</span></td><td>${esc(String(r.created_at || '').slice(0,10).split('-').reverse().join('/'))}</td><td><button type="button" data-open="${Number(r.id)}">Abrir</button></td></tr>`).join('') || '<tr><td colspan="8">Sin informes para estos filtros</td></tr>';
         $('.cw-pagination span').textContent = `${total} informes | Pagina ${Math.floor(offset/50)+1}`;
         $('[data-prev]').disabled = offset === 0; $('[data-next]').disabled = offset + 50 >= total;
-        root.querySelectorAll('[data-open]').forEach(button => button.onclick = run(() => working(async () => { const result = await request('/'+button.dataset.open); if(!disposed) editor(result); })));
+        root.querySelectorAll('[data-open]').forEach(button => {button.textContent='Revisar informe';button.onclick = run(() => working(async () => { const result = await request('/'+button.dataset.open); if(!disposed) editor(result); }));});
       };
       $('.cw-filters').onsubmit = run(async event => { event.preventDefault(); offset = 0; await load(); });
       $('[data-prev]').onclick = run(async () => { offset = Math.max(0,offset-50); await load(); });
@@ -194,8 +195,18 @@
     }
     try {
       boot = await request('/bootstrap'); if (disposed) return;
-      $('[data-action="new"]').hidden = !boot.permissions.create;
+      $('[data-action="new"]').hidden = true;
       $('[data-action="new"]').onclick = run(newReport);
+      $('[data-workflow="create"]').hidden=!boot.permissions.create;
+      $('[data-workflow="create"]').onclick=run(async()=>{
+        if(!canLeave())return;
+        root.querySelectorAll('[data-workflow]').forEach(b=>b.setAttribute('aria-pressed',String(b.dataset.workflow==='create')));
+        $('.cw-body').innerHTML='<button type="button" data-start-create>Seleccionar servicio para crear informe</button>';
+        dirty=false;
+        $('[data-start-create]').onclick=run(newReport);
+        await newReport();
+      });
+      $('[data-workflow="review"]').onclick=run(async()=>{if(canLeave()){dirty=false;await showList();}});
       await showList();
     } catch(error) { fail(error); }
   }

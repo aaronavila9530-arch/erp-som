@@ -33,11 +33,17 @@ async function run() {
     });
     async function mount(){await page.goto('http://containers.test/');await page.evaluate(()=>SOMContainers.mount(document.getElementById('content'),{company:'MCI-CR',headers:()=>({'Content-Type':'application/json','X-User':'qa','X-Role':'admin'})}));}
     await mount(); await page.locator('[data-open]').waitFor();
-    fs.mkdirSync(path.join(root,'tmp/containers-qa'),{recursive:true});
+    const qaDir=fs.mkdtempSync(path.join(require('os').tmpdir(),'som-containers-'));
+    await page.locator('[data-workflow=create]').click();
+    await page.locator('.cw-service-dialog').waitFor();
+    assert.equal(await page.locator('[data-open]').count(),0);
+    await page.locator('[data-close]').click();
+    await page.locator('[data-workflow=review]').click();
+    await page.locator('[data-open]').waitFor();
     for(const width of [1440,800,390]){
       await page.setViewportSize({width,height:1000});
       assert(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),`list overflow ${width}`);
-      await page.screenshot({path:path.join(root,`tmp/containers-qa/list-${width}.png`),fullPage:true});
+      await page.screenshot({path:path.join(qaDir,`list-${width}.png`),fullPage:true});
     }
     await page.locator('[data-open]').click(); await page.locator('[data-field=report_no]').waitFor();
     assert.equal(await page.locator('[data-field=report_no]').inputValue(),'MSLU1234567');
@@ -45,7 +51,7 @@ async function run() {
     for(const width of [1440,800,390]){
       await page.setViewportSize({width,height:1000});
       assert(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),`editor overflow ${width}`);
-      await page.screenshot({path:path.join(root,`tmp/containers-qa/editor-${width}.png`),fullPage:true});
+      await page.screenshot({path:path.join(qaDir,`editor-${width}.png`),fullPage:true});
     }
     await page.setViewportSize({width:1440,height:1000});
     await page.locator('[data-section="1"]').click();
@@ -84,14 +90,15 @@ async function run() {
       SOMContainers.destroy();
       window.$=id=>document.getElementById(id); window.headers=()=>({'Content-Type':'application/json'});
       window.selectedCompany=()=> 'MCI-CR'; window.session={usuario:'qa',rol:'admin'};
+      window.canView=()=>false;
       window.SOMTally={destroy(){},canLeave(){return true;},mount(root){root.innerHTML='<p>Tally fixture</p>';}};
       window.SOMLogra={destroy(){},canLeave(){return true;},mount(){}};
       window.SOMCertificates={destroy(){},canLeave(){return true;},mount(){}};
     });
     await page.addScriptTag({content:integration+'\nrenderInformesTally();'});
     await page.getByText('Tally fixture',{exact:true}).waitFor();
-    await page.locator('[data-report-view=containers]').click(); await page.locator('[data-open]').waitFor();
-    await page.locator('[data-report-view=tally]').click(); await page.getByText('Tally fixture',{exact:true}).waitFor();
+    await page.locator('#reportCategory').selectOption('containers'); await page.locator('[data-open]').waitFor();
+    await page.locator('#reportCategory').selectOption('tally'); await page.getByText('Tally fixture',{exact:true}).waitFor();
     assert.deepEqual(errors,[]);
     console.log('PASS: desktop/tablet/mobile, edit across sections, AI preview, conflict preservation, partial PATCH, approval/read-only roles; no production writes.');
   } finally { await browser.close(); }
