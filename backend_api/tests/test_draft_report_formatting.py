@@ -105,6 +105,7 @@ class DraftFormattingTests(unittest.TestCase):
                 with self.assertRaises(StopConversion):generate_draft_survey_word_pdf(payload)
             doc=Document(Path(directory)/'QA-DATE.docx')
             text='\n'.join(p.text for p in doc.paragraphs)
+            text += '\n' + '\n'.join(c.text for t in doc.tables for row in t.rows for c in row.cells)
             self.assertIn('Caldera - Costa Rica, October 19, 2026',text)
             self.assertNotIn('January 14, 2026',text)
             self.assertIn('Oct 13 2026 20:00',text)

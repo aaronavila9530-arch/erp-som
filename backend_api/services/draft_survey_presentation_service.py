@@ -190,7 +190,9 @@ def _replace_in_tables(tables, placeholders: Dict[str, str]):
 # =====================================================
 # MAIN — GENERATE PRESENTATION PDF
 # =====================================================
-def generate_draft_survey_presentation_pdf(data: dict) -> str:
+def generate_draft_survey_presentation_pdf(data: dict, *, output_format="pdf") -> str:
+    if output_format not in {"pdf", "docx"}:
+        raise ValueError("Unsupported Draft output format")
 
     if not os.path.exists(TEMPLATE_PATH):
         raise FileNotFoundError(
@@ -244,7 +246,14 @@ def generate_draft_survey_presentation_pdf(data: dict) -> str:
     apply_mci_docx_branding(doc, data)
     apply_docx_autofit(doc)
     normalize_draft_layout(doc, presentation=True)
+    try:
+        from services.draft_survey_layout import build_presentation
+    except ModuleNotFoundError:
+        from backend_api.services.draft_survey_layout import build_presentation
+    doc = build_presentation(data, report_place_line(data))
     doc.save(temp_docx)
+    if output_format == "docx":
+        return temp_docx
 
     output_dir = tempfile.mkdtemp()
 

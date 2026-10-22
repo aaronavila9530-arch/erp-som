@@ -21,7 +21,9 @@ except ModuleNotFoundError:
 # GENERATE DRAFT SURVEY WORD PDF (ERP VERSION - BLINDADO)
 # ============================================================
 
-def generate_draft_survey_word_pdf(data: dict) -> str:
+def generate_draft_survey_word_pdf(data: dict, *, output_format="pdf") -> str:
+    if output_format not in {"pdf", "docx"}:
+        raise ValueError("Unsupported Draft output format")
     data = refresh_draft_difference(data)
 
     def _format_report_date(value):
@@ -341,7 +343,14 @@ def generate_draft_survey_word_pdf(data: dict) -> str:
     apply_mci_docx_branding(doc, data)
     apply_docx_autofit(doc)
     normalize_draft_layout(doc)
+    try:
+        from services.draft_survey_layout import harden_written_report
+    except ModuleNotFoundError:
+        from backend_api.services.draft_survey_layout import harden_written_report
+    harden_written_report(doc, data)
     doc.save(temp_docx)
+    if output_format == "docx":
+        return temp_docx
 
     # ========================================================
     # LIBREOFFICE CONVERSION
