@@ -1470,8 +1470,8 @@ def som_web_home() -> HTMLResponse:
   <script src="/informes/containers/assets/containers.js?v=20261019-2"></script>
   <link rel="stylesheet" href="/informes/logra/assets/logra.css?v=20261019-1">
   <script src="/informes/logra/assets/logra.js?v=20261019-1"></script>
-  <link rel="stylesheet" href="/informes/certificates/assets/certificates.css?v=20261022-2">
-  <script src="/informes/certificates/assets/certificates.js?v=20261022-2"></script>
+  <link rel="stylesheet" href="/informes/certificates/assets/certificates.css?v=20261022-3">
+  <script src="/informes/certificates/assets/certificates.js?v=20261022-3"></script>
   <link rel="stylesheet" href="/comercial/web/assets/comercial.css?v={asset_version}">
   <script src="/comercial/web/assets/comercial.js?v={asset_version}"></script>
   <link rel="stylesheet" href="/som/admin-assets/admin.css?v={asset_version}">
@@ -2440,22 +2440,19 @@ def som_web_home() -> HTMLResponse:
       SOMContainers.destroy();
       SOMLogra.destroy();
       SOMCertificates.destroy();
-      $("content").innerHTML = '<nav class="som-report-tabs" aria-label="Tipos de informe"><button type="button" data-report-view="tally">Tally</button><button type="button" data-report-view="containers">Containers</button><button type="button" data-report-view="logra">LOGRA</button><button type="button" data-report-view="certificates">Certificados</button><button type="button" data-report-view="grain">Buques · Muestreos de Granos</button></nav><div id="somReportWorkspace"></div>';
-      document.querySelectorAll('[data-report-view]').forEach(button => {
-        button.setAttribute('aria-selected', String(button.dataset.reportView === informesView));
-        button.onclick = () => {
-          if (button.dataset.reportView === informesView || !SOMTally.canLeave() || !SOMContainers.canLeave() || !SOMLogra.canLeave() || !SOMCertificates.canLeave()) return;
-          informesView = button.dataset.reportView;
-          renderInformesTally();
-        };
-      });
+      $("content").innerHTML = '<header class="som-report-tabs"><strong>Informes</strong><select id="reportCategory" aria-label="Tipo de informe"><optgroup label="Operaciones"><option value="tally">Tally</option><option value="containers">Containers</option><option value="logra">LOGRA</option></optgroup><optgroup label="Documentos"><option value="certificates">Certificados</option><option value="grain">Buques / Muestreos de Granos</option></optgroup></select><div id="reportAdministration"></div></header><div id="somReportWorkspace"></div>';
+      $("reportCategory").value=informesView;
+      $("reportCategory").onchange=e=>{
+        if(!SOMTally.canLeave() || !SOMContainers.canLeave() || !SOMLogra.canLeave() || !SOMCertificates.canLeave()){e.target.value=informesView;return;}
+        informesView=e.target.value;renderInformesTally();
+      };
       const fixedHeaders = headers();
       if (["admin","master"].includes(session.rol) && canView("admin_users")) {
         const permissions = document.createElement("button");
         permissions.type="button"; permissions.textContent="Administrar permisos";
         permissions.className="report-permissions";
         permissions.onclick=()=>selectModule("admin_users");
-        document.querySelector(".som-report-tabs").appendChild(permissions);
+        $("reportAdministration").appendChild(permissions);
       }
       if (["certificates","grain"].includes(informesView)) {
         SOMCertificates.mount($("somReportWorkspace"), {company:selectedCompany(),kind:informesView==="grain"?"grain":undefined,headers:()=>({...fixedHeaders})});

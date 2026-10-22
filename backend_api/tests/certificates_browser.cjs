@@ -33,12 +33,13 @@ async function main(){
       await page.locator('[data-open]').waitFor();
     }
     await mount();
-    fs.mkdirSync(path.join(root,'tmp/certificates-qa'),{recursive:true});
+    const qaDir=fs.mkdtempSync(path.join(require('os').tmpdir(),'som-reports-'));
     for(const kind of Object.keys(types)){
       await page.locator(`[data-kind=${kind}]`).click();
       await page.locator('[data-open]').click();
       await page.locator('#cert-form').waitFor();
-      await page.locator('#cert-format').selectOption('pdf');
+      assert.equal(await page.locator('#cert-format').isVisible(),false);
+      assert.equal(await page.locator('#cert-approve').isVisible(),false);
       assert.equal(await page.evaluate(()=>SOMCertificates.canLeave()),true);
       assert.equal(await page.locator('#cert-save-state').textContent(),'');
       const fieldCount=types[kind].sections.flatMap(x=>x.fields).length;
@@ -47,7 +48,7 @@ async function main(){
       for(const width of [1440,800,390]){
         await page.setViewportSize({width,height:1000});
         assert(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),`${kind} overflow ${width}`);
-        await page.screenshot({path:path.join(root,`tmp/certificates-qa/${kind}-${width}.png`),fullPage:true});
+        await page.screenshot({path:path.join(qaDir,`${kind}-${width}.png`),fullPage:true});
       }
       await page.setViewportSize({width:1440,height:1000});
       const key=kind==='lashing'?'ratchet_quantity':kind==='sampling'?'hold_10_seal':'remarks';
@@ -61,12 +62,19 @@ async function main(){
       await page.locator('#cert-submit').click();
       await page.getByText('Guardado',{exact:true}).waitFor();
       assert.equal(writes.at(-1).body.submit,true);
+      await page.locator('[data-mode=review]').click();
+      assert.equal(await page.locator('#cert-new').count(),0);
+      await page.locator('[data-open]').click();
+      assert(await page.locator(`[name=${key}]`).isDisabled());
+      assert.equal(await page.locator('#cert-submit').count(),0);
+      await page.locator('#cert-format').selectOption('pdf');
       await page.locator('#cert-approve').click();
       await page.getByText('Aprobado',{exact:true}).waitFor();
       assert(await page.locator(`[name=${key}]`).isDisabled());
       await page.locator('#cert-reject').click();
       await page.getByText('Rechazado',{exact:true}).waitFor();
       await page.locator('#cert-back').click();
+      await page.locator('[data-mode=edit]').click();
       await page.locator('#cert-new').click();
       await page.locator('[data-service]').click();
       assert.equal(await page.locator(`[name=${types[kind].number}]`).inputValue(),'QA-NEW');
@@ -87,7 +95,7 @@ async function main(){
     for(const width of [1440,800,390]) {
       await page.setViewportSize({width,height:1000});
       assert(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),`grain overflow ${width}`);
-      await page.screenshot({path:path.join(root,`tmp/certificates-qa/grain-${width}.png`),fullPage:true});
+      await page.screenshot({path:path.join(qaDir,`grain-${width}.png`),fullPage:true});
     }
     await page.locator('.cert-sections a').filter({hasText:'Puntos de muestreo'}).click();
     await page.locator('[name=sample10_centro]').fill('002');
@@ -124,11 +132,12 @@ async function main(){
     });
     await page.addScriptTag({content:integration+'\nrenderInformesTally();'});
     await page.getByText('Tally fixture',{exact:true}).waitFor();
-    await page.locator('[data-report-view=certificates]').click();
+    await page.locator('#reportCategory').selectOption('certificates');
     await page.locator('[data-open]').waitFor();
-    await page.locator('[data-report-view=tally]').click();
+    await page.locator('#reportCategory').selectOption('tally');
     await page.getByText('Tally fixture',{exact:true}).waitFor();
     assert.deepEqual(errors,[]);
+    console.log('Screenshots:',qaDir);
     console.log('PASS: 5 certificates + grain (112 fields), 3 viewports, conflicts, partial PATCH, approval/rejection, creation/service link, AI explicit acceptance, read-only permissions.');
   }finally{await browser.close();}
 }
