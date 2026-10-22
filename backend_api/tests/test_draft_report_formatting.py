@@ -8,10 +8,52 @@ from docx.oxml.ns import qn
 
 from backend_api.services.draft_survey_report_formatting import (
     report_date, report_place_line, replace_placeholders, refresh_draft_difference,
+    normalize_draft_layout,
 )
 
 
 class DraftFormattingTests(unittest.TestCase):
+    def test_long_vessel_footer_has_separate_label_and_live_page_fields(self):
+        root = Path(__file__).resolve().parents[1]
+        doc = Document(root / 'templates/draft_word_template.docx')
+        for p in doc.sections[0].footer.paragraphs:
+            replace_placeholders(p, {
+                '{draft_report_number}': '2238-0410-2026',
+                '{word_vessel}': 'MV SANTA CAROLINA V2',
+            })
+        normalize_draft_layout(doc)
+        p = next(p for p in doc.sections[0].footer.paragraphs if 'Page' in p.text)
+        self.assertIn('2238-0410-2026 MV SANTA CAROLINA V2 DRAFT SURVEY\nPage', p.text)
+        self.assertNotIn('MV MV', p.text)
+        self.assertNotIn('   ', p.text)
+        self.assertEqual(p.paragraph_format.right_indent, 0)
+        self.assertEqual([n.get(qn('w:instr')) for n in p._p.iter(qn('w:fldSimple'))],
+                         ['PAGE', 'NUMPAGES'])
+        self.assertIn('\u00a0of\u00a0', p.text)
+        website = next(p for p in doc.sections[0].footer.paragraphs
+                       if 'www.mslogisticsgroup.com' in p.text)
+        self.assertFalse(website._p.xpath('.//w:drawing | .//w:pict'))
+
+    def test_cover_website_is_flow_text_and_background_fits_page(self):
+        root = Path(__file__).resolve().parents[1]
+        doc = Document(root / 'templates/presentation_draft_survey.docx')
+        normalize_draft_layout(doc, presentation=True)
+        website = next(p for p in doc.paragraphs if 'www.mslogisticsgroup.com' in p.text)
+        self.assertFalse(website._p.xpath('.//w:drawing | .//w:pict'))
+        self.assertEqual(website.paragraph_format.line_spacing, 1.0)
+        section = doc.sections[0]
+        anchor = section.header._element.xpath('.//wp:anchor')[0]
+        extent = anchor.find(qn('wp:extent'))
+        for axis, size, limit in [('H', 'cx', section.page_width),
+                                  ('V', 'cy', section.page_height)]:
+            pos = anchor.find(qn('wp:position' + axis))
+            self.assertEqual(pos.get('relativeFrom'), 'page')
+            offset = int(pos.find(qn('wp:posOffset')).text)
+            self.assertGreaterEqual(offset, 0)
+            self.assertLessEqual(offset + int(extent.get(size)), limit)
+        normalize_draft_layout(doc, presentation=True)
+        self.assertEqual(sum(p.text.count('www.mslogisticsgroup.com') for p in doc.paragraphs), 1)
+
     def test_old_saved_sign_is_recomputed_without_mutating_input(self):
         data={'word_draft_figures':'51444,60','word_bl_figures':'51442',
               'word_difference':'-2.60','word_percentage':'-0.0051'}

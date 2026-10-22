@@ -10,11 +10,11 @@ from docx.shared import Inches, Pt
 try:
     from services.template_autofit import apply_docx_autofit
     from services.document_branding import apply_mci_docx_branding
-    from services.draft_survey_report_formatting import report_place_line, replace_placeholders, refresh_draft_difference
+    from services.draft_survey_report_formatting import report_place_line, replace_placeholders, refresh_draft_difference, normalize_draft_layout
 except ModuleNotFoundError:
     from backend_api.services.template_autofit import apply_docx_autofit
     from backend_api.services.document_branding import apply_mci_docx_branding
-    from backend_api.services.draft_survey_report_formatting import report_place_line, replace_placeholders, refresh_draft_difference
+    from backend_api.services.draft_survey_report_formatting import report_place_line, replace_placeholders, refresh_draft_difference, normalize_draft_layout
 
 
 # ============================================================
@@ -340,6 +340,7 @@ def generate_draft_survey_word_pdf(data: dict) -> str:
 
     apply_mci_docx_branding(doc, data)
     apply_docx_autofit(doc)
+    normalize_draft_layout(doc)
     doc.save(temp_docx)
 
     # ========================================================

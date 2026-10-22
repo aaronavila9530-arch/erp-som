@@ -8,11 +8,11 @@ from docx import Document
 try:
     from services.template_autofit import apply_docx_autofit
     from services.document_branding import apply_mci_docx_branding
-    from services.draft_survey_report_formatting import report_place_line
+    from services.draft_survey_report_formatting import report_place_line, normalize_draft_layout
 except ModuleNotFoundError:
     from backend_api.services.template_autofit import apply_docx_autofit
     from backend_api.services.document_branding import apply_mci_docx_branding
-    from backend_api.services.draft_survey_report_formatting import report_place_line
+    from backend_api.services.draft_survey_report_formatting import report_place_line, normalize_draft_layout
 
 
 # =====================================================
@@ -243,6 +243,7 @@ def generate_draft_survey_presentation_pdf(data: dict) -> str:
     os.close(fd)
     apply_mci_docx_branding(doc, data)
     apply_docx_autofit(doc)
+    normalize_draft_layout(doc, presentation=True)
     doc.save(temp_docx)
 
     output_dir = tempfile.mkdtemp()

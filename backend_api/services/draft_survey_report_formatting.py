@@ -2,6 +2,100 @@
 import re
 from datetime import date, datetime
 from decimal import Decimal, InvalidOperation
+from docx.enum.text import WD_ALIGN_PARAGRAPH
+from docx.oxml import OxmlElement
+from docx.oxml.ns import qn
+from docx.shared import Pt, RGBColor
+
+
+def normalize_draft_layout(doc, presentation=False):
+    """Fix only Draft templates' floating website and space-aligned footer."""
+    roots = [doc._element]
+    seen = set()
+    for section in doc.sections:
+        for part in (section.header, section.footer):
+            if id(part._element) not in seen:
+                roots.append(part._element)
+                seen.add(id(part._element))
+    # The website's fixed-height textbox clips in LibreOffice. Use normal flow,
+    # replacing the entire AlternateContent so its VML fallback cannot reappear.
+    from docx.text.paragraph import Paragraph
+    for root in roots:
+        for node in list(root.xpath('.//w:p')):
+            boxes = node.xpath('./w:r/*[local-name()="AlternateContent"]')
+            for box in boxes:
+                texts = [t.text or '' for t in box.iter(qn('w:t'))]
+                website = next((t.strip() for t in texts
+                                if t.strip().startswith('www.mslogisticsgroup.')), None)
+                if not website:
+                    continue
+                box.getparent().remove(box)
+                p = Paragraph(node, doc)
+                p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                p.paragraph_format.line_spacing = 1.0
+                p.paragraph_format.left_indent = Pt(0)
+                p.paragraph_format.right_indent = Pt(0)
+                p.paragraph_format.first_line_indent = Pt(0)
+                run = p.add_run(website)
+                run.font.size = Pt(12 if presentation else 10)
+                run.font.bold = True
+                run.font.color.rgb = RGBColor(0, 0, 255)
+
+    for section in doc.sections:
+        for p in list(section.footer.paragraphs):
+            if not p._p.xpath('.//w:instrText') or 'Page ' not in p.text:
+                continue
+            label = p.text.split('Page ', 1)[0].strip()
+            label = re.sub(r'\s+', ' ', label)
+            label = re.sub(r'\bMV\s+MV\b', 'MV', label, flags=re.I)
+            p.clear()
+            pf = p.paragraph_format
+            pf.tab_stops.clear_all()
+            pf.left_indent = pf.right_indent = pf.first_line_indent = Pt(0)
+            pf.space_before = pf.space_after = Pt(0)
+            pf.line_spacing = 1.0
+            p.alignment = WD_ALIGN_PARAGRAPH.RIGHT
+            p.add_run(label).font.size = Pt(7)
+            p.add_run().add_break()
+            p.add_run('Page\u00a0').font.size = Pt(8)
+            for field, suffix in (('PAGE', '\u00a0of\u00a0'), ('NUMPAGES', '')):
+                node = OxmlElement('w:fldSimple')
+                node.set(qn('w:instr'), field)
+                run = OxmlElement('w:r')
+                text = OxmlElement('w:t')
+                text.text = '1'
+                run.append(text)
+                node.append(run)
+                p._p.append(node)
+                if suffix:
+                    p.add_run(suffix).font.size = Pt(8)
+
+        if presentation:
+            # The template background exceeded the page height and was anchored
+            # relative to a paragraph. Fit it proportionally to the actual page.
+            for anchor in section.header._element.xpath('.//wp:anchor'):
+                if not list(anchor.iter(qn('pic:pic'))):
+                    continue
+                extent = anchor.find(qn('wp:extent'))
+                width, height = int(extent.get('cx')), int(extent.get('cy'))
+                if width < section.page_width * .8:
+                    continue
+                scale = min(section.page_width / width, section.page_height / height)
+                width, height = int(width * scale), int(height * scale)
+                for target in [extent] + list(anchor.iter(qn('a:ext'))):
+                    if target is not extent and target.get('cx') is None:
+                        continue
+                    target.set('cx', str(width))
+                    target.set('cy', str(height))
+                for axis, offset in (('H', (section.page_width - width) // 2),
+                                     ('V', (section.page_height - height) // 2)):
+                    pos = anchor.find(qn('wp:position' + axis))
+                    pos.set('relativeFrom', 'page')
+                    for child in list(pos):
+                        pos.remove(child)
+                    child = OxmlElement('wp:posOffset')
+                    child.text = str(offset)
+                    pos.append(child)
 
 
 def refresh_draft_difference(data):
