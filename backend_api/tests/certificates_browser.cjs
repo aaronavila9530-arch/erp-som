@@ -133,6 +133,11 @@ async function main(){
     });
     await page.addScriptTag({content:integration+'\nrenderInformesTally();'});
     await page.getByText('Tally fixture',{exact:true}).waitFor();
+    assert.deepEqual(await page.locator('#reportCategory option').allTextContents(),['Tally','LOGRA','Containers','Certificados','Buques']);
+    await page.locator('#reportCategory').selectOption('vessels');
+    await page.locator('[data-open]').waitFor();
+    assert.equal(await page.locator('#vesselReportType').inputValue(),'grain');
+    assert.equal(await page.locator('[data-kind=weight]').count(),0);
     await page.locator('#reportCategory').selectOption('certificates');
     await page.locator('[data-open]').waitFor();
     await page.locator('#reportCategory').selectOption('tally');

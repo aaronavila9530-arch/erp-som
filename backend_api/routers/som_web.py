@@ -2440,7 +2440,7 @@ def som_web_home() -> HTMLResponse:
       SOMContainers.destroy();
       SOMLogra.destroy();
       SOMCertificates.destroy();
-      $("content").innerHTML = '<header class="som-report-tabs"><strong>Informes</strong><select id="reportCategory" aria-label="Tipo de informe"><optgroup label="Operaciones"><option value="tally">Tally</option><option value="containers">Containers</option><option value="logra">LOGRA</option></optgroup><optgroup label="Documentos"><option value="certificates">Certificados</option><option value="grain">Buques / Muestreos de Granos</option></optgroup></select><div id="reportAdministration"></div></header><div id="somReportWorkspace"></div>';
+      $("content").innerHTML = '<header class="som-report-tabs"><strong>Informes</strong><select id="reportCategory" aria-label="Seccion de informes"><option value="tally">Tally</option><option value="logra">LOGRA</option><option value="containers">Containers</option><option value="certificates">Certificados</option><option value="vessels">Buques</option></select><div id="reportAdministration"></div></header><div id="reportSubtypes"></div><div id="somReportWorkspace"></div>';
       $("reportCategory").value=informesView;
       $("reportCategory").onchange=e=>{
         if(!SOMTally.canLeave() || !SOMContainers.canLeave() || !SOMLogra.canLeave() || !SOMCertificates.canLeave()){e.target.value=informesView;return;}
@@ -2454,8 +2454,11 @@ def som_web_home() -> HTMLResponse:
         permissions.onclick=()=>selectModule("admin_users");
         $("reportAdministration").appendChild(permissions);
       }
-      if (["certificates","grain"].includes(informesView)) {
-        SOMCertificates.mount($("somReportWorkspace"), {company:selectedCompany(),kind:informesView==="grain"?"grain":undefined,headers:()=>({...fixedHeaders})});
+      if (informesView === "vessels") {
+        $("reportSubtypes").innerHTML='<nav class="som-report-tabs" aria-label="Informes de buques"><label for="vesselReportType">Tipo de informe</label><select id="vesselReportType"><option value="grain">Grain Sampling / Muestreos de Granos</option><option disabled>Draft Survey (no disponible en web)</option><option disabled>Bunker Survey (no disponible en web)</option></select></nav>';
+      }
+      if (["certificates","vessels"].includes(informesView)) {
+        SOMCertificates.mount($("somReportWorkspace"), {company:selectedCompany(),kind:informesView==="vessels"?"grain":undefined,headers:()=>({...fixedHeaders})});
         return;
       }
       if (informesView === "logra") {
