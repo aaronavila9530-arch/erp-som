@@ -17,7 +17,7 @@
   }
   async function mount(root, options) {
     destroy();
-    const s = current = {root, options, controller:new AbortController(), dirty:false, busy:false, kind:"weight", offset:0, q:"", status:"", record:null};
+    const s = current = {root, options, controller:new AbortController(), dirty:false, busy:false, kind:options.kind || "weight", offset:0, q:"", status:"", record:null};
     const $ = sel => root.querySelector(sel);
     const alive = () => current === s;
     s.unload = e => {if (s.dirty || s.busy) {e.preventDefault(); e.returnValue = "";}};
@@ -44,7 +44,7 @@
     }
     function shell(body) {
       const spec = s.boot.types[s.kind];
-      root.innerHTML = `<header class="cert-head"><h2>Certificados</h2><span class="cert-meta">${esc(s.boot.company)}</span></header>
+      root.innerHTML = `<header class="cert-head"><h2>${options.kind === 'grain' ? 'Buques / Muestreos de Granos' : 'Certificados'}</h2><span class="cert-meta">${esc(s.boot.company)}</span></header>
         <nav class="cert-types" role="tablist" aria-label="Certificados">${Object.entries(s.boot.types).map(([k,v]) => `<button role="tab" data-kind="${k}" aria-selected="${k===s.kind}">${esc(v.label)}</button>`).join("")}</nav>
         <div id="cert-error" role="alert"></div><h3>${esc(spec.title)}</h3>${body}`;
       root.querySelectorAll("[data-kind]").forEach(b => b.onclick = () => {
@@ -58,7 +58,7 @@
       s.record=null;
       shell(`<form class="cert-tools" id="cert-search"><input name="q" aria-label="Buscar certificado" placeholder="Informe, buque o cliente" value="${esc(s.q)}">
         <select name="status" aria-label="Estado"><option value="">Todos los estados</option>${["Draft","Pending for review","Approved","Rejected"].map(x=>`<option value="${x}" ${s.status===x?"selected":""}>${statusText(x)}</option>`).join("")}</select><button>Buscar</button>
-        ${s.boot.permissions.create?'<button type="button" class="cert-primary" id="cert-new">Nuevo certificado</button>':""}</form>
+        ${s.boot.permissions.create?'<button type="button" class="cert-primary" id="cert-new">Nuevo informe</button>':""}</form>
         <div class="cert-scroll"><table><thead><tr><th>Informe</th><th>Buque / contenedor</th><th>Cliente</th><th>Fecha</th><th>Estado</th><th></th></tr></thead><tbody>
         ${data.data.map(r=>`<tr><td>${esc(r.report_number)}</td><td>${esc(r.vessel)}</td><td>${esc(r.customer)}</td><td>${esc(dateText(r.date))}</td><td>${esc(statusText(r.status))}</td><td><button data-open="${r.id}">Abrir</button></td></tr>`).join("") || '<tr><td colspan="6">No hay certificados para esta consulta.</td></tr>'}</tbody></table></div>
         <div class="cert-tools"><span class="cert-meta">${data.total} certificados</span><button id="cert-prev" ${s.offset===0?"disabled":""}>Anterior</button><button id="cert-next" ${s.offset+50>=data.total?"disabled":""}>Siguiente</button></div>`);
@@ -82,6 +82,10 @@
         const service=data.data[Number(b.dataset.service)], spec=s.boot.types[s.kind];
         const fields={[spec.number]:service.num_informe,port:service.puerto,country:service.pais,customer:service.cliente};
         if(s.kind!=="lashing") fields.vessel=service.buque_contenedor;
+        if(s.kind==="grain") {
+          for(const key of Object.keys(fields)) delete fields[key];
+          Object.assign(fields,{cert_no:service.num_informe,vessel_name:service.buque_contenedor,requested_by:service.cliente});
+        }
         if(s.kind==="weight") Object.assign(fields,{continent:service.continente,operation:service.operacion});
         if(s.kind==="holds")fields.load_port=service.puerto;
         if(["sampling","sealing"].includes(s.kind))fields.certificate_no=service.num_informe;
@@ -94,14 +98,37 @@
       const spec=s.boot.types[s.kind], row=payload.data;
       const editable=row.id ? s.boot.permissions.edit && row.status!=="Approved" : s.boot.permissions.create;
       shell(`<div class="cert-tools"><button id="cert-back">Volver</button><strong>${esc(row[spec.number])}</strong><span class="cert-status">${esc(statusText(row.status || "Draft"))}</span></div>
-        <form id="cert-form"><div class="cert-editor"><nav class="cert-sections">${spec.sections.map((g,i)=>`<a href="#cert-section-${i}">${esc(g.title)}</a>`).join("")}</nav><div>${spec.sections.map((g,i)=>`<section class="cert-section" id="cert-section-${i}"><h3>${esc(g.title)}</h3><div class="cert-fields">${g.fields.map(f=>{
+        <form id="cert-form"><div class="cert-editor"><nav class="cert-sections">${spec.sections.map((g,i)=>`<a href="#cert-section-${i}">${esc(g.title)}</a>`).join("")}</nav><div>${spec.sections.map((g,i)=>`<details class="cert-section" id="cert-section-${i}" ${s.kind!=="grain" || i<3 ? "open" : ""}><summary>${esc(g.title)}</summary><div class="cert-fields">${g.fields.map(f=>{
           const value=f.type==="date"?dateText(row[f.key]):row[f.key];
-          return `<label class="${f.type==="textarea"?"cert-wide":""}">${esc(f.label)}${f.type==="textarea"?`<textarea name="${f.key}" maxlength="30000" ${!editable?"disabled":""}>${esc(value)}</textarea>`:`<input type="text" name="${f.key}" value="${esc(value)}" maxlength="2000" ${f.type==="date"?'placeholder="DD/MM/YYYY"':f.type==="time"?'placeholder="HH:MM"':""} ${f.key===spec.number?"readonly":""} ${!editable?"disabled":""}>`}</label>`;
-        }).join("")}</div></section>`).join("")}</div></div>
-        <footer class="cert-actions">${editable?'<button type="submit" class="cert-primary">Guardar borrador</button><button type="button" id="cert-submit">Enviar a revision</button>':""}
-        ${row.id && s.boot.permissions.approve?'<button type="button" id="cert-approve">Aprobar</button><button type="button" id="cert-reject">Rechazar</button>':""}
-        ${row.id?`<select id="cert-format" aria-label="Formato de exportacion"><option value="${spec.document}">${spec.document==="word"?"Word":"Excel"}</option><option value="pdf">PDF</option></select><button type="button" id="cert-export">Descargar</button>`:""}
-        <span id="cert-save-state" class="cert-meta" role="status"></span></footer></form>`);
+          return `<label class="${f.type==="textarea"?"cert-wide":""}">${esc(f.label)}${f.type==="textarea"?`<textarea name="${f.key}" maxlength="30000" ${!editable?"disabled":""}>${esc(value)}</textarea>`:`<input type="text" name="${f.key}" value="${esc(value)}" maxlength="2000" ${f.type==="date"?'placeholder="DD/MM/YYYY"':f.type==="time"?'placeholder="HH:MM"':f.type==="datetime"?'placeholder="DD/MM/YYYY HH:MM"':""} ${f.key===spec.number?"readonly":""} ${!editable?"disabled":""}>`}</label>`;
+        }).join("")}</div></details>`).join("")}</div></div>
+        <footer class="cert-actions"><div class="cert-action-group"><span class="cert-action-label">Edicion</span>${editable?'<button type="submit" class="cert-primary">Guardar borrador</button><button type="button" id="cert-submit">Enviar a revision</button>':""}
+        </div><div class="cert-action-group"><span class="cert-action-label">Revision</span>${row.id && s.boot.permissions.approve?'<button type="button" id="cert-approve">Aprobar</button><button type="button" id="cert-reject">Rechazar</button>':""}
+        </div><div class="cert-action-group"><span class="cert-action-label">Exportacion</span>${row.id?`<select id="cert-format" aria-label="Formato de exportacion"><option value="${spec.document}">${spec.document==="word"?"Word":"Excel"}</option><option value="pdf">Informe PDF</option>${s.kind==="grain"?'<option value="presentation">Presentacion PDF</option><option value="complete">Presentacion + informe PDF</option>':""}</select><button type="button" id="cert-export">Descargar</button>`:""}
+        </div><span id="cert-save-state" class="cert-meta" role="status"></span></footer></form>`);
+      $("#cert-form").prepend($(".cert-actions"));
+      root.querySelectorAll(".cert-sections a").forEach(a=>a.onclick=()=>{const section=$(a.getAttribute("href"));if(section)section.open=true;});
+      if(s.kind==="grain" && editable) {
+        const conclusion=$('[name="conclusion"]');
+        const tools=document.createElement('div'); tools.className='cert-tools';
+        tools.innerHTML='<select aria-label="Idioma de propuesta IA"><option value="ES">Español</option><option value="EN">English</option></select><button type="button">Proponer redaccion con IA</button><div class="cert-ai-result" hidden></div>';
+        conclusion.parentElement.after(tools);
+        tools.querySelector('button').onclick=()=>{
+          if(!conclusion.value.trim()){s.error('Escriba una conclusion antes de solicitar una propuesta.');return;}
+          const text=conclusion.value,language=tools.querySelector('select').value;
+          run(async()=>{
+            const result=await api('/grain-assist','POST',{text,language});
+            if(!alive())return;
+            const panel=tools.querySelector('.cert-ai-result');panel.hidden=false;
+            panel.innerHTML='<label>Propuesta IA<textarea readonly></textarea></label><button type="button" data-accept>Aceptar propuesta</button><button type="button" data-discard>Descartar</button>';
+            panel.querySelector('textarea').value=result.text;
+            panel.querySelector('[data-accept]').onclick=()=>{
+              conclusion.value=result.text;conclusion.dispatchEvent(new Event('input',{bubbles:true}));panel.hidden=true;
+            };
+            panel.querySelector('[data-discard]').onclick=()=>{panel.hidden=true;};
+          });
+        };
+      }
       $("#cert-back").onclick=()=>{if(canLeave()){s.dirty=false;run(list);}};
       $("#cert-form").oninput=e=>{
         if(!e.target.matches("input[name], textarea[name]"))return;
@@ -137,11 +164,15 @@
           const response=await fetch(`/informes/certificates/${s.kind}/${row.id}/export/${format}`,{headers:options.headers(),signal:s.controller.signal});
           if(!response.ok){const data=await response.json().catch(()=>null);throw new Error(data?.detail || "No se pudo generar el documento.");}
           const url=URL.createObjectURL(await response.blob());
-          const a=document.createElement("a");a.href=url;a.download=`Certificate_${s.kind}_${row.id}.${{word:"docx",excel:"xlsx",pdf:"pdf"}[format]}`;a.click();setTimeout(()=>URL.revokeObjectURL(url),30000);
+          const a=document.createElement("a");a.href=url;a.download=`${s.kind}_${row.id}_${format}.${{word:"docx",excel:"xlsx",pdf:"pdf",presentation:"pdf",complete:"pdf"}[format]}`;a.click();setTimeout(()=>URL.revokeObjectURL(url),30000);
         });
       };
     }
-    await run(async()=>{s.boot=await api("/bootstrap");if(alive())await list();});
+    await run(async()=>{
+      s.boot=await api("/bootstrap");
+      s.boot.types=Object.fromEntries(Object.entries(s.boot.types).filter(([k])=>options.kind ? k===options.kind : k!=="grain"));
+      if(alive())await list();
+    });
   }
   window.SOMCertificates={mount,canLeave,destroy};
 })();

@@ -16,6 +16,7 @@ async function main(){
       const send=data=>route.fulfill({json:data});
       if(url.pathname==='/')return route.fulfill({contentType:'text/html',body:`<style>body{margin:0;font:14px Arial} ${css}</style><main id="app"></main><script>${js}</script>`});
       if(kind==='bootstrap')return send({types,permissions,company:'MCI-CR'});
+      if(kind==='grain-assist')return send({text:'Propuesta QA revisada'});
       if(kind==='services')return send({data:[{num_informe:'QA-NEW',buque_contenedor:'QA NEW VESSEL',cliente:'QA CLIENT',puerto:'Caldera',pais:'Costa Rica'}],more:false});
       if(req.method()==='GET'){
         if(parts.length===4)return send({data:[{...records[kind],customer:'QA CLIENT'}],total:1});
@@ -75,6 +76,37 @@ async function main(){
       assert.equal(writes.at(-1).body.fields[types[kind].number],'QA-NEW');
       await page.locator('#cert-back').click();
     }
+    types.grain=JSON.parse(cp.execFileSync('python',['-c','import json;from backend_api.services.grain_web_fields import SPEC;print(json.dumps(SPEC))'],{cwd:root,encoding:'utf8'}));
+    records.grain={id:9,cert_no:'QA-GRAIN',vessel_name:'QA GRAIN VESSEL',status:'Draft',place_date:'2026-10-22',sample10_centro:'001'};
+    await page.goto('http://certificates.test/');
+    await page.evaluate(()=>SOMCertificates.mount(document.getElementById('app'),{kind:'grain',headers:()=>({'X-Company-Code':'MCI-CR'})}));
+    await page.locator('[data-open]').click();
+    await page.locator('#cert-form').waitFor();
+    assert.equal(await page.locator('#cert-form [name]').count(),112);
+    assert.equal(await page.locator('[name=place_date]').inputValue(),'22/10/2026');
+    for(const width of [1440,800,390]) {
+      await page.setViewportSize({width,height:1000});
+      assert(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),`grain overflow ${width}`);
+      await page.screenshot({path:path.join(root,`tmp/certificates-qa/grain-${width}.png`),fullPage:true});
+    }
+    await page.locator('.cert-sections a').filter({hasText:'Puntos de muestreo'}).click();
+    await page.locator('[name=sample10_centro]').fill('002');
+    await page.locator('button[type=submit]').click();
+    await page.getByText('Guardado',{exact:true}).waitFor();
+    assert.deepEqual(writes.at(-1).body.fields,{sample10_centro:'002'});
+    assert.equal(await page.locator('#cert-format option').count(),4);
+    await page.locator('.cert-sections a').filter({hasText:'Supervision y conclusion'}).click();
+    await page.locator('[name=conclusion]').fill('Original QA');
+    await page.getByRole('button',{name:'Proponer redaccion con IA'}).click();
+    await page.locator('[data-accept]').waitFor();
+    assert.equal(await page.locator('[name=conclusion]').inputValue(),'Original QA');
+    await page.locator('[data-accept]').click();
+    assert.equal(await page.locator('[name=conclusion]').inputValue(),'Propuesta QA revisada');
+    await page.locator('#cert-back').click();
+    await page.locator('#cert-new').click();
+    await page.locator('[data-service]').click();
+    assert.equal(await page.locator('[name=vessel_name]').inputValue(),'QA NEW VESSEL');
+    assert.equal(await page.locator('[name=requested_by]').inputValue(),'QA CLIENT');
     permissions={view:true,create:false,edit:false,approve:false};await mount();
     assert.equal(await page.locator('#cert-new').count(),0);
     await page.locator('[data-open]').click();
@@ -97,7 +129,7 @@ async function main(){
     await page.locator('[data-report-view=tally]').click();
     await page.getByText('Tally fixture',{exact:true}).waitFor();
     assert.deepEqual(errors,[]);
-    console.log('PASS: 5 certificate editors; 3 viewports; conflict preserves edits; partial PATCH; approval/rejection; creation/service link; read-only permissions.');
+    console.log('PASS: 5 certificates + grain (112 fields), 3 viewports, conflicts, partial PATCH, approval/rejection, creation/service link, AI explicit acceptance, read-only permissions.');
   }finally{await browser.close();}
 }
 main().catch(e=>{console.error(e);process.exitCode=1;});

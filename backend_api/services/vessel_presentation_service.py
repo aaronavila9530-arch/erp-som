@@ -105,7 +105,7 @@ def _prepend_header_cert(doc, cert_no: str):
 # =====================================================
 # MAIN — GENERATE PDF USING LIBREOFFICE (HEADLESS)
 # =====================================================
-def generate_vessel_presentation_doc(data: dict) -> str:
+def generate_vessel_presentation_doc(data: dict, *, docx_output=None) -> str:
 
     # -------------------------------------------------
     # VALIDATIONS
@@ -152,13 +152,19 @@ def generate_vessel_presentation_doc(data: dict) -> str:
     # -------------------------------------------------
     # SAVE TEMP DOCX
     # -------------------------------------------------
-    fd, temp_docx = tempfile.mkstemp(suffix=".docx")
-    os.close(fd)
+    if docx_output is None:
+        fd, temp_docx = tempfile.mkstemp(suffix=".docx")
+        os.close(fd)
+    else:
+        temp_docx = str(docx_output)
     # Presentation grain template already carries its own header/body images.
     # Do not apply global branding here because it removes those template images.
     _prepend_header_cert(doc, str(data.get("cert_no") or ""))
     apply_docx_autofit(doc)
     doc.save(temp_docx)
+
+    if docx_output is not None:
+        return temp_docx
 
     output_dir = tempfile.mkdtemp()
 

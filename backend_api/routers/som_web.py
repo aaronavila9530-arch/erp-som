@@ -1470,8 +1470,8 @@ def som_web_home() -> HTMLResponse:
   <script src="/informes/containers/assets/containers.js?v=20261019-2"></script>
   <link rel="stylesheet" href="/informes/logra/assets/logra.css?v=20261019-1">
   <script src="/informes/logra/assets/logra.js?v=20261019-1"></script>
-  <link rel="stylesheet" href="/informes/certificates/assets/certificates.css?v=20261020-1">
-  <script src="/informes/certificates/assets/certificates.js?v=20261020-1"></script>
+  <link rel="stylesheet" href="/informes/certificates/assets/certificates.css?v=20261022-2">
+  <script src="/informes/certificates/assets/certificates.js?v=20261022-2"></script>
   <link rel="stylesheet" href="/comercial/web/assets/comercial.css?v={asset_version}">
   <script src="/comercial/web/assets/comercial.js?v={asset_version}"></script>
   <link rel="stylesheet" href="/som/admin-assets/admin.css?v={asset_version}">
@@ -2390,7 +2390,7 @@ def som_web_home() -> HTMLResponse:
       if (currentModule === "informes" && window.SOMCertificates) SOMCertificates.destroy();
       if (currentModule === "portia") SOMPortia.destroy();
       currentModule = code;
-      $("kpiLabel1").closest("section").style.display = ["comercial", "admin_users", "portia"].includes(code) ? "none" : "";
+      $("kpiLabel1").closest("section").style.display = ["comercial", "admin_users", "portia", "informes"].includes(code) ? "none" : "";
       selectedMasterView = null;
       setBrand();
       const mod = catalog.modules.find(m => m.code === code) || catalog.modules[0];
@@ -2440,7 +2440,7 @@ def som_web_home() -> HTMLResponse:
       SOMContainers.destroy();
       SOMLogra.destroy();
       SOMCertificates.destroy();
-      $("content").innerHTML = '<nav class="som-report-tabs" aria-label="Tipos de informe"><button type="button" data-report-view="tally">Tally</button><button type="button" data-report-view="containers">Containers</button><button type="button" data-report-view="logra">LOGRA</button><button type="button" data-report-view="certificates">Certificados</button></nav><div id="somReportWorkspace"></div>';
+      $("content").innerHTML = '<nav class="som-report-tabs" aria-label="Tipos de informe"><button type="button" data-report-view="tally">Tally</button><button type="button" data-report-view="containers">Containers</button><button type="button" data-report-view="logra">LOGRA</button><button type="button" data-report-view="certificates">Certificados</button><button type="button" data-report-view="grain">Buques · Muestreos de Granos</button></nav><div id="somReportWorkspace"></div>';
       document.querySelectorAll('[data-report-view]').forEach(button => {
         button.setAttribute('aria-selected', String(button.dataset.reportView === informesView));
         button.onclick = () => {
@@ -2450,8 +2450,15 @@ def som_web_home() -> HTMLResponse:
         };
       });
       const fixedHeaders = headers();
-      if (informesView === "certificates") {
-        SOMCertificates.mount($("somReportWorkspace"), {company:selectedCompany(),headers:()=>({...fixedHeaders})});
+      if (["admin","master"].includes(session.rol) && canView("admin_users")) {
+        const permissions = document.createElement("button");
+        permissions.type="button"; permissions.textContent="Administrar permisos";
+        permissions.className="report-permissions";
+        permissions.onclick=()=>selectModule("admin_users");
+        document.querySelector(".som-report-tabs").appendChild(permissions);
+      }
+      if (["certificates","grain"].includes(informesView)) {
+        SOMCertificates.mount($("somReportWorkspace"), {company:selectedCompany(),kind:informesView==="grain"?"grain":undefined,headers:()=>({...fixedHeaders})});
         return;
       }
       if (informesView === "logra") {

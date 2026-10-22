@@ -20,7 +20,7 @@ from datetime import datetime
 # GENERATE GRAIN SAMPLING WORD REPORT (FORMAT PRESERVING)
 # ============================================================
 
-def generate_grain_sampling_doc(data: dict) -> str:
+def generate_grain_sampling_doc(data: dict, *, output_path=None) -> str:
 
     # ========================================================
     # LOAD TEMPLATE
@@ -438,7 +438,7 @@ def generate_grain_sampling_doc(data: dict) -> str:
     # SAVE FILE
     # ========================================================
 
-    output_path = os.path.join(
+    output_path = output_path or os.path.join(
         tempfile.gettempdir(),
         f"{data.get('cert_no', 'grain_sampling')}.docx"
     )

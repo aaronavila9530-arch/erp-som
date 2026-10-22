@@ -26,7 +26,14 @@
 .som-certificates label {display:flex;flex-direction:column;gap:6px;font-size:13px;min-width:0}
 .som-certificates .cert-wide {grid-column:1/-1}
 .som-certificates textarea {min-height:112px;resize:vertical}
-.som-certificates .cert-actions {position:sticky;bottom:0;background:#fff;border-top:1px solid #cedce1;padding:12px 0;z-index:2}
+.som-certificates .cert-actions {position:static;background:#fff;border-bottom:1px solid #cedce1;padding:12px 0;align-items:stretch}
+.som-certificates .cert-action-group {display:flex;align-items:center;flex-wrap:wrap;gap:8px;border-right:1px solid #dce4e7;padding-right:16px}
+.som-certificates .cert-action-label {width:100%;font-size:11px;font-weight:600;text-transform:uppercase;color:#586e76}
+.som-certificates .cert-section summary {cursor:pointer;font-size:15px;font-weight:600;padding:10px 0 18px;color:#263b43}
+.som-certificates .cert-section[open] summary {color:#007c82}
+.som-report-tabs {display:flex;gap:6px;flex-wrap:wrap;border-bottom:1px solid #d5dfe3;padding:12px 0;background:#fff}
+.som-report-tabs button {border:0;border-radius:0;background:transparent;color:#52636b;padding:12px 16px;border-bottom:3px solid transparent}
+.som-report-tabs button[aria-selected=true] {color:#006b70;border-bottom-color:#00858b;background:#edf8f6;font-weight:600}
 .som-certificates [role=alert]:not(:empty) {padding:12px;background:#fff0ee;color:#9d3023;border-left:3px solid #b84032;margin:12px 0}
 .som-certificates .cert-meta {color:#586e76;font-size:13px}
 @media(max-width:760px) {.som-certificates{padding:12px}.som-certificates .cert-editor{grid-template-columns:1fr}.som-certificates .cert-sections{position:static;flex-direction:row;overflow:auto;flex-wrap:wrap}.som-certificates .cert-fields{grid-template-columns:1fr}.som-certificates .cert-actions{position:static}}

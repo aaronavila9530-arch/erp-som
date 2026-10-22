@@ -165,6 +165,31 @@ def word(kind, data, target):
 
 
 def build(kind, data, format):
+    if kind == "grain":
+        from services.grain_sampling_doc_service import generate_grain_sampling_doc
+        from services.grain_web_layout import normalize
+        with tempfile.TemporaryDirectory(prefix="som_grain_web_") as directory:
+            source = Path(directory) / "grain.docx"
+            if format in ("presentation", "complete"):
+                from services.vessel_presentation_service import generate_vessel_presentation_doc
+                cover = Path(directory) / "presentation.docx"
+                generate_vessel_presentation_doc(data, docx_output=cover)
+                normalize(cover, presentation=True, customer=data.get('requested_by') or '')
+                cover_pdf = convert(cover, Path(directory))
+                if format == "presentation":
+                    return cover_pdf.read_bytes()
+            generate_grain_sampling_doc(data, output_path=str(source))
+            normalize(source)
+            if format == "complete":
+                from pypdf import PdfWriter
+                from io import BytesIO
+                with PdfWriter() as writer:
+                    writer.append(cover_pdf)
+                    writer.append(convert(source, Path(directory)))
+                    output = BytesIO()
+                    writer.write(output)
+                    return output.getvalue()
+            return (convert(source, Path(directory)) if format == "pdf" else source).read_bytes()
     spec = TYPES[kind]
     with tempfile.TemporaryDirectory(prefix="som_certificate_web_") as directory:
         folder = Path(directory)
