@@ -20,29 +20,37 @@ const shell=fs.readFileSync(path.join(root,'backend_api/routers/som_web.py'),'ut
     window.dispose=ServiceVoice.mount(document.querySelector('#voice'),{
      snapshot:()=>document.querySelector('#svcForm_buque_contenedor').value,
      audio:async()=>({text:'Buque MV prueba, Cliente Pandi, servicio Draft Survey'}),
-     parse:async()=>({buque_contenedor:'MV prueba',cliente:'Pandi',operacion:'Draft Survey',fecha_inicio:'2026-10-24',hora_inicio:'10:00',surveyors:[{nombre:'Erick Garay'}],advertencias:[]}),
-     surveyors:()=>['Erick Garay'],applySurveyors:people=>window.people=people,
-     locations:async()=>({data:[]})
+     parse:async()=>({buque_contenedor:'MV prueba',cliente:'Pandi',operacion:'Draft Survey',fecha_inicio:'2026-10-24',hora_inicio:'10:00',surveyors:[{nombre:'Pavel Pena'}],pais:'Costa Rica',puerto:'Puerto Caldera',advertencias:[]}),
+     surveyors:()=>['Pabel Pena Barreto'],applySurveyors:people=>window.people=people,
+     locations:async()=>({data:[{continente:'America',pais:'Costa Rica',puerto:'Caldera'}]}),location:async row=>window.locationApplied=row
     });
    });
-   await page.locator('[data-audio]').setInputFiles({name:'test.webm',mimeType:'audio/webm',buffer:Buffer.alloc(200)});
-   await page.locator('[data-text]').waitFor({state:'visible'});
-   await page.locator('[data-parse]').click();
-   await page.getByRole('button',{name:'Aplicar campos seleccionados'}).waitFor();
-   assert.equal(await page.locator('#svcForm_buque_contenedor').inputValue(),'');
-   assert.equal(await page.locator('.voice-row').filter({hasText:'Cliente:'}).locator('select').inputValue(),'');
-   assert.equal(await page.locator('.voice-row').filter({hasText:'Operacion:'}).locator('select').inputValue(),'');
+   await page.evaluate(()=>{
+    Object.defineProperty(navigator,'mediaDevices',{configurable:true,value:{getUserMedia:async()=>({getTracks:()=>[{stop(){}}]})}});
+    window.MediaRecorder=class {
+     static isTypeSupported(){return true}
+     constructor(){this.state='inactive';this.mimeType='audio/webm'}
+     start(){this.state='recording'}
+     stop(){this.state='inactive';this.ondataavailable({data:new Blob(['x'.repeat(200)])});this.onstop()}
+    };
+   });
+   await page.locator('[data-record]').click();
+   await page.locator('[data-stop]').click();
+   await page.getByText('Revise los campos antes de Guardar.',{exact:false}).waitFor();
+   assert.equal(await page.locator('[data-audio],[data-text],[data-parse],[data-preview]').count(),0);
+   assert.equal(await page.locator('#svcForm_cliente').inputValue(),'');
+   assert.equal(await page.locator('#svcForm_operacion').inputValue(),'');
+   assert.equal(await page.evaluate(()=>window.locationApplied.continente),'America');
+   assert.deepEqual(await page.evaluate(()=>ServiceVoice.matches('off-hire bunker and condition survey',['OFF HIRE BUNKER & CONDITION SURVEY'])),['OFF HIRE BUNKER & CONDITION SURVEY']);
+   assert.equal(await page.evaluate(()=>ServiceVoice.matches('Pavel Pena',['Pabel Pena Barreto','Pabel Pena Diaz'],true).length),2);
    fs.mkdirSync(path.join(root,'tmp/voice-qa'),{recursive:true});
-   await page.screenshot({path:path.join(root,`tmp/voice-qa/preview-${width}.png`),fullPage:true});
+   await page.screenshot({path:path.join(root,`tmp/voice-qa/direct-${width}.png`),fullPage:true});
    assert(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth));
-   await page.locator('.voice-row').filter({hasText:'Cliente:'}).locator('select').selectOption('Pandi Costa Rica');
-   await page.locator('.voice-row').filter({hasText:'Operacion:'}).locator('select').selectOption('Draft Survey Initial');
-   await page.getByRole('button',{name:'Aplicar campos seleccionados'}).click();
    assert.equal(await page.locator('#svcForm_buque_contenedor').inputValue(),'MV prueba');
    assert.equal(await page.locator('#svcForm_fecha_inicio').inputValue(),'2026-10-24');
    assert.equal(await page.locator('#svcForm_hora_inicio').inputValue(),'10:00');
    assert.equal(await page.evaluate(()=>window.saved),0);
-   assert.equal(await page.evaluate(()=>window.people[0].name),'Erick Garay');
+   assert.equal(await page.evaluate(()=>window.people[0].name),'Pabel Pena Barreto');
    await page.evaluate(()=>{window.dispose();});
    await page.evaluate(()=>{
     window.stopped=0;window.uploads=0;
@@ -53,7 +61,7 @@ const shell=fs.readFileSync(path.join(root,'backend_api/routers/som_web.py'),'ut
      start(){this.state='recording'}
      stop(){this.state='inactive';this.ondataavailable({data:new Blob(['x'.repeat(200)])});this.onstop()}
     };
-    window.dispose=ServiceVoice.mount(document.querySelector('#voice'),{audio:async()=>{window.uploads++;return {text:'Buque QA'};}});
+    window.dispose=ServiceVoice.mount(document.querySelector('#voice'),{snapshot:()=>'',audio:async()=>{window.uploads++;return {text:'Buque QA'};}});
    });
    await page.locator('[data-record]').click();
    await page.locator('[data-stop]').waitFor({state:'visible'});
@@ -62,7 +70,7 @@ const shell=fs.readFileSync(path.join(root,'backend_api/routers/som_web.py'),'ut
    assert.equal(await page.evaluate(()=>window.uploads),0);
    await page.evaluate(()=>{
     navigator.mediaDevices.getUserMedia=async()=>{throw Object.assign(new Error(),{name:'NotAllowedError'})};
-    window.dispose=ServiceVoice.mount(document.querySelector('#voice'),{});
+    window.dispose=ServiceVoice.mount(document.querySelector('#voice'),{snapshot:()=>''});
    });
    await page.locator('[data-record]').click();
    await page.getByText('Permiso de microfono denegado.',{exact:false}).waitFor();
@@ -70,6 +78,6 @@ const shell=fs.readFileSync(path.join(root,'backend_api/routers/som_web.py'),'ut
    assert.deepEqual(errors,[]);
    await page.close();
   }
-  console.log('PASS: desktop/mobile review, ambiguity, date/time, explicit apply, no automatic saves or overflow.');
+  console.log('PASS: desktop/mobile direct fill, ambiguity, date/time, location inference, phonetic names, no automatic saves or overflow.');
  } finally {await browser.close();}
 })().catch(e=>{console.error(e);process.exit(1)});

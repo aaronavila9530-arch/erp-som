@@ -103,6 +103,8 @@ async def transcribe(request: Request, user=Depends(access)):
 @router.get('/locations')
 def locations(pais: str = '', puerto: str = '', user=Depends(access)):
     from database import sql
+    import re
+    puerto = re.sub(r'^puerto\s+', '', puerto.strip(), flags=re.IGNORECASE)
     if not pais.strip() and not puerto.strip():
         return {'data': []}
     rows = sql('''SELECT DISTINCT continente, pais, puerto FROM continentes_paises_puertos

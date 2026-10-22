@@ -1479,7 +1479,7 @@ def som_web_home() -> HTMLResponse:
   <link rel="stylesheet" href="/portia/assets/portia.css?v={asset_version}">
   <script src="/portia/assets/portia.js?v={asset_version}"></script>
   <link rel="stylesheet" href="/servicios/voice/assets/voice.css?v=1" />
-  <script src="/servicios/voice/assets/voice.js?v=1"></script>
+  <script src="/servicios/voice/assets/voice.js?v=2"></script>
   <script>
     const DEFAULT_COMPANIES = [
       { company_code:"MSL-CR", company_name:"MSL MARINE SURVEYORS AND LOGISTICS GROUP SRL" },
