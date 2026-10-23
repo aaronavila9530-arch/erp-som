@@ -165,6 +165,22 @@ def word(kind, data, target):
 
 
 def build(kind, data, format):
+    if kind in ("condition", "cargo_condition"):
+        from docx import Document
+        from services.vessel_condition_survey_word_service import VesselConditionSurveyWordService
+        from services.vessel_cargo_condition_word_service import VesselCargoConditionWordService
+        from services.template_autofit import apply_docx_autofit
+        if data.get("company_code") != "MSL-CR":
+            raise ValueError("MSL templates require an MSL record")
+        service = (VesselConditionSurveyWordService if kind == "condition" else VesselCargoConditionWordService)()
+        with tempfile.TemporaryDirectory(prefix="som_vessel_web_") as directory:
+            source = Path(directory) / "report.docx"
+            doc = Document(service._get_template_path())
+            service._remove_null_paragraphs(doc, data)
+            service._replace_placeholders_everywhere(doc, data)
+            apply_docx_autofit(doc)
+            doc.save(source)
+            return (convert(source, Path(directory)) if format == "pdf" else source).read_bytes()
     if kind == "grain":
         from services.grain_sampling_doc_service import generate_grain_sampling_doc
         from services.grain_web_layout import normalize

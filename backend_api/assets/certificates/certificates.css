@@ -50,4 +50,6 @@
 .som-report-tabs button[aria-selected=true] {color:#006b70;border-bottom-color:#00858b;background:#edf8f6;font-weight:600}
 .som-certificates [role=alert]:not(:empty) {padding:12px;background:#fff0ee;color:#9d3023;border-left:3px solid #b84032;margin:12px 0}
 .som-certificates .cert-meta {color:#586e76;font-size:13px}
+.som-certificates #mci-form fieldset {border:0;padding:0;margin:0;min-width:0}
+.som-certificates #mci-form [data-remove],.som-certificates #mci-form [data-add] {width:40px;height:40px;align-self:flex-start;padding:0}
 @media(max-width:760px) {.som-certificates{padding:12px}.som-certificates .cert-editor{grid-template-columns:1fr}.som-certificates .cert-sections{position:static;flex-direction:row;overflow:auto;flex-wrap:wrap}.som-certificates .cert-fields{grid-template-columns:1fr}.som-certificates .cert-actions{position:static}}

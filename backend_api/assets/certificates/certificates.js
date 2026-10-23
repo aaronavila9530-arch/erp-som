@@ -44,11 +44,11 @@
     }
     function shell(body) {
       const spec = s.boot.types[s.kind];
-      root.innerHTML = `<header class="cert-head"><h2>${options.kind === 'grain' ? 'Muestreos de Granos' : 'Certificados'}</h2><span class="cert-meta">${esc(s.boot.company)}</span></header>
+      root.innerHTML = `<header class="cert-head"><h2>${options.kind ? esc(spec.title) : 'Certificados'}</h2><span class="cert-meta">${esc(s.boot.company)}</span></header>
         <nav class="cert-workflows" aria-label="Flujo de informes">${s.boot.permissions.create?`<button type="button" data-mode="create" aria-pressed="${s.mode==='create'}">Crear</button>`:''}<button type="button" data-mode="review" aria-pressed="${s.mode==='review'}">Revisar</button></nav>
         <nav class="cert-types" role="tablist" aria-label="Certificados">${Object.entries(s.boot.types).map(([k,v]) => `<button role="tab" data-kind="${k}" aria-selected="${k===s.kind}">${esc(v.label)}</button>`).join("")}</nav>
         <div id="cert-error" role="alert"></div><h3>${esc(spec.title)}</h3>${body}`;
-      if(options.kind==='grain') {$(".cert-types").hidden=true;root.querySelector('h3').hidden=true;}
+      if(options.kind) {$(".cert-types").hidden=true;root.querySelector('h3').hidden=true;}
       root.querySelectorAll('[data-mode]').forEach(b=>b.onclick=()=>{
         if(s.busy || s.mode===b.dataset.mode || !canLeave())return;
         s.mode=b.dataset.mode;s.dirty=false;s.offset=0;s.status='';
@@ -95,6 +95,12 @@
           for(const key of Object.keys(fields)) delete fields[key];
           Object.assign(fields,{cert_no:service.num_informe,vessel_name:service.buque_contenedor,requested_by:service.cliente});
         }
+        if(['condition','cargo_condition'].includes(s.kind)) {
+          for(const key of Object.keys(fields))delete fields[key];
+          Object.assign(fields,{report_number:service.num_informe,vessel:service.buque_contenedor,
+            requested_by:service.cliente,continent:service.continente,country:service.pais,port:service.puerto,
+            service_start_date:String(service.fecha_inicio||'').slice(0,10),operation:service.operacion});
+        }
         if(s.kind==="weight") Object.assign(fields,{continent:service.continente,operation:service.operacion});
         if(s.kind==="holds")fields.load_port=service.puerto;
         if(["sampling","sealing"].includes(s.kind))fields.certificate_no=service.num_informe;
@@ -122,6 +128,19 @@
       groups[1].hidden=s.mode!=='review';
       groups[2].hidden=s.mode!=='review';
       root.querySelectorAll(".cert-sections a").forEach(a=>a.onclick=()=>{const section=$(a.getAttribute("href"));if(section)section.open=true;});
+      spec.sections.forEach((group,index)=>{
+        if(!group.repeatable)return;
+        const section=$('#cert-section-'+index),inputs=group.fields.map(f=>$("#cert-form").elements.namedItem(f.key));
+        let count=Math.max(1,...inputs.map((input,i)=>input.value.trim()?i+1:0));
+        const tools=document.createElement('div');tools.className='cert-tools';
+        tools.innerHTML='<button type="button" title="Agregar texto" aria-label="Agregar texto">+</button><button type="button" title="Eliminar ultimo texto" aria-label="Eliminar ultimo texto">−</button>';
+        const [add,remove]=tools.children;
+        function refresh(){inputs.forEach((input,i)=>input.parentElement.hidden=i>=count);add.disabled=!editable||count===inputs.length;remove.disabled=!editable||count===1;}
+        const mark=()=>{s.dirty=true;$('#cert-save-state').textContent='Cambios sin guardar';};
+        add.onclick=()=>{if(count<inputs.length){count++;refresh();inputs[count-1].focus();}};
+        remove.onclick=()=>{if(count<=1)return;const input=inputs[count-1];if(input.value.trim()&&!confirm('Eliminar este texto?'))return;input.value='';count--;mark();refresh();};
+        section.append(tools);refresh();
+      });
       if(s.kind==="grain" && editable) {
         const conclusion=$('[name="conclusion"]');
         const tools=document.createElement('div'); tools.className='cert-tools';
@@ -184,7 +203,7 @@
     }
     await run(async()=>{
       s.boot=await api("/bootstrap");
-      s.boot.types=Object.fromEntries(Object.entries(s.boot.types).filter(([k])=>options.kind ? k===options.kind : k!=="grain"));
+      s.boot.types=Object.fromEntries(Object.entries(s.boot.types).filter(([k])=>options.kind ? k===options.kind : !['grain','condition','cargo_condition'].includes(k)));
       if(alive())await list();
     });
   }

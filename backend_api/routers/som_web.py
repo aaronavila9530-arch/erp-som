@@ -1470,8 +1470,9 @@ def som_web_home() -> HTMLResponse:
   <script src="/informes/containers/assets/containers.js?v=20261022-4"></script>
   <link rel="stylesheet" href="/informes/logra/assets/logra.css?v=20261019-1">
   <script src="/informes/logra/assets/logra.js?v=20261019-1"></script>
-  <link rel="stylesheet" href="/informes/certificates/assets/certificates.css?v=20261022-4">
-  <script src="/informes/certificates/assets/certificates.js?v=20261022-4"></script>
+  <link rel="stylesheet" href="/informes/certificates/assets/certificates.css?v=20261023-1">
+  <script src="/informes/certificates/assets/certificates.js?v=20261023-1"></script>
+  <script src="/informes/mci-surveys/editor.js?v=20261023-1"></script>
   <link rel="stylesheet" href="/comercial/web/assets/comercial.css?v={asset_version}">
   <script src="/comercial/web/assets/comercial.js?v={asset_version}"></script>
   <link rel="stylesheet" href="/som/admin-assets/admin.css?v={asset_version}">
@@ -2384,10 +2385,12 @@ def som_web_home() -> HTMLResponse:
       if (currentModule === "informes" && window.SOMContainers && !SOMContainers.canLeave()) return;
       if (currentModule === "informes" && window.SOMLogra && !SOMLogra.canLeave()) return;
       if (currentModule === "informes" && window.SOMCertificates && !SOMCertificates.canLeave()) return;
+      if (currentModule === "informes" && window.SOMMCISurveys && !SOMMCISurveys.canLeave()) return;
       if (currentModule === "informes" && window.SOMTally) SOMTally.destroy();
       if (currentModule === "informes" && window.SOMContainers) SOMContainers.destroy();
       if (currentModule === "informes" && window.SOMLogra) SOMLogra.destroy();
       if (currentModule === "informes" && window.SOMCertificates) SOMCertificates.destroy();
+      if (currentModule === "informes" && window.SOMMCISurveys) SOMMCISurveys.destroy();
       if (currentModule === "portia") SOMPortia.destroy();
       currentModule = code;
       $("kpiLabel1").closest("section").style.display = ["comercial", "admin_users", "portia", "informes"].includes(code) ? "none" : "";
@@ -2435,15 +2438,17 @@ def som_web_home() -> HTMLResponse:
       });
     }
     let informesView = "tally";
+    let vesselReportKind = "grain";
     function renderInformesTally() {
       SOMTally.destroy();
       SOMContainers.destroy();
       SOMLogra.destroy();
       SOMCertificates.destroy();
+      window.SOMMCISurveys?.destroy();
       $("content").innerHTML = '<header class="som-report-tabs"><strong>Informes</strong><select id="reportCategory" aria-label="Seccion de informes"><option value="tally">Tally</option><option value="logra">LOGRA</option><option value="containers">Containers</option><option value="certificates">Certificados</option><option value="vessels">Buques</option></select><div id="reportAdministration"></div></header><div id="reportSubtypes"></div><div id="somReportWorkspace"></div>';
       $("reportCategory").value=informesView;
       $("reportCategory").onchange=e=>{
-        if(!SOMTally.canLeave() || !SOMContainers.canLeave() || !SOMLogra.canLeave() || !SOMCertificates.canLeave()){e.target.value=informesView;return;}
+        if(!SOMTally.canLeave() || !SOMContainers.canLeave() || !SOMLogra.canLeave() || !SOMCertificates.canLeave() || (window.SOMMCISurveys && !SOMMCISurveys.canLeave())){e.target.value=informesView;return;}
         informesView=e.target.value;renderInformesTally();
       };
       const fixedHeaders = headers();
@@ -2456,9 +2461,19 @@ def som_web_home() -> HTMLResponse:
       }
       if (informesView === "vessels") {
         $("reportSubtypes").innerHTML='<nav class="som-report-tabs" aria-label="Informes de buques"><label for="vesselReportType">Tipo de informe</label><select id="vesselReportType"><option value="grain">Grain Sampling / Muestreos de Granos</option><option disabled>Draft Survey (no disponible en web)</option><option disabled>Bunker Survey (no disponible en web)</option></select></nav>';
+        for(const [value,label] of [['condition','Vessel Condition Survey'],['cargo_condition','Cargo Condition Survey'],...(selectedCompany()==='MCI-CR'?[['vessel','Vessel Survey']]:[])])$('vesselReportType').add(new Option(label,value));
+        if(vesselReportKind==='vessel'&&selectedCompany()!=='MCI-CR')vesselReportKind='grain';
+        $('vesselReportType').value=vesselReportKind;
+        $('vesselReportType').onchange=e=>{
+          if(!SOMCertificates.canLeave() || (window.SOMMCISurveys&&!SOMMCISurveys.canLeave())){e.target.value=vesselReportKind;return;}
+          vesselReportKind=e.target.value;renderInformesTally();
+        };
+        if(selectedCompany()==='MCI-CR' && vesselReportKind!=='grain') {
+          SOMMCISurveys.mount($('somReportWorkspace'),{kind:vesselReportKind==='cargo_condition'?'cargo':vesselReportKind,headers:()=>({...fixedHeaders})});return;
+        }
       }
       if (["certificates","vessels"].includes(informesView)) {
-        SOMCertificates.mount($("somReportWorkspace"), {company:selectedCompany(),kind:informesView==="vessels"?"grain":undefined,headers:()=>({...fixedHeaders})});
+        SOMCertificates.mount($("somReportWorkspace"), {company:selectedCompany(),kind:informesView==="vessels"?vesselReportKind:undefined,headers:()=>({...fixedHeaders})});
         return;
       }
       if (informesView === "logra") {
@@ -10470,7 +10485,7 @@ def som_web_home() -> HTMLResponse:
     $("bioBtn").onclick = unlockWithPasskey;
     $("backLogin").onclick = showLogin;
     $("setupPasskey").onclick = registerDevicePasskey;
-    $("logout").onclick = () => { if (currentModule === "informes" && window.SOMCertificates) { if (!SOMCertificates.canLeave()) return; SOMCertificates.destroy(); } if (currentModule === "informes" && window.SOMLogra) { if (!SOMLogra.canLeave()) return; SOMLogra.destroy(); } if (currentModule === "admin_users") { if (!SOMAdmin.canLeave()) return; SOMAdmin.destroy(); } if (notificationPollTimer) clearInterval(notificationPollTimer); localStorage.removeItem(SESSION_KEY); session=null; showLogin(); };
+    $("logout").onclick = () => { if (currentModule === "informes" && window.SOMMCISurveys) { if (!SOMMCISurveys.canLeave()) return; SOMMCISurveys.destroy(); } if (currentModule === "informes" && window.SOMCertificates) { if (!SOMCertificates.canLeave()) return; SOMCertificates.destroy(); } if (currentModule === "informes" && window.SOMLogra) { if (!SOMLogra.canLeave()) return; SOMLogra.destroy(); } if (currentModule === "admin_users") { if (!SOMAdmin.canLeave()) return; SOMAdmin.destroy(); } if (notificationPollTimer) clearInterval(notificationPollTimer); localStorage.removeItem(SESSION_KEY); session=null; showLogin(); };
     $("notifyEnable").onclick = enableNotifications;
     $("notifyBell").onclick = async (event) => { event.stopPropagation(); $("notifyPanel").classList.toggle("hidden"); await loadNotifications(false); };
     if ($("refresh")) $("refresh").onclick = () => {
@@ -10492,7 +10507,7 @@ def som_web_home() -> HTMLResponse:
       }
       if ($("svcModal")?.dataset.homePending) closeModal();
       homePending = null;
-      if (currentModule === "informes" && (!SOMTally.canLeave() || !SOMContainers.canLeave() || !SOMLogra.canLeave() || !SOMCertificates.canLeave())) {
+      if (currentModule === "informes" && (!SOMTally.canLeave() || !SOMContainers.canLeave() || !SOMLogra.canLeave() || !SOMCertificates.canLeave() || (window.SOMMCISurveys && !SOMMCISurveys.canLeave()))) {
         $("company").value = session.company; $("companyTop").value = session.company; return;
       }
       if ($("company")) $("company").value = value;

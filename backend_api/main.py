@@ -66,6 +66,7 @@ from routers.som_web import router as som_web_router
 from routers.tally import router as tally_router
 from routers.container_web import router as container_web_router
 from routers.certificates_web import router as certificates_web_router
+from routers.mci_surveys_web import router as mci_surveys_web_router
 from routers.tally_access import router as tally_access_router
 from routers.companies import router as companies_router
 from routers.masterdata_bank_accounts import router as masterdata_bank_accounts_router
@@ -282,6 +283,7 @@ app.include_router(som_web_router)
 app.include_router(tally_router)
 app.include_router(container_web_router)
 app.include_router(certificates_web_router)
+app.include_router(mci_surveys_web_router)
 app.include_router(tally_access_router)
 app.include_router(companies_router)
 app.include_router(masterdata_bank_accounts_router)

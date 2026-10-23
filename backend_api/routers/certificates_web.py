@@ -14,15 +14,18 @@ from database import get_db
 from routers.container_web import access, require, version, linked_service
 from services.certificate_web_fields import TYPES
 from services.grain_web_fields import SPEC as GRAIN_SPEC
+from services.vessel_web_fields import VESSEL_TYPES
 
-WEB_TYPES = {**TYPES, "grain": GRAIN_SPEC}
+WEB_TYPES = {**TYPES, "grain": GRAIN_SPEC, **VESSEL_TYPES}
 
 router = APIRouter(prefix="/informes/certificates", tags=["Certificates Web"])
 ASSETS = Path(__file__).resolve().parents[1] / "assets" / "certificates"
 log = logging.getLogger(__name__)
 
 
-def specification(kind):
+def specification(kind, ctx=None):
+    if kind in VESSEL_TYPES and (not ctx or ctx["company"] != "MSL-CR"):
+        raise HTTPException(404, "Tipo de informe no disponible en esta empresa")
     if kind not in WEB_TYPES:
         raise HTTPException(404, "Tipo de certificado no encontrado")
     return WEB_TYPES[kind]
@@ -69,6 +72,10 @@ def clean_fields(spec, values):
             if parsed is None:
                 raise HTTPException(422, f"{field['label']}: use DD/MM/YYYY HH:MM")
             value = parsed.strftime("%Y-%m-%d %H:%M")
+        if value and spec.get("table") in {v["table"] for v in VESSEL_TYPES.values()} and key.endswith(("_hour", "_minute")):
+            if not value.isascii() or not value.isdigit() or not 0 <= int(value) <= (23 if key.endswith("_hour") else 59):
+                raise HTTPException(422, f"{field['label']}: hora o minuto invalido")
+            value = value.zfill(2)
         if value and field["type"] in ("date", "time"):
             formats = ("%d/%m/%Y", "%Y-%m-%d", "%B %d, %Y", "%b %d, %Y") if field["type"] == "date" else ("%H:%M", "%H:%M:%S")
             parsed = None
@@ -147,14 +154,14 @@ def asset(name: Literal["certificates.js", "certificates.css"]):
 @router.get("/bootstrap")
 def bootstrap(ctx=Depends(access)):
     return {"types": {key: {k: spec[k] for k in ("title", "label", "number", "document", "sections")}
-                      for key, spec in WEB_TYPES.items()}, "permissions": ctx["permissions"], "company": ctx["company"]}
+                      for key, spec in WEB_TYPES.items() if key not in VESSEL_TYPES or ctx["company"] == "MSL-CR"}, "permissions": ctx["permissions"], "company": ctx["company"]}
 
 
 @router.get("/services")
 def services(q: str = Query("", max_length=150), offset: int = Query(0, ge=0),
              ctx=Depends(access), conn=Depends(get_db)):
     with conn.cursor(cursor_factory=RealDictCursor) as cur:
-        cur.execute("""SELECT num_informe,cliente,buque_contenedor,continente,pais,puerto,operacion,fecha_inicio
+        cur.execute("""SELECT consec,num_informe,cliente,buque_contenedor,continente,pais,puerto,operacion,fecha_inicio
             FROM servicios WHERE COALESCE(NULLIF(TRIM(company_code),''),'MSL-CR')=%s
             AND NULLIF(TRIM(num_informe),'') IS NOT NULL
             AND (%s='' OR CONCAT_WS(' ',num_informe,cliente,buque_contenedor) ILIKE %s)
@@ -167,9 +174,9 @@ def services(q: str = Query("", max_length=150), offset: int = Query(0, ge=0),
 @router.get("/{kind}")
 def listing(kind: str, q: str = Query("", max_length=150), status: str = Query("", max_length=50),
             offset: int = Query(0, ge=0), ctx=Depends(access), conn=Depends(get_db)):
-    spec = specification(kind)
+    spec = specification(kind, ctx)
     vessel = "vessel_name" if kind == "grain" else "flat_rack_container" if kind == "lashing" else "vessel"
-    date = "place_date" if kind == "grain" else "date"
+    date = "service_start_date" if kind in VESSEL_TYPES else "place_date" if kind == "grain" else "date"
     where = source(spec) + f""" AND (%s='' OR CONCAT_WS(' ',c.{spec['number']},c.{vessel},s.customer) ILIKE %s)
         AND (%s='' OR LOWER(c.status)=LOWER(%s))"""
     params = (ctx["company"], q, "%" + q + "%", status, status)
@@ -185,14 +192,14 @@ def listing(kind: str, q: str = Query("", max_length=150), status: str = Query("
 @router.get("/{kind}/{rid}")
 def detail(kind: str, rid: int, ctx=Depends(access), conn=Depends(get_db)):
     with conn.cursor(cursor_factory=RealDictCursor) as cur:
-        row = read_record(cur, specification(kind), rid, ctx)
+        row = read_record(cur, specification(kind, ctx), rid, ctx)
     return {"data": row, "version": version(row)}
 
 
 @router.post("/{kind}")
 def create(kind: str, body: SaveInput, ctx=Depends(access), conn=Depends(get_db)):
     require(ctx, "create")
-    spec = specification(kind)
+    spec = specification(kind, ctx)
     values = clean_fields(spec, body.fields)
     try:
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
@@ -217,7 +224,7 @@ def create(kind: str, body: SaveInput, ctx=Depends(access), conn=Depends(get_db)
 @router.patch("/{kind}/{rid}")
 def update(kind: str, rid: int, body: SaveInput, ctx=Depends(access), conn=Depends(get_db)):
     require(ctx, "edit")
-    spec = specification(kind)
+    spec = specification(kind, ctx)
     values = clean_fields(spec, body.fields)
     try:
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
@@ -246,7 +253,7 @@ def update(kind: str, rid: int, body: SaveInput, ctx=Depends(access), conn=Depen
 @router.post("/{kind}/{rid}/status")
 def change_status(kind: str, rid: int, body: StatusInput, ctx=Depends(access), conn=Depends(get_db)):
     require(ctx, "approve")
-    spec = specification(kind)
+    spec = specification(kind, ctx)
     try:
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
             row = read_record(cur, spec, rid, ctx, True)
@@ -267,7 +274,7 @@ def change_status(kind: str, rid: int, body: StatusInput, ctx=Depends(access), c
 
 @router.get("/{kind}/{rid}/export/{format}")
 def export(kind: str, rid: int, format: Literal["word", "excel", "pdf", "presentation", "complete"], ctx=Depends(access), conn=Depends(get_db)):
-    spec = specification(kind)
+    spec = specification(kind, ctx)
     if format not in (spec["document"], "pdf") and not (kind == "grain" and format in ("presentation", "complete")):
         raise HTTPException(422, "Formato no disponible para este certificado")
     with conn.cursor(cursor_factory=RealDictCursor) as cur:
