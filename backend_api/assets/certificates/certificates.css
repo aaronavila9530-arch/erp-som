@@ -52,4 +52,18 @@
 .som-certificates .cert-meta {color:#586e76;font-size:13px}
 .som-certificates #mci-form fieldset {border:0;padding:0;margin:0;min-width:0}
 .som-certificates #mci-form [data-remove],.som-certificates #mci-form [data-add] {width:40px;height:40px;align-self:flex-start;padding:0}
+.som-certificates #mci-form .cert-fields {grid-template-columns:repeat(3,minmax(0,1fr));gap:12px 16px}
+.som-certificates #mci-sections {margin-top:24px}
+.som-certificates #mci-sections h3 {font-size:15px;margin:0;line-height:1.4}
+.som-certificates .mci-section-options {display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:4px 20px;padding:10px 0 16px;border-bottom:1px solid #dbe5e8}
+.som-certificates #mci-form .mci-section-option {display:flex;flex-direction:row;justify-content:flex-start;align-items:center;gap:10px;min-height:40px;margin:0;padding:6px 0;text-align:left;cursor:pointer}
+.som-certificates #mci-form .mci-section-option input[type=checkbox] {appearance:auto;flex:0 0 18px;width:18px;height:18px;min-width:18px;min-height:18px;max-width:18px;margin:0;padding:0;accent-color:#007c82}
+.som-certificates .mci-section-option span {flex:1;min-width:0;overflow-wrap:anywhere;font-size:13px;line-height:1.4}
+.som-certificates .mci-text-section {padding:16px 0;border-bottom:1px solid #dbe5e8}
+.som-certificates .mci-text-section header {display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:10px}
+.som-certificates .mci-text-block {display:grid;grid-template-columns:minmax(0,1fr) 40px;gap:8px;align-items:start;margin-bottom:12px}
+.som-certificates #mci-form .mci-text-block [data-remove] {margin-top:24px}
+.som-certificates .mci-text-block textarea {width:100%;min-height:96px}
+@media(max-width:1000px) {.som-certificates #mci-form .cert-fields,.som-certificates .mci-section-options{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media(max-width:600px) {.som-certificates #mci-form .cert-fields,.som-certificates .mci-section-options{grid-template-columns:1fr}}
 @media(max-width:760px) {.som-certificates{padding:12px}.som-certificates .cert-editor{grid-template-columns:1fr}.som-certificates .cert-sections{position:static;flex-direction:row;overflow:auto;flex-wrap:wrap}.som-certificates .cert-fields{grid-template-columns:1fr}.som-certificates .cert-actions{position:static}}
