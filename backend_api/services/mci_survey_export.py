@@ -96,6 +96,8 @@ def build_word(row):
         add(heading)
         if key == 'representatives':
             blocks = [f'Master: {content.master}', f'Chief officer: {content.chief_officer}', f'Surveyor: {content.surveyor}'] + blocks
+        elif key == 'enclosure':
+            blocks = ['Picture link: ' + '\n'.join(blocks)]
         for text in blocks:
             p = deepcopy(normal._p)
             set_text(p, text)

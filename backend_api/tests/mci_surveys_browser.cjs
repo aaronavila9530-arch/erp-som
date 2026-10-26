@@ -34,6 +34,14 @@ async function main(){
   assert.equal(await page.locator('[data-block=work]').inputValue(),'Preserved text');
   await page.locator('[data-enable=work]').uncheck();await page.locator('[data-enable=work]').check();assert.equal(await page.locator('[data-block=work]').inputValue(),'Preserved text');
   await page.locator('[data-add=work]').click();assert.equal(await page.locator('[data-block=work]').count(),2);await page.locator('[data-remove=work]').last().click();
+  await page.locator('[data-enable=enclosure]').check();
+  assert.equal(await page.locator('[data-block=enclosure]').count(),1);
+  assert.equal(await page.locator('[data-add=enclosure], [data-remove=enclosure]').count(),0);
+  await page.getByLabel('Picture link',{exact:true}).fill('https://example.com/pictures');
+  await page.locator('[data-enable=enclosure]').uncheck();
+  await page.locator('[data-enable=enclosure]').check();
+  assert.equal(await page.getByLabel('Picture link',{exact:true}).inputValue(),'https://example.com/pictures');
+  await page.locator('[data-enable=enclosure]').uncheck();
   const dir=fs.mkdtempSync(path.join(require('os').tmpdir(),'mci-web-'));
   for(const width of [1440,800,390]){
    await page.setViewportSize({width,height:1000});assert(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth));
