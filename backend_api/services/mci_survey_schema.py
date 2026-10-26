@@ -18,6 +18,13 @@ SECTION_TITLES = {
     "conclusion": "CONCLUSION",
     "enclosure": "ENCLOSURE",
 }
+SECTION_GROUPS = {
+    'instructions': ('work', 'limitations', 'chronology', 'representatives'),
+    'findings': ('visual', 'provided', 'missing'),
+    'conclusion': (),
+    'enclosure': (),
+}
+SECTION_PARENTS = {child: parent for parent, children in SECTION_GROUPS.items() for child in children}
 
 
 class TextBlock(BaseModel):
@@ -34,6 +41,7 @@ class OptionalSection(BaseModel):
 
 class SurveyContent(BaseModel):
     model_config = ConfigDict(extra="forbid")
+    hierarchy_version: Literal[1, 2] = 1
     imo: str = Field(default="", max_length=100)
     length_and_tonnage: str = Field(default="", max_length=1000)
     cargo: str = Field(default="", max_length=3000)
@@ -79,6 +87,24 @@ class SurveySave(BaseModel):
 
 def export_sections(content: SurveyContent):
     """Fixed template order, never request-dictionary order or stale disabled text."""
+    content = hierarchical_content(content)
     return [(key, SECTION_TITLES[key], [block.text for block in content.sections[key].blocks
                                       if block.text.strip()])
-            for key in SECTION_TITLES if key in content.sections and content.sections[key].enabled]
+            for key in SECTION_TITLES if key in content.sections and content.sections[key].enabled
+            and (key not in SECTION_PARENTS or content.sections.get(SECTION_PARENTS[key], OptionalSection()).enabled)]
+
+
+def hierarchical_content(content: SurveyContent):
+    result = content.model_copy(deep=True)
+    if result.hierarchy_version == 1:
+        # Old flat reports allowed children without a selected parent.
+        for parent, children in SECTION_GROUPS.items():
+            if any(result.sections.get(child, OptionalSection()).enabled for child in children):
+                result.sections.setdefault(parent, OptionalSection()).enabled = True
+        result.hierarchy_version = 2
+    return result
+
+
+def service_location(service):
+    return ', '.join(str(service.get(key) or '').strip() for key in ('puerto', 'pais')
+                     if str(service.get(key) or '').strip())

@@ -64,6 +64,13 @@
 .som-certificates .mci-text-block {display:grid;grid-template-columns:minmax(0,1fr) 40px;gap:8px;align-items:start;margin-bottom:12px}
 .som-certificates #mci-form .mci-text-block [data-remove] {margin-top:24px}
 .som-certificates .mci-text-block textarea {width:100%;min-height:96px}
+.som-certificates .mci-section-options.mci-hierarchy {grid-template-columns:repeat(2,minmax(0,1fr));align-items:start;gap:12px 28px}
+.som-certificates .mci-parent-option {font-weight:600}
+.som-certificates .mci-subsections {margin-left:9px;padding-left:18px;border-left:1px solid #dbe5e8}
+.som-certificates .mci-child-option:has(input:disabled) {color:#65757c}
+.som-certificates .mci-editor-group {margin-top:20px}
+.som-certificates #mci-sections .mci-group-title {padding:10px 0;border-bottom:2px solid #007c82}
 @media(max-width:1000px) {.som-certificates #mci-form .cert-fields,.som-certificates .mci-section-options{grid-template-columns:repeat(2,minmax(0,1fr))}}
 @media(max-width:600px) {.som-certificates #mci-form .cert-fields,.som-certificates .mci-section-options{grid-template-columns:1fr}}
+@media(max-width:600px) {.som-certificates .mci-section-options.mci-hierarchy{grid-template-columns:1fr}}
 @media(max-width:760px) {.som-certificates{padding:12px}.som-certificates .cert-editor{grid-template-columns:1fr}.som-certificates .cert-sections{position:static;flex-direction:row;overflow:auto;flex-wrap:wrap}.som-certificates .cert-fields{grid-template-columns:1fr}.som-certificates .cert-actions{position:static}}

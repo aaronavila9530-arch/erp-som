@@ -41,6 +41,22 @@ class SurveySchemaTests(unittest.TestCase):
             with self.subTest(content=content), self.assertRaises(ValidationError):
                 SurveyContent(**content)
 
+    def test_parent_gates_children_without_erasing_text(self):
+        content = SurveyContent(hierarchy_version=2, sections={
+            'instructions': {'enabled': False},
+            'work': {'enabled': True, 'blocks': [{'text':'Keep this'}]},
+            'findings': {'enabled': True},
+            'provided': {'enabled': True, 'blocks': [{'text':'Document A'}]},
+        })
+        self.assertEqual([s[0] for s in export_sections(content)], ['findings','provided'])
+        self.assertEqual(content.sections['work'].blocks[0].text, 'Keep this')
+        content.sections['instructions'].enabled = True
+        self.assertEqual([s[0] for s in export_sections(content)], ['instructions','work','findings','provided'])
+
+    def test_legacy_flat_reports_keep_visible_children(self):
+        content = SurveyContent(sections={'visual': {'enabled': True}})
+        self.assertEqual([s[0] for s in export_sections(content)], ['findings','visual'])
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -12,6 +12,23 @@ from services.certificate_web_export import build
 
 
 class ExportTests(unittest.TestCase):
+    def test_english_dates_and_hierarchical_headings(self):
+        row = dict(company_code='MCI-CR', kind='condition', vessel='QA VESSEL', requested_by='QA CLIENT',
+                   report_number='QA-REPORT', location='Caldera, Costa Rica', content=dict(
+                       hierarchy_version=2, title='DO NOT PRINT', location='WRONG LOCATION',
+                       issue_date='2026-10-26', period_start='2026-10-26T09:30',
+                       sections={key:dict(enabled=True,blocks=[]) for key in ('instructions','work','findings','visual','provided','missing')}))
+        doc = Document(BytesIO(build_word(row)))
+        text = '\n'.join(p.text for p in doc.paragraphs)
+        self.assertIn('Vessel Condition Survey\nCaldera, Costa Rica',text)
+        self.assertNotIn('DO NOT PRINT',text)
+        self.assertNotIn('WRONG LOCATION',text)
+        self.assertIn('1. INSTRUCTIONS, SCOPE AND METHODOLOGY',text)
+        self.assertIn('2.2 Documentation provided',text)
+        self.assertIn('2.3 Documentation not provided',text)
+        self.assertEqual(doc.tables[0].cell(5,1).text,'October 26, 2026')
+        self.assertEqual(doc.tables[0].cell(4,1).text,'October 26, 2026 09:30 LT')
+
     def test_template_parts_and_disabled_sections(self):
         row = dict(company_code='MCI-CR', vessel='QA VESSEL', requested_by='QA CLIENT',
                    report_number='QA-REPORT', content=dict(sections={

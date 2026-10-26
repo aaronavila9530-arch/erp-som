@@ -9,6 +9,14 @@ from docx.text.paragraph import Paragraph
 from services.mci_survey_schema import SurveyContent, export_sections
 
 TEMPLATES = Path(__file__).resolve().parents[1] / 'templates'
+MONTHS = ('January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December')
+
+
+def english_date(value, time=False):
+    if not value:
+        return ''
+    result = f'{MONTHS[value.month-1]} {value.day}, {value.year}'
+    return result + (value.strftime(' %H:%M') + ' LT' if time else '')
 
 
 def set_text(p, value):
@@ -48,11 +56,12 @@ def build_word(row):
         return element
     add(clone('PROFESSIONAL TECHNICAL REPORT'))
     add(clone('M/V LINA AKSOY', row['vessel']))
-    add(clone('Multiple mooring-line failures during bulk cargo discharge\nBerth No. 4 - Puerto Caldera, Costa Rica', content.title+'\n'+content.location))
+    report_type = {'vessel':'Vessel Survey', 'condition':'Vessel Condition Survey', 'cargo':'Cargo Condition Survey'}.get(row.get('kind'), 'Survey Report')
+    add(clone('Multiple mooring-line failures during bulk cargo discharge\nBerth No. 4 - Puerto Caldera, Costa Rica', report_type+'\n'+row.get('location', content.location)))
     table = deepcopy(source.tables[0]._tbl)
     values = [row['requested_by'], f"{row['vessel']} / IMO {content.imo}", content.length_and_tonnage,
-              content.cargo, ' - '.join(d.strftime('%d/%m/%Y %H:%M') for d in (content.period_start,content.period_end) if d),
-              content.issue_date.strftime('%d/%m/%Y') if content.issue_date else '', content.report_status]
+              content.cargo, ' - '.join(english_date(d, time=True) for d in (content.period_start,content.period_end) if d),
+              english_date(content.issue_date), content.report_status or 'Draft']
     for tr, value in zip(table.xpath('./w:tr'), values):
         cell = tr.xpath('./w:tc')[1]
         paragraphs = cell.xpath('./w:p')
@@ -71,8 +80,20 @@ def build_word(row):
         'conclusion':'2. CONCLUSION', 'enclosure':'3. ENCLOSURE',
     }
     normal = next(p for p in source.paragraphs if p.text.strip() == 'Master:')
+    headings = {'instructions':'1. INSTRUCTIONS, SCOPE AND METHODOLOGY',
+                'work':'1.1 Work performed', 'limitations':'1.2 Main limitations of this report',
+                'chronology':'1.3 Time and place of arrival and chronology of events:',
+                'representatives':'Representatives', 'findings':'2. SURVEY FINDINGS',
+                'visual':'2.1 Visual inspection', 'provided':'2.2 Documentation provided',
+                'missing':'2.3 Documentation not provided', 'conclusion':'3. CONCLUSION', 'enclosure':'4. ENCLOSURE'}
     for key, title, blocks in export_sections(content):
-        add(clone(heading_sources[key]))
+        heading = clone(heading_sources[key], headings[key])
+        # Explicit hierarchical labels must not inherit the template's flat list.
+        ppr = heading.get_or_add_pPr()
+        ppr.get_or_add_keepNext().val = True
+        numbering = ppr.get_or_add_numPr()
+        numbering.get_or_add_numId().val = 0
+        add(heading)
         if key == 'representatives':
             blocks = [f'Master: {content.master}', f'Chief officer: {content.chief_officer}', f'Surveyor: {content.surveyor}'] + blocks
         for text in blocks:

@@ -17,13 +17,14 @@ class MCISurveyTests(unittest.TestCase):
 
     def test_identity_derived_from_service(self):
         conn=MagicMock();cur=conn.cursor.return_value.__enter__.return_value
-        cur.fetchone.side_effect=[{'num_informe':'QA-1','buque_contenedor':'MV QA','cliente':'CLIENT'},
+        cur.fetchone.side_effect=[{'num_informe':'QA-1','buque_contenedor':'MV QA','cliente':'CLIENT','puerto':'Caldera','pais':'Costa Rica'},
                                  {'id':1,'updated_at':'now','content':{}}]
         ctx={'permissions':{'create':True}}
-        persist(SurveySave(kind='cargo',service_id=1,content={}),ctx,conn)
+        persist(SurveySave(kind='cargo',service_id=1,content={'location':'Wrong location'}),ctx,conn)
         sql,params=cur.execute.call_args_list[-1].args
         self.assertIn('INSERT INTO mci_generic_surveys',sql)
         self.assertEqual(params[2:5],('QA-1','MV QA','CLIENT'))
+        self.assertEqual(params[5].adapted['location'], 'Caldera, Costa Rica')
         conn.commit.assert_called_once()
 
     def test_wrong_company_service_cannot_create(self):

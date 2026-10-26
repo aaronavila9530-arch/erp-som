@@ -10,7 +10,7 @@ from psycopg2.extras import RealDictCursor, Json
 from database import get_db
 from routers.container_web import access, require, version
 from routers.certificates_web import StatusInput
-from services.mci_survey_schema import SurveySave, SurveyContent, SECTION_TITLES
+from services.mci_survey_schema import SurveySave, SurveyContent, SECTION_TITLES, SECTION_GROUPS, hierarchical_content, service_location
 
 router = APIRouter(prefix='/informes/mci-surveys', tags=['MCI Surveys Web'])
 
@@ -29,6 +29,16 @@ def record(cur, rid, lock=False):
     return row
 
 
+def enrich(cur, row):
+    row = dict(row)
+    cur.execute("SELECT puerto,pais FROM servicios WHERE consec=%s AND company_code='MCI-CR'", (row['service_id'],))
+    service = cur.fetchone()
+    row['location'] = service_location(service or {})
+    row['content'] = hierarchical_content(SurveyContent.model_validate(row['content'])).model_dump(mode='json')
+    row['content']['location'] = row['location']
+    return row
+
+
 @router.get('/editor.js')
 def asset():
     return FileResponse(Path(__file__).resolve().parents[1] / 'assets/mci_surveys/editor.js', media_type='text/javascript')
@@ -39,7 +49,7 @@ def bootstrap(ctx=Depends(mci_access), conn=Depends(get_db)):
     with conn.cursor() as cur:
         cur.execute("SELECT to_regclass('public.mci_generic_surveys') IS NOT NULL")
         ready = cur.fetchone()[0]
-    return dict(ready=ready, permissions=ctx['permissions'], sections=SECTION_TITLES)
+    return dict(ready=ready, permissions=ctx['permissions'], sections=SECTION_TITLES, groups=SECTION_GROUPS)
 
 
 @router.get('')
@@ -59,7 +69,7 @@ def listing(kind: str, q: str = Query('', max_length=150), offset: int = Query(0
 @router.get('/{rid}')
 def detail(rid: int, ctx=Depends(mci_access), conn=Depends(get_db)):
     with conn.cursor(cursor_factory=RealDictCursor) as cur:
-        row = record(cur, rid)
+        row = enrich(cur, record(cur, rid))
     return dict(data=row, version=version(row))
 
 
@@ -75,13 +85,15 @@ def persist(body, ctx, conn, rid=None):
                     raise HTTPException(409, 'Rechace el informe aprobado antes de editarlo.')
                 if old['service_id'] != body.service_id or old['kind'] != body.kind:
                     raise HTTPException(422, 'No se puede cambiar el servicio ni el tipo de informe.')
-            cur.execute("""SELECT consec,num_informe,buque_contenedor,cliente FROM servicios
+            cur.execute("""SELECT consec,num_informe,buque_contenedor,cliente,puerto,pais FROM servicios
                 WHERE consec=%s AND company_code='MCI-CR' AND NULLIF(TRIM(num_informe),'') IS NOT NULL""", (body.service_id,))
             service = cur.fetchone()
             if not service:
                 raise HTTPException(404, 'Servicio MCI no encontrado o sin numero de informe.')
             status = 'Pending for review' if body.submit else 'Draft'
-            content = Json(body.content.model_dump(mode='json'))
+            normalized = hierarchical_content(body.content)
+            normalized.location = service_location(service)
+            content = Json(normalized.model_dump(mode='json'))
             if rid:
                 cur.execute("""UPDATE mci_generic_surveys SET content=%s,status=%s,updated_at=%s
                     WHERE id=%s RETURNING *""", (content,status,datetime.now(timezone.utc),rid))
@@ -92,6 +104,8 @@ def persist(body, ctx, conn, rid=None):
                     (body.kind,body.service_id,service['num_informe'],service['buque_contenedor'] or '',
                      service['cliente'] or '',content,status))
             row = cur.fetchone()
+            row = dict(row)
+            row['location'] = normalized.location
         conn.commit()
         return dict(data=row, version=version(row))
     except Exception:
@@ -121,7 +135,7 @@ def review(rid: int, body: StatusInput, ctx=Depends(mci_access), conn=Depends(ge
                 raise HTTPException(409,'Envie el informe a revision antes de aprobarlo.')
             cur.execute('UPDATE mci_generic_surveys SET status=%s,updated_at=%s WHERE id=%s RETURNING *',
                         (body.status,datetime.now(timezone.utc),rid))
-            row=cur.fetchone()
+            row=enrich(cur,cur.fetchone())
         conn.commit()
         return dict(data=row,version=version(row))
     except Exception:
@@ -132,7 +146,7 @@ def review(rid: int, body: StatusInput, ctx=Depends(mci_access), conn=Depends(ge
 @router.get('/{rid}/export/{format}')
 def export(rid: int, format: Literal['word','pdf'], ctx=Depends(mci_access), conn=Depends(get_db)):
     with conn.cursor(cursor_factory=RealDictCursor) as cur:
-        row=dict(record(cur,rid))
+        row=enrich(cur,record(cur,rid))
     try:
         from services.mci_survey_export import build_word
         content=build_word(row)
