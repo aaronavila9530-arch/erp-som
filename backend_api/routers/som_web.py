@@ -1472,7 +1472,7 @@ def som_web_home() -> HTMLResponse:
   <script src="/informes/logra/assets/logra.js?v=20261019-1"></script>
   <link rel="stylesheet" href="/informes/certificates/assets/certificates.css?v=20261026-1">
   <script src="/informes/certificates/assets/certificates.js?v=20261023-1"></script>
-  <script src="/informes/mci-surveys/editor.js?v=20261026-2"></script>
+  <script src="/informes/mci-surveys/editor.js?v=20261026-3"></script>
   <link rel="stylesheet" href="/comercial/web/assets/comercial.css?v={asset_version}">
   <script src="/comercial/web/assets/comercial.js?v={asset_version}"></script>
   <link rel="stylesheet" href="/som/admin-assets/admin.css?v={asset_version}">

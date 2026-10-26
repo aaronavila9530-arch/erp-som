@@ -36,6 +36,8 @@ async function main(){
   await page.locator('[data-add=work]').click();assert.equal(await page.locator('[data-block=work]').count(),2);await page.locator('[data-remove=work]').last().click();
   await page.locator('[data-enable=enclosure]').check();
   assert.equal(await page.locator('[data-block=enclosure]').count(),1);
+  assert.equal(await page.locator('input#mci-picture-link').count(),1);
+  assert.equal(await page.locator('#mci-picture-link').getAttribute('inputmode'),'url');
   assert.equal(await page.locator('[data-add=enclosure], [data-remove=enclosure]').count(),0);
   await page.getByLabel('Picture link',{exact:true}).fill('https://example.com/pictures');
   await page.locator('[data-enable=enclosure]').uncheck();
