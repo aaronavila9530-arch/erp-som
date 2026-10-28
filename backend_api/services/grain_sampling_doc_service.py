@@ -20,7 +20,7 @@ from datetime import datetime
 # GENERATE GRAIN SAMPLING WORD REPORT (FORMAT PRESERVING)
 # ============================================================
 
-def generate_grain_sampling_doc(data: dict, *, output_path=None) -> str:
+def generate_grain_sampling_doc(data: dict, *, output_path=None, web_layout=False) -> str:
 
     # ========================================================
     # LOAD TEMPLATE
@@ -445,7 +445,11 @@ def generate_grain_sampling_doc(data: dict, *, output_path=None) -> str:
 
     # El template de muestreo ya trae su encabezado institucional como imagen.
     # No aplicar branding global aqui porque borra ese header del documento.
-    apply_docx_autofit(doc)
+    if web_layout:
+        from services.web_docx_layout import fit_web_docx
+        fit_web_docx(doc)
+    else:
+        apply_docx_autofit(doc)
     doc.save(output_path)
 
     return output_path

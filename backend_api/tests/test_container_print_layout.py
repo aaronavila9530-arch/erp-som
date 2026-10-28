@@ -21,7 +21,7 @@ class ContainerPrintTests(unittest.TestCase):
                     conclusion='Conclusion.\n\n' * 20,
                     picture_link='https://example.com/' + 'x' * 200)
 
-    def check(self, sheet):
+    def check(self, sheet, continuation=None):
         self.assertEqual(sheet.page_setup.orientation, 'landscape')
         self.assertEqual(sheet.page_setup.fitToWidth, 1)
         self.assertEqual(sheet.page_setup.fitToHeight, 0)
@@ -31,7 +31,11 @@ class ContainerPrintTests(unittest.TestCase):
         self.assertEqual(sheet['AF53'].value, 24.067)
         self.assertEqual(sheet['AF53'].number_format, 'General')
         self.assertEqual(sheet['A31'].value, self.report()['remarks'])
-        self.assertEqual(sheet['A37'].value, self.report()['conclusion'])
+        if continuation is None:
+            self.assertEqual(sheet['A37'].value, self.report()['conclusion'])
+        else:
+            self.assertIn('See continuation:', sheet['A37'].value)
+            self.assertIn(self.report()['conclusion'], ''.join(str(c.value or '') for row in continuation for c in row))
         self.assertEqual(sheet['A42'].hyperlink.target, self.report()['picture_link'])
         for address in ('A26', 'I14', 'A31', 'A37', 'A42', 'K49'):
             self.assertTrue(sheet[address].alignment.wrap_text)
@@ -51,7 +55,7 @@ class ContainerPrintTests(unittest.TestCase):
 
     def test_web_export(self):
         book = load_workbook(BytesIO(build(self.report(), 'Customer', 'excel')))
-        self.check(book.active)
+        self.check(book.active, book['Continuation'])
         book.close()
 
     def test_numeric_looking_text_is_not_rounded_by_template(self):

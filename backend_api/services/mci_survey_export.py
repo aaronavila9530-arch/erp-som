@@ -172,5 +172,7 @@ def build_word(row):
                 break
     setting = OxmlElement('w:updateFields'); setting.set(qn('w:val'), 'true')
     doc.settings.element.append(setting)
+    from services.web_docx_layout import fit_web_docx
+    fit_web_docx(doc)
     output = BytesIO(); doc.save(output)
     return output.getvalue()

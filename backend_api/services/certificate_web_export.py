@@ -95,6 +95,18 @@ def excel(kind, data, target):
                     boxes.append(f"{col}{r+j}:{'E' if i <= 3 else 'I'}{r+j}")
         for address in boxes:
             _merge(sheet, address)
+        from services.web_excel_layout import continue_long_cells
+        continuation_fields = dict(CELL_FIELDS[kind])
+        if kind == 'sampling':
+            for i in range(1, 11):
+                continuation_fields[f"{'C' if i <= 5 else 'H'}{20 + ((i-1)%5)*2}"] = f'Hold {i} seals'
+            continuation_fields['A16'] = 'Inspected holds'
+        if kind == 'sealing':
+            for i in range(1, 7):
+                for j in range(3):
+                    continuation_fields[f"{'C' if i <= 3 else 'H'}{15 + ((i-1)%3)*6+j}"] = f'Hold {i} seal {j+1}'
+        continuation = continue_long_cells(book, sheet, continuation_fields,
+            data.get('certificate_no') or data.get('report_no') or data.get('report_number'))
         for row in sheet:
             for cell in row:
                 if cell.value in (None, ""):
@@ -122,7 +134,7 @@ def excel(kind, data, target):
                 a.wrap_text, a.shrink_to_fit, a.vertical = True, False, "top"
                 cell.alignment = a
         for ws in book:
-            ws.sheet_state = "visible" if ws == sheet else "hidden"
+            ws.sheet_state = "visible" if ws == sheet or ws == continuation else "hidden"
         book.active = book.index(sheet)
         sheet.print_area = area
         sheet.page_setup.fitToWidth, sheet.page_setup.fitToHeight = 1, 0
@@ -161,6 +173,8 @@ def word(kind, data, target):
                         offset = right
             replace_placeholders(paragraph, values)
     apply_mci_docx_branding(doc, data)
+    from services.web_docx_layout import fit_web_docx
+    fit_web_docx(doc)
     doc.save(target)
 
 
@@ -169,7 +183,7 @@ def build(kind, data, format):
         from docx import Document
         from services.vessel_condition_survey_word_service import VesselConditionSurveyWordService
         from services.vessel_cargo_condition_word_service import VesselCargoConditionWordService
-        from services.template_autofit import apply_docx_autofit
+        from services.web_docx_layout import fit_web_docx
         if data.get("company_code") != "MSL-CR":
             raise ValueError("MSL templates require an MSL record")
         service = (VesselConditionSurveyWordService if kind == "condition" else VesselCargoConditionWordService)()
@@ -178,7 +192,7 @@ def build(kind, data, format):
             doc = Document(service._get_template_path())
             service._remove_null_paragraphs(doc, data)
             service._replace_placeholders_everywhere(doc, data)
-            apply_docx_autofit(doc)
+            fit_web_docx(doc)
             doc.save(source)
             return (convert(source, Path(directory)) if format == "pdf" else source).read_bytes()
     if kind == "grain":
@@ -190,13 +204,13 @@ def build(kind, data, format):
             if format in ("presentation", "complete"):
                 from services.vessel_presentation_service import generate_vessel_presentation_doc
                 cover = Path(directory) / "presentation.docx"
-                generate_vessel_presentation_doc(data, docx_output=cover)
+                generate_vessel_presentation_doc(data, docx_output=cover, web_layout=True)
                 normalize(cover, presentation=True, customer=data.get('requested_by') or '')
                 apply_mci_web_branding(cover, data)
                 cover_pdf = convert(cover, Path(directory))
                 if format == "presentation":
                     return cover_pdf.read_bytes()
-            generate_grain_sampling_doc(data, output_path=str(source))
+            generate_grain_sampling_doc(data, output_path=str(source), web_layout=True)
             normalize(source)
             apply_mci_web_branding(source, data)
             if format == "complete":

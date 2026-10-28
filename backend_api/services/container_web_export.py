@@ -53,7 +53,7 @@ def presentation(report, customer, folder):
         ('Report No.',report.get('linked_report_number')),('Reference',report.get('report_no')),
         ('Vessel',report.get('vessel')),('To',customer),('On behalf of',report.get('on_behalf_of')),
         ('Inspection place',report.get('inspection_place')),('Inspection date',date),('Status',report.get('status')))]
-    table = Table(rows,colWidths=[125,350],hAlign='LEFT')
+    table = Table(rows,colWidths=[125,350],hAlign='LEFT', splitByRow=1, splitInRow=1)
     table.setStyle(TableStyle([('VALIGN',(0,0),(-1,-1),'TOP'),('LEFTPADDING',(0,0),(-1,-1),0),
         ('TOPPADDING',(0,0),(-1,-1),12),('BOTTOMPADDING',(0,0),(-1,-1),12),
         ('LINEBELOW',(0,0),(-1,-1),.4,colors.HexColor('#d5e0e4'))]))
@@ -78,6 +78,36 @@ def build(report, customer, kind):
                 shutil.copyfile(generated, source)
             finally:
                 generated.unlink(missing_ok=True)
+            from openpyxl import load_workbook
+            from services.web_excel_layout import continue_long_cells
+            from services.container_print_layout import fit_container_sheet
+            book = load_workbook(source)
+            try:
+                sheet = book.active
+                fields = {cell.coordinate: cell.coordinate for row in sheet for cell in row
+                          if isinstance(cell.value, str) and cell.value}
+                fields.update({'I14':'Inspection cause', 'B17':'Goods', 'A22':'Package and marking',
+                               'A25':'Goods condition', 'A27':'Damage details', 'A31':'Remarks',
+                               'A37':'Conclusion', 'A42':'Picture link', 'AF53':'Scope of inspection'})
+                continuation = continue_long_cells(book, sheet, fields,
+                    report.get('linked_report_number') or report.get('report_no'))
+                if continuation is not None:
+                    from services.container_report_excel_service import TEMPLATE_PATH
+                    original = load_workbook(TEMPLATE_PATH)
+                    try:
+                        for row, dimension in sheet.row_dimensions.items():
+                            dimension.height = original.active.row_dimensions[row].height
+                    finally:
+                        original.close()
+                    fit_container_sheet(sheet)
+                # Legacy printer DPI can make Excel discard landscape on a
+                # different machine. Keep only portable page geometry.
+                sheet.page_setup.horizontalDpi = None
+                sheet.page_setup.verticalDpi = None
+                sheet.page_setup.usePrinterDefaults = None
+                book.save(source)
+            finally:
+                book.close()
             from services.web_report_branding import apply_mci_web_branding
             apply_mci_web_branding(source, report)
             if kind == "excel":
