@@ -183,16 +183,31 @@ def build(kind, data, format):
         from docx import Document
         from services.vessel_condition_survey_word_service import VesselConditionSurveyWordService
         from services.vessel_cargo_condition_word_service import VesselCargoConditionWordService
-        from services.web_docx_layout import fit_web_docx
+        from services.web_docx_layout import fit_vessel_web_docx
+        from services.draft_survey_report_formatting import replace_placeholders
+        from services.vessel_web_fields import VESSEL_TYPES
         if data.get("company_code") != "MSL-CR":
             raise ValueError("MSL templates require an MSL record")
         service = (VesselConditionSurveyWordService if kind == "condition" else VesselCargoConditionWordService)()
         with tempfile.TemporaryDirectory(prefix="som_vessel_web_") as directory:
             source = Path(directory) / "report.docx"
             doc = Document(service._get_template_path())
-            service._remove_null_paragraphs(doc, data)
-            service._replace_placeholders_everywhere(doc, data)
-            fit_web_docx(doc)
+            values = {key: data.get(key) for key in VESSEL_TYPES[kind]['fields']}
+            values.update(data)
+            service._remove_null_paragraphs(doc, values)
+            replacements = {'{' + key + '}': service._safe(value) for key, value in values.items()}
+            def replace_in(container):
+                for paragraph in container.paragraphs:
+                    replace_placeholders(paragraph, replacements)
+                for table in container.tables:
+                    for row in table.rows:
+                        for cell in row.cells:
+                            replace_in(cell)
+            replace_in(doc)
+            for section in doc.sections:
+                replace_in(section.header)
+                replace_in(section.footer)
+            fit_vessel_web_docx(doc)
             doc.save(source)
             return (convert(source, Path(directory)) if format == "pdf" else source).read_bytes()
     if kind == "grain":

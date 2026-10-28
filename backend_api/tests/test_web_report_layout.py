@@ -119,6 +119,22 @@ class WebReportLayoutTests(unittest.TestCase):
         self.assertEqual(book['Continuation'].sheet_state, 'visible')
         book.close()
 
+    def test_vessel_footer_uses_fields_without_cached_literal_numbers(self):
+        from services.certificate_web_export import build
+        for kind in ('condition', 'cargo_condition'):
+            with self.subTest(kind=kind):
+                doc = Document(BytesIO(build(kind, {'company_code':'MSL-CR',
+                    'report_number':'QA-123', 'vessel':'QA VESSEL', 'narrative_1':'Details. '*200}, 'word')))
+                text = '\n'.join(p.text for p in doc.paragraphs)
+                self.assertNotIn('{narrative_', text)
+                self.assertNotIn('{service_start_date}', text)
+                footer = doc.sections[0].footer
+                self.assertNotIn('Page 1 of 5', '\n'.join(p.text for p in footer.paragraphs))
+                fields = footer._element.xpath('.//w:fldSimple/@w:instr')
+                self.assertIn('PAGE', fields)
+                self.assertIn('NUMPAGES', fields)
+                self.assertFalse(doc.element.body.xpath('.//wp:anchor'))
+
 
 if __name__ == '__main__':
     unittest.main()

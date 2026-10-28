@@ -1,5 +1,8 @@
 """Conservative flow layout for generated web documents, never source templates."""
 from docx.oxml.ns import qn
+from docx.oxml import OxmlElement
+from docx.enum.text import WD_ALIGN_PARAGRAPH
+from docx.shared import Inches, Pt
 from docx.table import Table
 from docx.text.paragraph import Paragraph
 
@@ -106,3 +109,55 @@ def fit_web_docx(doc):
             _paragraph(Paragraph(block, doc), width, height)
             if block.xpath('./w:pPr/w:sectPr'):
                 index += 1
+
+
+def fit_vessel_web_docx(doc):
+    """Repair known Condition/Cargo template footer and signature anchors."""
+    for paragraph in doc.paragraphs:
+        for anchor in list(paragraph._p.xpath('./w:r/w:drawing/wp:anchor')):
+            if not anchor.xpath('.//pic:pic'):
+                continue
+            extent = anchor.find(qn('wp:extent'))
+            if extent is None:
+                continue
+            width, height = int(extent.get('cx')), int(extent.get('cy'))
+            scale = min(1, int(Inches(.65)) / max(1, height))
+            for target in [extent] + anchor.xpath('.//a:xfrm/a:ext'):
+                target.set('cx', str(round(width * scale)))
+                target.set('cy', str(round(height * scale)))
+            inline = OxmlElement('wp:inline')
+            for tag in ('wp:extent', 'wp:effectExtent', 'wp:docPr', 'wp:cNvGraphicFramePr', 'a:graphic'):
+                element = anchor.find(qn(tag))
+                if element is not None:
+                    inline.append(element)
+            anchor.getparent().replace(anchor, inline)
+            paragraph.paragraph_format.keep_with_next = True
+            paragraph.paragraph_format.line_spacing = 1.0
+    seen = set()
+    for section in doc.sections:
+        footer = section.footer
+        if footer.part.partname in seen:
+            continue
+        seen.add(footer.part.partname)
+        for p in footer.paragraphs:
+            if 'Page ' not in p.text or not p._p.xpath('.//w:instrText'):
+                continue
+            label = ' '.join(p.text.split('Page ', 1)[0].split())
+            p.clear()
+            p.alignment = WD_ALIGN_PARAGRAPH.RIGHT
+            pf = p.paragraph_format
+            pf.tab_stops.clear_all()
+            pf.left_indent = pf.right_indent = pf.first_line_indent = Pt(0)
+            pf.space_before = pf.space_after = Pt(0)
+            pf.line_spacing = 1.0
+            if label:
+                p.add_run(label).font.size = Pt(7)
+                p.add_run().add_break()
+            p.add_run('Page ').font.size = Pt(8)
+            for instruction, suffix in [('PAGE', ' of '), ('NUMPAGES', '')]:
+                field = OxmlElement('w:fldSimple')
+                field.set(qn('w:instr'), instruction)
+                p._p.append(field)
+                if suffix:
+                    p.add_run(suffix).font.size = Pt(8)
+    fit_web_docx(doc)
