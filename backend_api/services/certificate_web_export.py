@@ -184,6 +184,7 @@ def build(kind, data, format):
     if kind == "grain":
         from services.grain_sampling_doc_service import generate_grain_sampling_doc
         from services.grain_web_layout import normalize
+        from services.web_report_branding import apply_mci_web_branding
         with tempfile.TemporaryDirectory(prefix="som_grain_web_") as directory:
             source = Path(directory) / "grain.docx"
             if format in ("presentation", "complete"):
@@ -191,11 +192,13 @@ def build(kind, data, format):
                 cover = Path(directory) / "presentation.docx"
                 generate_vessel_presentation_doc(data, docx_output=cover)
                 normalize(cover, presentation=True, customer=data.get('requested_by') or '')
+                apply_mci_web_branding(cover, data)
                 cover_pdf = convert(cover, Path(directory))
                 if format == "presentation":
                     return cover_pdf.read_bytes()
             generate_grain_sampling_doc(data, output_path=str(source))
             normalize(source)
+            apply_mci_web_branding(source, data)
             if format == "complete":
                 from pypdf import PdfWriter
                 from io import BytesIO
@@ -211,4 +214,6 @@ def build(kind, data, format):
         folder = Path(directory)
         source = folder / ("certificate.docx" if spec["document"] == "word" else "certificate.xlsx")
         (word if spec["document"] == "word" else excel)(kind, data, source)
+        from services.web_report_branding import apply_mci_web_branding
+        apply_mci_web_branding(source, data)
         return (convert(source, folder) if format == "pdf" else source).read_bytes()

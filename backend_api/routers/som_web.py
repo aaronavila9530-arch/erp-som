@@ -5847,8 +5847,18 @@ def som_web_home() -> HTMLResponse:
       const html = `<!doctype html><html><head><meta charset="utf-8" /><style>.text-cell{mso-number-format:"\\@";}</style></head><body><h3>${esc(title)}</h3>${table}</body></html>`;
       downloadText(filename, html, "application/vnd.ms-excel;charset=utf-8");
     }
-    function downloadWordFile(filename, htmlBody) {
+    function downloadWordFile(filename, htmlBody, logoBase64 = "") {
       const html = `<!doctype html><html><head><meta charset="utf-8" /><style>body{font-family:Arial,sans-serif} table{border-collapse:collapse;width:100%} th,td{border:1px solid #999;padding:6px;font-size:10pt} th{background:#e9eef5}</style></head><body>${htmlBody}</body></html>`;
+      if (logoBase64) {
+        const boundary = "som_word_" + crypto.randomUUID();
+        const content = ['MIME-Version: 1.0', `Content-Type: multipart/related; boundary="${boundary}"`, '',
+          `--${boundary}`, 'Content-Type: text/html; charset="utf-8"', 'Content-Transfer-Encoding: base64', '',
+          btoa(unescape(encodeURIComponent(html))).match(/.{1,76}/g).join('\\r\\n'),
+          `--${boundary}`, 'Content-Type: image/png', 'Content-Transfer-Encoding: base64',
+          'Content-Location: mci-logo.png', '', logoBase64.match(/.{1,76}/g).join('\\r\\n'), `--${boundary}--`].join('\\r\\n');
+        downloadText(filename, content, "application/msword");
+        return;
+      }
       downloadText(filename, html, "application/msword;charset=utf-8");
     }
     function downloadCollectionsExcel() {
@@ -5856,8 +5866,9 @@ def som_web_home() -> HTMLResponse:
       const cols = ["codigo_cliente","nombre_cliente","tipo_factura","tipo_documento","numero_documento","fecha_emision","dias_credito","fecha_vencimiento","aging_dias","moneda","total","saldo_pendiente","num_informe","buque_contenedor","operacion","periodo_operacion","estado_factura","disputada"];
       downloadExcelFile(`collections_${new Date().toISOString().slice(0,10)}.xls`, collectionRows, cols, "Collections - detalle de facturas");
     }
-    function downloadCollectionsStatementWord() {
+    async function downloadCollectionsStatementWord() {
       if (!collectionRows.length) return alert("No hay información cargada para generar estado de cuenta.");
+      const company = selectedCompany();
       const cliente = collectionRows[0]?.nombre_cliente || "Cliente";
       const today = new Date().toISOString().slice(0,10);
       const total = collectionRows.reduce((sum,row) => sum + Number(row.saldo_pendiente || 0), 0);
@@ -5871,7 +5882,25 @@ def som_web_home() -> HTMLResponse:
         <p><strong>Total pendiente:</strong> ${Number(total).toLocaleString("en-US",{minimumFractionDigits:2, maximumFractionDigits:2})}</p>
         <p><strong>Overdue:</strong> ${Number(overdue).toLocaleString("en-US",{minimumFractionDigits:2, maximumFractionDigits:2})}</p>
         <table><thead><tr>${cols.map(c => `<th>${esc(c.replace(/_/g," "))}</th>`).join("")}</tr></thead><tbody>${rows}</tbody></table>`;
-      downloadWordFile(`estado_cuenta_${String(cliente).replace(/[^a-z0-9]+/gi,"_")}_${today}.doc`, body);
+      let logoBase64 = "";
+      let logoWidth = 0;
+      if (company === "MCI-CR") {
+        try {
+          const response = await fetch('/som/logo/mci');
+          if (!response.ok) throw new Error('Logo unavailable');
+          const bytes = new Uint8Array(await response.arrayBuffer());
+          const png = new DataView(bytes.buffer);
+          if (bytes.length < 24 || png.getUint32(0) !== 0x89504e47) throw new Error('Invalid logo');
+          logoWidth = Math.round(110 * png.getUint32(16) / png.getUint32(20));
+          if (!Number.isFinite(logoWidth) || logoWidth < 1 || logoWidth > 400) throw new Error('Invalid logo size');
+          logoBase64 = btoa(Array.from(bytes, value => String.fromCharCode(value)).join(''));
+          if (selectedCompany() !== company) return alert("La empresa cambió; genere nuevamente el estado de cuenta.");
+        } catch (error) {
+          return alert("No se pudo cargar el logo de MCI. Intente descargar nuevamente.");
+        }
+      }
+      const brandedBody = logoBase64 ? `<p><img src="mci-logo.png" width="${logoWidth}" height="110" alt="MCI" /></p>` + body : body;
+      downloadWordFile(`estado_cuenta_${String(cliente).replace(/[^a-z0-9]+/gi,"_")}_${today}.doc`, brandedBody, logoBase64);
     }
     function openCollectionDisputeForm() {
       const row = requireCollectionRow();

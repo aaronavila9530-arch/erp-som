@@ -78,6 +78,8 @@ def build(report, customer, kind):
                 shutil.copyfile(generated, source)
             finally:
                 generated.unlink(missing_ok=True)
+            from services.web_report_branding import apply_mci_web_branding
+            apply_mci_web_branding(source, report)
             if kind == "excel":
                 return source.read_bytes()
             report_pdf = convert(source, folder)
