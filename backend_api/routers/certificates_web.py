@@ -178,14 +178,15 @@ def bootstrap(ctx=Depends(access)):
 
 @router.get("/services")
 def services(q: str = Query("", max_length=150), offset: int = Query(0, ge=0),
-             ctx=Depends(access), conn=Depends(get_db)):
+             ctx=Depends(access), conn=Depends(get_db), kind: str = ''):
     with conn.cursor(cursor_factory=RealDictCursor) as cur:
         cur.execute("""SELECT consec,num_informe,cliente,buque_contenedor,continente,pais,puerto,operacion,fecha_inicio
             FROM servicios WHERE COALESCE(NULLIF(TRIM(company_code),''),'MSL-CR')=%s
             AND NULLIF(TRIM(num_informe),'') IS NOT NULL
+            AND (%s <> 'logistics' OR tipo='Buque')
             AND (%s='' OR CONCAT_WS(' ',num_informe,cliente,buque_contenedor) ILIKE %s)
             ORDER BY fecha_inicio DESC NULLS LAST,num_informe LIMIT 51 OFFSET %s""",
-            (ctx["company"], q, "%" + q + "%", offset))
+            (ctx["company"], kind, q, "%" + q + "%", offset))
         rows = cur.fetchall()
     return {"data": rows[:50], "more": len(rows) > 50}
 
@@ -327,7 +328,7 @@ def export(kind: str, rid: int, format: Literal["word", "excel", "pdf", "present
 
 def logistics_identity(cur, values, ctx):
     """Keep web identity service-derived without changing the desktop contract."""
-    cur.execute('SELECT cliente,buque_contenedor,puerto,pais FROM servicios WHERE num_informe=%s AND company_code=%s',
+    cur.execute("SELECT cliente,buque_contenedor,puerto,pais FROM servicios WHERE num_informe=%s AND company_code=%s AND tipo='Buque'",
                 (values['cert_no'], ctx['company']))
     service = cur.fetchone()
     if not service:

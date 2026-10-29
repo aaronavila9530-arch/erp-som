@@ -78,7 +78,7 @@
     }
     async function pickService(q="",offset=0) {
       s.mode='create';
-      const data=await api(`/services?q=${encodeURIComponent(q)}&offset=${offset}`);
+      const data=await api(`/services?q=${encodeURIComponent(q)}&offset=${offset}&kind=${encodeURIComponent(s.kind)}`);
       if(!alive())return;
       shell(`<form id="cert-service-search" class="cert-tools"><input name="q" value="${esc(q)}" placeholder="Informe, buque o cliente" aria-label="Buscar servicio"><button>Buscar servicio</button><button type="button" id="cert-back">Volver</button></form>
         <div class="cert-scroll"><table><thead><tr><th>Informe</th><th>Buque / contenedor</th><th>Cliente</th><th></th></tr></thead><tbody>${data.data.map((r,i)=>`<tr><td>${esc(r.num_informe)}</td><td>${esc(r.buque_contenedor)}</td><td>${esc(r.cliente)}</td><td><button data-service="${i}">Seleccionar</button></td></tr>`).join("") || '<tr><td colspan="4">No hay servicios.</td></tr>'}</tbody></table></div>

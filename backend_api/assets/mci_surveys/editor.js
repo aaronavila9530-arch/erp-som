@@ -41,7 +41,7 @@
       root.querySelectorAll('[data-open]').forEach(b=>b.onclick=()=>run(async()=>editor(await request('/informes/mci-surveys/'+b.dataset.open))));
     }
     async function services(q='',offset=0){
-      const d=await request(`/informes/certificates/services?q=${encodeURIComponent(q)}&offset=${offset}`);if(!live())return;
+      const d=await request(`/informes/certificates/services?q=${encodeURIComponent(q)}&offset=${offset}&kind=${encodeURIComponent(opts.kind)}`);if(!live())return;
       shell('create',`<form class="cert-tools" id="mci-service-search"><input name="q" placeholder="Search services" aria-label="Search services" value="${esc(q)}"><button>Search</button></form><div class="cert-scroll"><table><tbody>${d.data.map((r,i)=>`<tr><td>${esc(r.num_informe)}</td><td>${esc(r.buque_contenedor)}</td><td>${esc(r.cliente)}</td><td><button data-service="${i}">Create report</button></td></tr>`).join('')||'<tr><td>No services</td></tr>'}</tbody></table></div><button data-prev ${!offset?'disabled':''}>Previous</button><button data-next ${!d.more?'disabled':''}>Next</button>`);
       $('#mci-service-search').onsubmit=e=>{e.preventDefault();run(()=>services(new FormData(e.target).get('q')));};
       $('[data-prev]').onclick=()=>run(()=>services(q,Math.max(0,offset-50)));$('[data-next]').onclick=()=>run(()=>services(q,offset+50));

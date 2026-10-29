@@ -97,7 +97,8 @@ def persist(body, ctx, conn, rid=None):
                 if old['service_id'] != body.service_id or old['kind'] != body.kind:
                     raise HTTPException(422, 'No se puede cambiar el servicio ni el tipo de informe.')
             cur.execute("""SELECT consec,num_informe,buque_contenedor,cliente,puerto,pais FROM servicios
-                WHERE consec=%s AND company_code='MCI-CR' AND NULLIF(TRIM(num_informe),'') IS NOT NULL""", (body.service_id,))
+                WHERE consec=%s AND company_code='MCI-CR' AND NULLIF(TRIM(num_informe),'') IS NOT NULL"""
+                + (" AND tipo='Buque'" if body.kind == 'logistics' else ''), (body.service_id,))
             service = cur.fetchone()
             if not service:
                 raise HTTPException(404, 'Servicio MCI no encontrado o sin numero de informe.')
