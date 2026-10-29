@@ -179,6 +179,9 @@ def word(kind, data, target):
 
 
 def build(kind, data, format):
+    if kind == 'logistics':
+        from services.logistics_web_export import build as build_logistics
+        return build_logistics(data, format)
     if kind in ("condition", "cargo_condition"):
         from docx import Document
         from services.vessel_condition_survey_word_service import VesselConditionSurveyWordService

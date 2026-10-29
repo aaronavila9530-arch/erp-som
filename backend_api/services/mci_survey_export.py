@@ -56,7 +56,7 @@ def build_word(row):
         return element
     add(clone('PROFESSIONAL TECHNICAL REPORT'))
     add(clone('M/V LINA AKSOY', row['vessel']))
-    report_type = {'vessel':'Vessel Survey', 'condition':'Vessel Condition Survey', 'cargo':'Cargo Condition Survey'}.get(row.get('kind'), 'Survey Report')
+    report_type = {'vessel':'Vessel Survey', 'condition':'Vessel Condition Survey', 'cargo':'Cargo Condition Survey', 'logistics':'Logistics Supervision'}.get(row.get('kind'), 'Survey Report')
     add(clone('Multiple mooring-line failures during bulk cargo discharge\nBerth No. 4 - Puerto Caldera, Costa Rica', report_type+'\n'+row.get('location', content.location)))
     table = deepcopy(source.tables[0]._tbl)
     values = [row['requested_by'], f"{row['vessel']} / IMO {content.imo}", content.length_and_tonnage,
@@ -86,7 +86,20 @@ def build_word(row):
                 'representatives':'Representatives', 'findings':'2. SURVEY FINDINGS',
                 'visual':'2.1 Visual inspection', 'provided':'2.2 Documentation provided',
                 'missing':'2.3 Documentation not provided', 'conclusion':'3. CONCLUSION', 'enclosure':'4. ENCLOSURE'}
-    for key, title, blocks in export_sections(content):
+    sections = export_sections(content)
+    if row.get('kind') == 'logistics':
+        from services.mci_logistics_schema import TITLES, GROUPS
+        parents = {child:parent for parent,children in GROUPS.items() for child in children}
+        sections = [(key,TITLES[key],[b.text for b in content.sections[key].blocks if b.text.strip()])
+                    for key in TITLES if key in content.sections and content.sections[key].enabled
+                    and (key not in parents or (content.sections.get(parents[key]) and content.sections[parents[key]].enabled))]
+        heading_sources.update(particulars='SURVEY FINDINGS', process='SURVEY FINDINGS',
+                               documentary='2.1 Visual inspection', operational='2.1 Visual inspection', incidents='2.1 Visual inspection')
+        headings.update(particulars='2. VESSEL PARTICULARS', process='3. SUPERVISION PROCESS',
+                        findings='4. SURVEY FINDINGS', documentary='4.1 Documentary findings',
+                        operational='4.2 Operational control findings', incidents='4.3 Incidents',
+                        conclusion='5. CONCLUSION', enclosure='6. ENCLOSURE')
+    for key, title, blocks in sections:
         heading = clone(heading_sources[key], headings[key])
         # Explicit hierarchical labels must not inherit the template's flat list.
         ppr = heading.get_or_add_pPr()
@@ -96,6 +109,14 @@ def build_word(row):
         add(heading)
         if key == 'representatives':
             blocks = [f'Master: {content.master}', f'Chief officer: {content.chief_officer}', f'Surveyor: {content.surveyor}'] + blocks
+        elif key == 'particulars' and row.get('kind') == 'logistics':
+            blocks = [f'Vessel: {row["vessel"]}', f'Flag / port of registry: {content.flag_port_registry}',
+                      f'GRT: {content.grt}', f'NRT: {content.nrt}', f'IMO: {content.imo}',
+                      f'Year built: {content.build_year}'] + blocks
+        elif key == 'chronology' and row.get('kind') == 'logistics':
+            blocks = [f'{label}: {english_date(value)}' for label,value in (
+                ('Arrival',content.arrival_date), ('Inspection',content.inspection_date),
+                ('Supervision completed',content.supervision_completed_date)) if value] + blocks
         elif key == 'enclosure':
             blocks = ['Picture link: ' + '\n'.join(blocks)]
         for text in blocks:

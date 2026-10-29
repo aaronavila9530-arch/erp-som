@@ -28,6 +28,7 @@
       if(!live())return;
       root.innerHTML=`<header class="cert-head"><h2>${esc({vessel:'Vessel Survey',condition:'Vessel Condition Survey',cargo:'Cargo Condition Survey'}[opts.kind])}</h2><span>MCI-CR</span></header><nav class="cert-workflows">${s.boot?.permissions.create?`<button data-create aria-pressed="${mode==='create'}">Create</button>`:''}<button data-review aria-pressed="${mode==='review'}">Review</button></nav><p id="mci-error" role="alert"></p>${body}`;
       if(opts.kind==='container')$('h2').textContent='Container Survey Report';
+      if(opts.kind==='logistics')$('h2').textContent='Logistics Supervision';
       if(s.boot && !s.boot.ready){root.querySelectorAll('nav button').forEach(b=>b.disabled=true);return;}
       if($('[data-create]'))$('[data-create]').onclick=()=>{if(canLeave()){s.dirty=false;run(()=>services());}};
       $('[data-review]').onclick=()=>{if(canLeave()){s.dirty=false;run(list);}};
@@ -74,8 +75,15 @@
         root.querySelectorAll('[data-block]').forEach(t=>t.oninput=()=>{c.sections[t.dataset.block].blocks[+t.dataset.index].text=t.value;mark();});
         root.querySelectorAll('[data-add]').forEach(b=>b.onclick=()=>{c.sections[b.dataset.add].blocks.push({text:''});mark();sections();});
         root.querySelectorAll('[data-remove]').forEach(b=>b.onclick=()=>{const a=c.sections[b.dataset.remove].blocks,i=+b.dataset.index;if(a[i].text.trim()&&!confirm('Remove this text?'))return;a.splice(i,1);mark();sections();});
+        if(opts.kind==='logistics'&&editable&&window.SOMLogisticsAssist)root.querySelectorAll('textarea[data-block]').forEach(input=>window.SOMLogisticsAssist(input,{
+          request:body=>request('/informes/certificates/logistics-assist','POST',body),run,alive:live,
+          mark:()=>input.dispatchEvent(new Event('input',{bubbles:true}))
+        }));
       }
-      sections();root.querySelectorAll('#mci-form input[name]').forEach(el=>el.oninput=()=>{c[el.name]=el.value||(['issue_date','period_start','period_end'].includes(el.name)?null:'');mark();});
+      sections();root.querySelectorAll('#mci-form input[name]').forEach(el=>{
+        if(opts.kind==='logistics' && el.name.endsWith('_date'))el.type='date';
+        el.oninput=()=>{c[el.name]=el.value||((el.name.endsWith('_date')||el.name.startsWith('period_'))?null:'');mark();};
+      });
       async function save(submit){if(!editable)return;await run(async()=>{const d=await request('/informes/mci-surveys'+(row.id?'/'+row.id:''),row.id?'PATCH':'POST',{kind:opts.kind,service_id:row.service_id,content:c,version:payload.version,submit});if(live()){s.dirty=false;editor(d);$('#mci-save-state').textContent='Saved';}});}
       $('#mci-form').onsubmit=e=>{e.preventDefault();save(false);};if($('[data-submit]'))$('[data-submit]').onclick=()=>save(true);
       root.querySelectorAll('[data-status]').forEach(b=>b.onclick=()=>{if(s.dirty){$('#mci-error').textContent='Save changes before reviewing.';return;}if(!confirm('Confirm status change?'))return;run(async()=>editor(await request(`/informes/mci-surveys/${row.id}/status`,'POST',{version:payload.version,status:b.dataset.status})));});

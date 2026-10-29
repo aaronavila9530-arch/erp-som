@@ -12,6 +12,7 @@ from routers.container_web import access, require, version
 from routers.certificates_web import StatusInput
 from services.mci_survey_schema import SurveySave, SurveyContent, SECTION_TITLES, SECTION_GROUPS, hierarchical_content, service_location
 from services.mci_container_schema import TITLES as CONTAINER_TITLES, GROUPS as CONTAINER_GROUPS, FIELDS as CONTAINER_FIELDS
+from services.mci_logistics_schema import TITLES as LOGISTICS_TITLES, GROUPS as LOGISTICS_GROUPS, FIELDS as LOGISTICS_FIELDS
 
 router = APIRouter(prefix='/informes/mci-surveys', tags=['MCI Surveys Web'])
 
@@ -36,7 +37,7 @@ def enrich(cur, row):
     service = cur.fetchone()
     row['location'] = service_location(service or {})
     content = SurveyContent.model_validate(row['content'])
-    row['content'] = (content if row['kind'] == 'container' else hierarchical_content(content)).model_dump(mode='json')
+    row['content'] = (content if row['kind'] in ('container','logistics') else hierarchical_content(content)).model_dump(mode='json')
     row['content']['location'] = row['location']
     return row
 
@@ -52,15 +53,15 @@ def bootstrap(kind: str = 'vessel', ctx=Depends(mci_access), conn=Depends(get_db
         cur.execute("SELECT to_regclass('public.mci_generic_surveys') IS NOT NULL")
         ready = cur.fetchone()[0]
     return dict(ready=ready, permissions=ctx['permissions'],
-                sections=CONTAINER_TITLES if kind == 'container' else SECTION_TITLES,
-                groups=CONTAINER_GROUPS if kind == 'container' else SECTION_GROUPS,
-                fields=CONTAINER_FIELDS if kind == 'container' else None)
+                sections=CONTAINER_TITLES if kind == 'container' else LOGISTICS_TITLES if kind == 'logistics' else SECTION_TITLES,
+                groups=CONTAINER_GROUPS if kind == 'container' else LOGISTICS_GROUPS if kind == 'logistics' else SECTION_GROUPS,
+                fields=CONTAINER_FIELDS if kind == 'container' else LOGISTICS_FIELDS if kind == 'logistics' else None)
 
 
 @router.get('')
 def listing(kind: str, q: str = Query('', max_length=150), offset: int = Query(0, ge=0),
             ctx=Depends(mci_access), conn=Depends(get_db)):
-    if kind not in ('vessel','condition','cargo','container'):
+    if kind not in ('vessel','condition','cargo','container','logistics'):
         raise HTTPException(422, 'Tipo invalido')
     with conn.cursor(cursor_factory=RealDictCursor) as cur:
         cur.execute("""SELECT id,report_number,vessel,requested_by,status,updated_at FROM mci_generic_surveys
@@ -101,10 +102,10 @@ def persist(body, ctx, conn, rid=None):
             if not service:
                 raise HTTPException(404, 'Servicio MCI no encontrado o sin numero de informe.')
             status = 'Pending for review' if body.submit else 'Draft'
-            allowed = CONTAINER_TITLES if body.kind == 'container' else SECTION_TITLES
+            allowed = CONTAINER_TITLES if body.kind == 'container' else LOGISTICS_TITLES if body.kind == 'logistics' else SECTION_TITLES
             if set(body.content.sections) - allowed.keys():
                 raise HTTPException(422, 'Seccion incompatible con el tipo de informe.')
-            normalized = body.content.model_copy(deep=True) if body.kind == 'container' else hierarchical_content(body.content)
+            normalized = body.content.model_copy(deep=True) if body.kind in ('container','logistics') else hierarchical_content(body.content)
             normalized.location = service_location(service)
             content = Json(normalized.model_dump(mode='json'))
             if rid:

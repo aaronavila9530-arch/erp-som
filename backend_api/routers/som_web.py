@@ -1471,8 +1471,8 @@ def som_web_home() -> HTMLResponse:
   <link rel="stylesheet" href="/informes/logra/assets/logra.css?v=20261019-1">
   <script src="/informes/logra/assets/logra.js?v=20261019-1"></script>
   <link rel="stylesheet" href="/informes/certificates/assets/certificates.css?v=20261026-1">
-  <script src="/informes/certificates/assets/certificates.js?v=20261023-1"></script>
-  <script src="/informes/mci-surveys/editor.js?v=20261029-container-1"></script>
+  <script src="/informes/certificates/assets/certificates.js?v=20261029-logistics-1"></script>
+  <script src="/informes/mci-surveys/editor.js?v=20261029-logistics-1"></script>
   <link rel="stylesheet" href="/comercial/web/assets/comercial.css?v={asset_version}">
   <script src="/comercial/web/assets/comercial.js?v={asset_version}"></script>
   <link rel="stylesheet" href="/som/admin-assets/admin.css?v={asset_version}">
@@ -2461,7 +2461,7 @@ def som_web_home() -> HTMLResponse:
       }
       if (informesView === "vessels") {
         $("reportSubtypes").innerHTML='<nav class="som-report-tabs" aria-label="Informes de buques"><label for="vesselReportType">Tipo de informe</label><select id="vesselReportType"><option value="grain">Grain Sampling / Muestreos de Granos</option><option disabled>Draft Survey (no disponible en web)</option><option disabled>Bunker Survey (no disponible en web)</option></select></nav>';
-        for(const [value,label] of [['condition','Vessel Condition Survey'],['cargo_condition','Cargo Condition Survey'],...(selectedCompany()==='MCI-CR'?[['vessel','Vessel Survey']]:[])])$('vesselReportType').add(new Option(label,value));
+        for(const [value,label] of [['condition','Vessel Condition Survey'],['cargo_condition','Cargo Condition Survey'],['logistics','Logistics Supervision'],...(selectedCompany()==='MCI-CR'?[['vessel','Vessel Survey']]:[])])$('vesselReportType').add(new Option(label,value));
         if(vesselReportKind==='vessel'&&selectedCompany()!=='MCI-CR')vesselReportKind='grain';
         $('vesselReportType').value=vesselReportKind;
         $('vesselReportType').onchange=e=>{

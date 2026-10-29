@@ -30,3 +30,5 @@ def make_spec(kind):
 
 
 VESSEL_TYPES = {kind: make_spec(kind) for kind in ("condition", "cargo_condition")}
+from services.logistics_web_fields import SPEC as LOGISTICS_SPEC
+VESSEL_TYPES['logistics'] = LOGISTICS_SPEC

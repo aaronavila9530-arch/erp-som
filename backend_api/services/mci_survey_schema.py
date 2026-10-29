@@ -4,6 +4,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 from services.mci_container_schema import TITLES as CONTAINER_TITLES
+from services.mci_logistics_schema import TITLES as LOGISTICS_TITLES
 
 
 SECTION_TITLES = {
@@ -67,17 +68,26 @@ class SurveyContent(BaseModel):
     survey_place: str = Field(default="", max_length=1000)
     on_behalf_of: str = Field(default="", max_length=1000)
     receiver_representative: str = Field(default="", max_length=1000)
+    flag_port_registry: str = Field(default="", max_length=1000)
+    grt: str = Field(default="", max_length=100)
+    nrt: str = Field(default="", max_length=100)
+    build_year: str = Field(default="", max_length=100)
+    arrival_date: date | None = None
+    inspection_date: date | None = None
+    supervision_completed_date: date | None = None
     sections: dict[str, OptionalSection] = Field(default_factory=dict)
 
     @model_validator(mode="after")
     def validate_content(self):
-        if set(self.sections) - (SECTION_TITLES.keys() | CONTAINER_TITLES.keys()):
+        if set(self.sections) - (SECTION_TITLES.keys() | CONTAINER_TITLES.keys() | LOGISTICS_TITLES.keys()):
             raise ValueError("Unknown report section")
         if self.period_start and self.period_end:
             if (self.period_start.tzinfo is None) != (self.period_end.tzinfo is None):
                 raise ValueError("Both period dates must use the same timezone convention")
             if self.period_end < self.period_start:
                 raise ValueError("Inspection end precedes start")
+        if self.inspection_date and self.supervision_completed_date and self.supervision_completed_date < self.inspection_date:
+            raise ValueError('Supervision completion precedes inspection')
         total = sum(len(block.text) for section in self.sections.values() for block in section.blocks)
         if total > 500000:
             raise ValueError("Report narrative exceeds supported size")
@@ -90,7 +100,7 @@ class SurveyContent(BaseModel):
 
 class SurveySave(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    kind: Literal["vessel", "condition", "cargo", "container"]
+    kind: Literal["vessel", "condition", "cargo", "container", "logistics"]
     service_id: int = Field(gt=0)
     content: SurveyContent
     version: str | None = None

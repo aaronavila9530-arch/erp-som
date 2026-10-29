@@ -91,6 +91,10 @@
         const service=data.data[Number(b.dataset.service)], spec=s.boot.types[s.kind];
         const fields={[spec.number]:service.num_informe,port:service.puerto,country:service.pais,customer:service.cliente};
         if(s.kind!=="lashing") fields.vessel=service.buque_contenedor;
+        if(s.kind==='logistics') {
+          delete fields.vessel;
+          fields.vessel_name=service.buque_contenedor;
+        }
         if(s.kind==="grain") {
           for(const key of Object.keys(fields)) delete fields[key];
           Object.assign(fields,{cert_no:service.num_informe,vessel_name:service.buque_contenedor,requested_by:service.cliente});
@@ -120,9 +124,13 @@
         }).join("")}</div></details>`).join("")}</div></div>
         <footer class="cert-actions"><div class="cert-action-group"><span class="cert-action-label">Edicion</span>${editable?'<button type="submit" class="cert-primary">Guardar borrador</button><button type="button" id="cert-submit">Enviar a revision</button>':""}
         </div><div class="cert-action-group"><span class="cert-action-label">Revision</span>${row.id && s.boot.permissions.approve?'<button type="button" id="cert-approve">Aprobar</button><button type="button" id="cert-reject">Rechazar</button>':""}
-        </div><div class="cert-action-group"><span class="cert-action-label">Exportacion</span>${row.id?`<select id="cert-format" aria-label="Formato de exportacion"><option value="${spec.document}">${spec.document==="word"?"Word":"Excel"}</option><option value="pdf">Informe PDF</option>${s.kind==="grain"?'<option value="presentation">Presentacion PDF</option><option value="complete">Presentacion + informe PDF</option>':""}</select><button type="button" id="cert-export">Descargar</button>`:""}
+        </div><div class="cert-action-group"><span class="cert-action-label">Exportacion</span>${row.id?`<select id="cert-format" aria-label="Formato de exportacion"><option value="${spec.document}">${spec.document==="word"?"Word":"Excel"}</option><option value="pdf">Informe PDF</option>${['grain','logistics'].includes(s.kind)?'<option value="presentation">Presentacion PDF</option><option value="complete">Presentacion + informe PDF</option>':""}</select><button type="button" id="cert-export">Descargar</button>`:""}
         </div><span id="cert-save-state" class="cert-meta" role="status"></span></footer></form>`);
       $("#cert-form").prepend($(".cert-actions"));
+      if(s.kind==='logistics')for(const key of ['customer','vessel_name','port','country'])$(`[name="${key}"]`).readOnly=true;
+      if(s.kind==='logistics' && editable)root.querySelectorAll('textarea[name]').forEach(input=>window.SOMLogisticsAssist(input,{
+        request:body=>api('/logistics-assist','POST',body),run,alive,mark:()=>input.dispatchEvent(new Event('input',{bubbles:true}))
+      }));
       const groups=root.querySelectorAll('.cert-action-group');
       groups[0].hidden=!editable;
       groups[1].hidden=s.mode!=='review';
@@ -203,9 +211,29 @@
     }
     await run(async()=>{
       s.boot=await api("/bootstrap");
-      s.boot.types=Object.fromEntries(Object.entries(s.boot.types).filter(([k])=>options.kind ? k===options.kind : !['grain','condition','cargo_condition'].includes(k)));
+      s.boot.types=Object.fromEntries(Object.entries(s.boot.types).filter(([k])=>options.kind ? k===options.kind : !['grain','condition','cargo_condition','logistics'].includes(k)));
       if(alive())await list();
     });
   }
   window.SOMCertificates={mount,canLeave,destroy};
 })();
+
+window.SOMLogisticsAssist=(input,options)=>{
+  const tools=document.createElement('div');tools.className='cert-tools';
+  tools.innerHTML='<select aria-label="PORTIA language"><option value="EN">English</option><option value="ES">Espa\u00f1ol</option></select><button type="button">PORTIA</button><div class="cert-ai-result" hidden></div>';
+  input.after(tools);
+  tools.querySelector('button').onclick=()=>options.run(async()=>{
+    const original=input.value;
+    if(!original.trim()||original.length>6000)throw Error('PORTIA requires between 1 and 6000 characters.');
+    const result=await options.request({text:original,language:tools.querySelector('select').value});
+    if(!options.alive()||!input.isConnected)return;
+    const panel=tools.querySelector('div');panel.hidden=false;
+    panel.innerHTML='<label>PORTIA proposal<textarea readonly></textarea></label><button type="button" data-accept>Accept</button><button type="button" data-discard>Discard</button>';
+    panel.querySelector('textarea').value=result.text;
+    panel.querySelector('[data-accept]').onclick=()=>{
+      if(input.value!==original&&!confirm('The original text changed. Replace it with this proposal?'))return;
+      input.value=result.text;options.mark();panel.hidden=true;
+    };
+    panel.querySelector('[data-discard]').onclick=()=>panel.hidden=true;
+  });
+};

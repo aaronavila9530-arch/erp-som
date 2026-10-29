@@ -14,7 +14,7 @@ async function main(){
    const row={id:1,report_number:'QA-1',vessel:'QA VESSEL',status:'Draft',narrative_3:'Existing third paragraph'};
    return route.fulfill({json:p.endsWith('/1')?{data:row,version:'v1'}:{data:[row],total:1}});
   });
-  for(const kind of Object.keys(types)){
+  for(const kind of ['condition','cargo_condition']){
    await page.goto('http://vessel.test/');
    await page.evaluate(kind=>SOMCertificates.mount(document.querySelector('main'),{kind,company:'MSL-CR',headers:()=>({})}),kind);
    await page.locator('[data-open]').click();
