@@ -11,6 +11,7 @@ from database import get_db
 from routers.container_web import access, require, version
 from routers.certificates_web import StatusInput
 from services.mci_survey_schema import SurveySave, SurveyContent, SECTION_TITLES, SECTION_GROUPS, hierarchical_content, service_location
+from services.mci_container_schema import TITLES as CONTAINER_TITLES, GROUPS as CONTAINER_GROUPS, FIELDS as CONTAINER_FIELDS
 
 router = APIRouter(prefix='/informes/mci-surveys', tags=['MCI Surveys Web'])
 
@@ -34,7 +35,8 @@ def enrich(cur, row):
     cur.execute("SELECT puerto,pais FROM servicios WHERE consec=%s AND company_code='MCI-CR'", (row['service_id'],))
     service = cur.fetchone()
     row['location'] = service_location(service or {})
-    row['content'] = hierarchical_content(SurveyContent.model_validate(row['content'])).model_dump(mode='json')
+    content = SurveyContent.model_validate(row['content'])
+    row['content'] = (content if row['kind'] == 'container' else hierarchical_content(content)).model_dump(mode='json')
     row['content']['location'] = row['location']
     return row
 
@@ -45,17 +47,20 @@ def asset():
 
 
 @router.get('/bootstrap')
-def bootstrap(ctx=Depends(mci_access), conn=Depends(get_db)):
+def bootstrap(kind: str = 'vessel', ctx=Depends(mci_access), conn=Depends(get_db)):
     with conn.cursor() as cur:
         cur.execute("SELECT to_regclass('public.mci_generic_surveys') IS NOT NULL")
         ready = cur.fetchone()[0]
-    return dict(ready=ready, permissions=ctx['permissions'], sections=SECTION_TITLES, groups=SECTION_GROUPS)
+    return dict(ready=ready, permissions=ctx['permissions'],
+                sections=CONTAINER_TITLES if kind == 'container' else SECTION_TITLES,
+                groups=CONTAINER_GROUPS if kind == 'container' else SECTION_GROUPS,
+                fields=CONTAINER_FIELDS if kind == 'container' else None)
 
 
 @router.get('')
 def listing(kind: str, q: str = Query('', max_length=150), offset: int = Query(0, ge=0),
             ctx=Depends(mci_access), conn=Depends(get_db)):
-    if kind not in ('vessel','condition','cargo'):
+    if kind not in ('vessel','condition','cargo','container'):
         raise HTTPException(422, 'Tipo invalido')
     with conn.cursor(cursor_factory=RealDictCursor) as cur:
         cur.execute("""SELECT id,report_number,vessel,requested_by,status,updated_at FROM mci_generic_surveys
@@ -69,8 +74,13 @@ def listing(kind: str, q: str = Query('', max_length=150), offset: int = Query(0
 @router.get('/{rid}')
 def detail(rid: int, ctx=Depends(mci_access), conn=Depends(get_db)):
     with conn.cursor(cursor_factory=RealDictCursor) as cur:
-        row = enrich(cur, record(cur, rid))
-    return dict(data=row, version=version(row))
+        raw = record(cur, rid)
+        token = version(raw)
+        row = enrich(cur, raw)
+        cur.execute('SELECT filename FROM mci_survey_sources WHERE report_id=%s', (rid,))
+        source = cur.fetchone()
+        row['source_filename'] = source['filename'] if source else None
+    return dict(data=row, version=token)
 
 
 def persist(body, ctx, conn, rid=None):
@@ -91,7 +101,10 @@ def persist(body, ctx, conn, rid=None):
             if not service:
                 raise HTTPException(404, 'Servicio MCI no encontrado o sin numero de informe.')
             status = 'Pending for review' if body.submit else 'Draft'
-            normalized = hierarchical_content(body.content)
+            allowed = CONTAINER_TITLES if body.kind == 'container' else SECTION_TITLES
+            if set(body.content.sections) - allowed.keys():
+                raise HTTPException(422, 'Seccion incompatible con el tipo de informe.')
+            normalized = body.content.model_copy(deep=True) if body.kind == 'container' else hierarchical_content(body.content)
             normalized.location = service_location(service)
             content = Json(normalized.model_dump(mode='json'))
             if rid:
@@ -104,10 +117,11 @@ def persist(body, ctx, conn, rid=None):
                     (body.kind,body.service_id,service['num_informe'],service['buque_contenedor'] or '',
                      service['cliente'] or '',content,status))
             row = cur.fetchone()
+            token = version(row)
             row = dict(row)
             row['location'] = normalized.location
         conn.commit()
-        return dict(data=row, version=version(row))
+        return dict(data=row, version=token)
     except Exception:
         conn.rollback()
         raise
@@ -135,9 +149,11 @@ def review(rid: int, body: StatusInput, ctx=Depends(mci_access), conn=Depends(ge
                 raise HTTPException(409,'Envie el informe a revision antes de aprobarlo.')
             cur.execute('UPDATE mci_generic_surveys SET status=%s,updated_at=%s WHERE id=%s RETURNING *',
                         (body.status,datetime.now(timezone.utc),rid))
-            row=enrich(cur,cur.fetchone())
+            raw=cur.fetchone()
+            token=version(raw)
+            row=enrich(cur,raw)
         conn.commit()
-        return dict(data=row,version=version(row))
+        return dict(data=row,version=token)
     except Exception:
         conn.rollback()
         raise
@@ -148,7 +164,10 @@ def export(rid: int, format: Literal['word','pdf'], ctx=Depends(mci_access), con
     with conn.cursor(cursor_factory=RealDictCursor) as cur:
         row=enrich(cur,record(cur,rid))
     try:
-        from services.mci_survey_export import build_word
+        if row['kind'] == 'container':
+            from services.mci_container_export import build_word
+        else:
+            from services.mci_survey_export import build_word
         content=build_word(row)
         if format=='pdf':
             from services.container_web_export import convert
@@ -160,3 +179,16 @@ def export(rid: int, format: Literal['word','pdf'], ctx=Depends(mci_access), con
     except Exception:
         logging.getLogger(__name__).exception('MCI survey export failed: %s',rid)
         raise HTTPException(503,'No se pudo generar el documento; los datos guardados no han cambiado.')
+
+
+@router.get('/{rid}/original')
+def original(rid: int, ctx=Depends(mci_access), conn=Depends(get_db)):
+    with conn.cursor(cursor_factory=RealDictCursor) as cur:
+        record(cur, rid)
+        cur.execute('SELECT document FROM mci_survey_sources WHERE report_id=%s', (rid,))
+        source = cur.fetchone()
+    if not source:
+        raise HTTPException(404, 'Original no disponible')
+    return Response(bytes(source['document']),
+                    media_type='application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+                    headers={'Content-Disposition': f'attachment; filename="Original_{rid}.docx"'})

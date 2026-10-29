@@ -1472,7 +1472,7 @@ def som_web_home() -> HTMLResponse:
   <script src="/informes/logra/assets/logra.js?v=20261019-1"></script>
   <link rel="stylesheet" href="/informes/certificates/assets/certificates.css?v=20261026-1">
   <script src="/informes/certificates/assets/certificates.js?v=20261023-1"></script>
-  <script src="/informes/mci-surveys/editor.js?v=20261026-3"></script>
+  <script src="/informes/mci-surveys/editor.js?v=20261029-container-1"></script>
   <link rel="stylesheet" href="/comercial/web/assets/comercial.css?v={asset_version}">
   <script src="/comercial/web/assets/comercial.js?v={asset_version}"></script>
   <link rel="stylesheet" href="/som/admin-assets/admin.css?v={asset_version}">
@@ -2481,6 +2481,17 @@ def som_web_home() -> HTMLResponse:
         return;
       }
       if (informesView === "containers") {
+        if(selectedCompany()==='MCI-CR') {
+          $('somReportWorkspace').innerHTML='<div class="cert-tools"><label>Formato <select id="mciContainerFormat"><option value="new">Container Survey Report</option><option value="legacy">Informes anteriores</option></select></label></div><div id="mciContainerWorkspace"></div>';
+          const mountContainer=()=>SOMMCISurveys.mount($('mciContainerWorkspace'),{kind:'container',headers:()=>({...fixedHeaders})});
+          $('mciContainerFormat').onchange=e=>{
+            if(!SOMMCISurveys.canLeave() || !SOMContainers.canLeave()){e.target.value=e.target.value==='new'?'legacy':'new';return;}
+            SOMMCISurveys.destroy();SOMContainers.destroy();
+            if(e.target.value==='new')mountContainer();
+            else SOMContainers.mount($('mciContainerWorkspace'),{company:selectedCompany(),headers:()=>({...fixedHeaders})});
+          };
+          mountContainer();return;
+        }
         SOMContainers.mount($("somReportWorkspace"), {company:selectedCompany(),headers:()=>({...fixedHeaders})});
         return;
       }

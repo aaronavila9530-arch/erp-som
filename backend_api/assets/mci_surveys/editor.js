@@ -3,6 +3,7 @@
   const esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
   const fields={imo:'IMO',length_and_tonnage:'Length overall and tonnage',cargo:'Cargo',period_start:'Period investigated - from',period_end:'Period investigated - to',issue_date:'Date of issue',report_status:'Report status',master:'Master',chief_officer:'Chief officer',surveyor:'Surveyor / signatory'};
   const defaultGroups={instructions:['work','limitations','chronology','representatives'],findings:['visual','provided','missing'],conclusion:[],enclosure:[]};
+  const defaultFields=fields;
   function canLeave(){return !active || (!active.busy && (!active.dirty || confirm('There are unsaved changes. Discard them?')));}
   function destroy(){if(active){active.abort.abort();window.removeEventListener('beforeunload',active.unload);active=null;}}
   async function mount(root,opts){
@@ -26,6 +27,7 @@
     function shell(mode,body){
       if(!live())return;
       root.innerHTML=`<header class="cert-head"><h2>${esc({vessel:'Vessel Survey',condition:'Vessel Condition Survey',cargo:'Cargo Condition Survey'}[opts.kind])}</h2><span>MCI-CR</span></header><nav class="cert-workflows">${s.boot?.permissions.create?`<button data-create aria-pressed="${mode==='create'}">Create</button>`:''}<button data-review aria-pressed="${mode==='review'}">Review</button></nav><p id="mci-error" role="alert"></p>${body}`;
+      if(opts.kind==='container')$('h2').textContent='Container Survey Report';
       if(s.boot && !s.boot.ready){root.querySelectorAll('nav button').forEach(b=>b.disabled=true);return;}
       if($('[data-create]'))$('[data-create]').onclick=()=>{if(canLeave()){s.dirty=false;run(()=>services());}};
       $('[data-review]').onclick=()=>{if(canLeave()){s.dirty=false;run(list);}};
@@ -45,12 +47,18 @@
       root.querySelectorAll('[data-service]').forEach(b=>b.onclick=()=>{const v=d.data[+b.dataset.service];editor({data:{service_id:v.consec,kind:opts.kind,report_number:v.num_informe,vessel:v.buque_contenedor,requested_by:v.cliente,location:[v.puerto,v.pais].map(x=>String(x||'').trim()).filter(Boolean).join(', '),content:{hierarchy_version:2,report_status:'Draft',sections:{}}}});s.dirty=true;});
     }
     function editor(payload){
+      const fields=s.boot.fields||defaultFields;
       if(!live())return;const row=payload.data,c=structuredClone(row.content),editable=row.id?s.boot.permissions.edit&&row.status!=='Approved':s.boot.permissions.create;
       c.sections ||= {};
       const groups=s.boot.groups||defaultGroups,parents=Object.fromEntries(Object.entries(groups).flatMap(([parent,children])=>children.map(k=>[k,parent])));
       if((c.hierarchy_version||1)===1){for(const [parent,children] of Object.entries(groups)){if(children.some(k=>c.sections[k]?.enabled))(c.sections[parent]||={enabled:false,blocks:[]}).enabled=true;}}
       c.hierarchy_version=2;
       shell(row.id?'review':'create',`<p><strong>${esc(row.report_number)}</strong> · ${esc(row.vessel)} · ${esc(row.requested_by)}</p><form id="mci-form" lang="en"><div class="cert-tools">${editable?'<button type="submit">Save draft</button><button type="button" data-submit>Submit for review</button>':''}${row.id?'<button type="button" data-export="word">Word</button><button type="button" data-export="pdf">PDF</button>':''}${row.id&&s.boot.permissions.approve?'<button type="button" data-status="Approved">Approve</button><button type="button" data-status="Rejected">Reject</button>':''}<span id="mci-save-state" role="status"></span></div><fieldset ${!editable?'disabled':''}><div class="cert-fields"><label>Location<input id="mci-location" readonly value="${esc(row.location||'')}" placeholder="Not set in the linked service"></label>${Object.entries(fields).map(([k,label])=>`<label>${label}<input name="${k}" type="${k==='issue_date'?'date':k.startsWith('period_')?'datetime-local':'text'}" value="${esc(c[k]||'')}" maxlength="${k==='cargo'?3000:1000}"></label>`).join('')}</div><div id="mci-sections"></div></fieldset></form>`);
+      if(row.source_filename){
+        const original=document.createElement('button');original.type='button';original.textContent='Original Word';
+        original.onclick=()=>run(async()=>{const r=await fetchBounded(`/informes/mci-surveys/${row.id}/original`,{headers:opts.headers()});if(!r.ok)throw Error('Original unavailable');const url=URL.createObjectURL(await r.blob()),a=document.createElement('a');a.href=url;a.download=row.source_filename;a.click();setTimeout(()=>URL.revokeObjectURL(url),30000);});
+        $('#mci-form .cert-tools').appendChild(original);
+      }
       const mark=()=>{s.dirty=true;$('#mci-save-state').textContent='Unsaved changes';};
       function sections(){
         if(c.sections.enclosure?.enabled){
@@ -73,7 +81,7 @@
       root.querySelectorAll('[data-status]').forEach(b=>b.onclick=()=>{if(s.dirty){$('#mci-error').textContent='Save changes before reviewing.';return;}if(!confirm('Confirm status change?'))return;run(async()=>editor(await request(`/informes/mci-surveys/${row.id}/status`,'POST',{version:payload.version,status:b.dataset.status})));});
       root.querySelectorAll('[data-export]').forEach(b=>b.onclick=()=>{if(s.dirty){$('#mci-error').textContent='Save changes before downloading.';return;}run(async()=>{const r=await fetch(`/informes/mci-surveys/${row.id}/export/${b.dataset.export}`,{headers:opts.headers(),signal:s.abort.signal});if(!r.ok)throw Error('The document could not be generated. The saved report has not changed.');const url=URL.createObjectURL(await r.blob()),a=document.createElement('a');a.href=url;a.download=`Survey_${row.id}.${b.dataset.export==='word'?'docx':'pdf'}`;a.click();setTimeout(()=>URL.revokeObjectURL(url),30000);});});
     }
-    shell('review','');await run(async()=>{s.boot=await request('/informes/mci-surveys/bootstrap');if(!s.boot.ready){shell('review','<p>This module is not enabled yet.</p>');return;}await list();});
+    shell('review','');await run(async()=>{s.boot=await request('/informes/mci-surveys/bootstrap?kind='+encodeURIComponent(opts.kind));if(!s.boot.ready){shell('review','<p>This module is not enabled yet.</p>');return;}await list();});
   }
   window.SOMMCISurveys={mount,canLeave,destroy};
 })();

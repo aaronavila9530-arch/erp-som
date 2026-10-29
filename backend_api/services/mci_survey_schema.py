@@ -3,6 +3,7 @@ from datetime import date, datetime
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
+from services.mci_container_schema import TITLES as CONTAINER_TITLES
 
 
 SECTION_TITLES = {
@@ -54,11 +55,23 @@ class SurveyContent(BaseModel):
     master: str = Field(default="", max_length=200)
     chief_officer: str = Field(default="", max_length=200)
     surveyor: str = Field(default="", max_length=200)
+    quantity: str = Field(default="", max_length=1000)
+    gross_weight: str = Field(default="", max_length=1000)
+    shipper: str = Field(default="", max_length=1000)
+    consignee: str = Field(default="", max_length=1000)
+    loading_port: str = Field(default="", max_length=1000)
+    discharge_port: str = Field(default="", max_length=1000)
+    vessel_voyage: str = Field(default="", max_length=1000)
+    opening_at: str = Field(default="", max_length=1000)
+    arrival_at: str = Field(default="", max_length=1000)
+    survey_place: str = Field(default="", max_length=1000)
+    on_behalf_of: str = Field(default="", max_length=1000)
+    receiver_representative: str = Field(default="", max_length=1000)
     sections: dict[str, OptionalSection] = Field(default_factory=dict)
 
     @model_validator(mode="after")
     def validate_content(self):
-        if set(self.sections) - SECTION_TITLES.keys():
+        if set(self.sections) - (SECTION_TITLES.keys() | CONTAINER_TITLES.keys()):
             raise ValueError("Unknown report section")
         if self.period_start and self.period_end:
             if (self.period_start.tzinfo is None) != (self.period_end.tzinfo is None):
@@ -77,7 +90,7 @@ class SurveyContent(BaseModel):
 
 class SurveySave(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    kind: Literal["vessel", "condition", "cargo"]
+    kind: Literal["vessel", "condition", "cargo", "container"]
     service_id: int = Field(gt=0)
     content: SurveyContent
     version: str | None = None
