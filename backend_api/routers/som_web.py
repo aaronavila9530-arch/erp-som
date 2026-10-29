@@ -3739,14 +3739,18 @@ def som_web_home() -> HTMLResponse:
     }
     async function runGmailFiscalSync() {
       setAccountingMailStatus("accounting-banner", "Ejecutando sincronización de correo fiscal en backend...");
-      try {
-        const summaries = [];
-        for (const account of accountingGmailAccounts()) {
+      const summaries = [];
+      let failures = 0;
+      for (const account of accountingGmailAccounts()) {
+        try {
           const payload = await postJSON(`/accounting/tax/gmail/sync?max_messages=100&account_email=${encodeURIComponent(account)}`, {});
           summaries.push(`${account}: ${renderGmailFiscalSummary(payload)}`);
+        } catch (err) {
+          failures += 1;
+          summaries.push(`${account}: ${err.message}`);
         }
-        setAccountingMailStatus("accounting-banner", `Correo backend: ${summaries.join(" · ")}.`);
-      } catch (err) { setAccountingMailStatus("accounting-banner error", err.message); }
+      }
+      setAccountingMailStatus(failures ? "accounting-banner error" : "accounting-banner", `Correo backend: ${summaries.join(" · ")}.`);
     }
     async function loadGmailFiscalStatus() {
       setAccountingMailStatus("accounting-banner", "Consultando estado del correo backend...");
