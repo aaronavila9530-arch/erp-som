@@ -116,7 +116,7 @@ class VistaSolicitudesHHRR(ttk.Frame):
 
         # ================= TABLA =================
         self.columnas = [
-            "id", "empleado", "event_type", "event_date",
+            "id", "empleado", "event_type", "fecha_inicio", "fecha_fin", "event_date",
             "period_year", "period_month", "dias",
             "status",
             "razon_solicitud", "created_by", "approved_by",
@@ -135,6 +135,9 @@ class VistaSolicitudesHHRR(ttk.Frame):
             alto=15
         )
         self.tabla.pack(fill="both", expand=True)
+        self.tabla.tree.heading("fecha_inicio", text="Inicio solicitado")
+        self.tabla.tree.heading("fecha_fin", text="Fin solicitado")
+        self.tabla.tree.heading("event_date", text="Fecha de solicitud")
 
         for col in self.columnas:
             try:
@@ -247,6 +250,8 @@ class VistaSolicitudesHHRR(ttk.Frame):
                 "id": r.get("id"),
                 "empleado": r.get("empleado") or "",
                 "event_type": r.get("event_type") or "",
+                "fecha_inicio": payload.get("fecha_inicio") or "",
+                "fecha_fin": payload.get("fecha_fin") or "",
                 "event_date": d,
                 "period_year": d[:4] if len(d) >= 4 else "",
                 "period_month": d[5:7] if len(d) >= 7 else "",
@@ -441,6 +446,8 @@ class VistaSolicitudesHHRR(ttk.Frame):
                 "id": r.get("id"),
                 "empleado": r.get("empleado") or "",
                 "event_type": r.get("event_type") or "",
+                "fecha_inicio": payload.get("fecha_inicio") or "",
+                "fecha_fin": payload.get("fecha_fin") or "",
                 "event_date": d,
                 "period_year": d[:4] if len(d) >= 4 else "",
                 "period_month": d[5:7] if len(d) >= 7 else "",

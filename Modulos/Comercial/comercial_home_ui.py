@@ -313,7 +313,7 @@ class ComercialHomeUI(ttk.Frame):
         self._page = 1
         self._render_page()
         self.result_status.config(text=(
-            f"{get_company_code()} | {len(self._data_all)} servicios"
+            f"Empresa consultada: {get_company_code()} | {len(self._data_all)} servicios. La pizarra muestra solo la empresa seleccionada."
             if self._data_all else
             f"{get_company_code()} | Sin servicios para estos filtros. Revise la empresa seleccionada y los estados, incluido Finalizado."
         ))
@@ -381,7 +381,7 @@ class ComercialHomeUI(ttk.Frame):
 
         self.lbl_page.config(text="Página 0 de 0")
 
-        self.result_status.config(text=f"{get_company_code()} | Filtros restablecidos. Pulse Buscar para consultar.")
+        self._search()
 
 
     def _ensure_internal_callbacks(self):

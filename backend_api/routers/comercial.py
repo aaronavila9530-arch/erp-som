@@ -7,7 +7,6 @@ from fastapi import (
 )
 from typing import Optional, List
 from psycopg2.extras import RealDictCursor
-from datetime import date
 
 from database import get_db
 from rbac_service import has_permission
@@ -53,16 +52,7 @@ def comercial_board(
     conn=Depends(get_db)
 ):
     """
-    Reglas operativas ERP-SOM:
-
-    Confirmado / En Operación
-        → SOLO año actual automáticamente
-
-    Finalizado
-        → Todos los años (o el año indicado)
-
-    Cancelado
-        → Todos los años (o el año indicado)
+    Consulta por empresa y estados. El anio limita solo si se selecciona.
     """
 
     # ---------------------------------------------------------
@@ -125,27 +115,10 @@ def comercial_board(
     # ---------------------------------------------------------
     # ESTADOS
     # ---------------------------------------------------------
-    estados_confirmacion = {"confirmado", "en operación"}
-
     if estados:
 
-        filtros.append("LOWER(estado) = ANY(%(estados)s)")
+        filtros.append("LOWER(TRIM(estado)) = ANY(%(estados)s)")
         params["estados"] = estados
-
-        # -----------------------------------------------------
-        # REGLA: estados operativos → SOLO año actual
-        # -----------------------------------------------------
-        if not year and any(e in estados_confirmacion for e in estados):
-
-            current_year = date.today().year
-
-            params["y_start"] = f"{current_year}-01-01"
-            params["y_end"] = f"{current_year + 1}-01-01"
-
-            filtros.append(
-                "(LOWER(estado) NOT IN ('confirmado', 'en operación') OR "
-                "(fecha_inicio >= %(y_start)s AND fecha_inicio < %(y_end)s))"
-            )
 
     # ---------------------------------------------------------
     # FILTRO EXPLÍCITO POR AÑO
