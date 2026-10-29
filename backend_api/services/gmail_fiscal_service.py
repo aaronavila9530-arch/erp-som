@@ -40,7 +40,8 @@ SCOPES = "https://www.googleapis.com/auth/gmail.modify"
 ACCOUNT = os.getenv("GMAIL_ACCOUNT", "gastos@mslogisticsgroup.com")
 DEFAULT_SEARCH_QUERY = (
     '(has:attachment (filename:xml OR filename:zip OR filename:pdf) '
-    'OR from:baccredomatic.com OR subject:BAC OR subject:"Notificación BAC") newer_than:730d'
+    'OR from:baccredomatic.com OR subject:BAC OR subject:"Notificación BAC" '
+    'OR subject:"Transferencia entre cuentas BCR" OR subject:"Comprobante Transferencia") newer_than:730d'
 )
 MAX_ATTACHMENT_BYTES = 20 * 1024 * 1024
 MAX_ZIP_MEMBERS = 50
@@ -250,7 +251,8 @@ def ensure_schema(conn):
                    SET search_query=%s,
                        updated_at=NOW()
                  WHERE account_email=%s
-                   AND search_query='has:attachment (filename:xml OR filename:zip) newer_than:365d'
+                   AND search_query IN ('has:attachment (filename:xml OR filename:zip) newer_than:365d',
+                     '(has:attachment (filename:xml OR filename:zip OR filename:pdf) OR from:baccredomatic.com OR subject:BAC OR subject:"Notificación BAC") newer_than:730d')
                 """,
                 (DEFAULT_SEARCH_QUERY, profile["account_email"]),
             )
@@ -521,6 +523,10 @@ def _parse_bac_card_notification(text, subject, account, message_id, folder, rec
 
 
 def _parse_bac_partner_transfer(text, subject, account, message_id, folder, received_date, company_code="MSL-CR"):
+    from services.partner_transfers import parse_transfer, partner_name as known_partner
+    partner_payload = parse_transfer(text, subject, account, message_id, folder)
+    if partner_payload:
+        return partner_payload
     normalized = _norm_text(f"{subject}\n{text}")
     if "BAC" not in normalized or "TRANSFERENCIA" not in normalized:
         return None
@@ -530,7 +536,8 @@ def _parse_bac_partner_transfer(text, subject, account, message_id, folder, rece
     )
     partner_name = None
     for needle, label in partner_map:
-        if needle in normalized:
+        recipient = re.search(r"Estimad[oa]\s*\(a\)\s+([^:]+):", text or "", re.IGNORECASE)
+        if recipient and needle in _norm_text(recipient.group(1)):
             partner_name = label
             break
     if not partner_name:
@@ -538,6 +545,8 @@ def _parse_bac_partner_transfer(text, subject, account, message_id, folder, rece
         if estimated:
             partner_name = re.sub(r"\s+", " ", estimated.group(1)).strip()
     if not partner_name:
+        return None
+    if known_partner(partner_name):
         return None
     money = _parse_bac_money(text)
     if not money:
@@ -570,7 +579,10 @@ def _process_bac_card_notification(conn, payload):
     return import_bac_notification(request, conn=conn)
 
 
-def _process_bac_partner_transfer(payload):
+def _process_bac_partner_transfer(payload, conn=None):
+    if payload.get("partner_transfer_version") == 2 and conn is not None:
+        from services.partner_transfers import post_transfer
+        return post_transfer(conn, payload)
     root = Path(__file__).resolve().parents[2]
     if str(root) not in sys.path:
         sys.path.insert(0, str(root))
@@ -790,7 +802,9 @@ def sync_mailbox(conn, triggered_by="SCHEDULER", max_messages=50, account_email:
                     ) if process_bac else None
                     if partner_payload:
                         try:
-                            result = _process_bac_partner_transfer(partner_payload)
+                            cur.execute("SAVEPOINT partner_notification")
+                            result = _process_bac_partner_transfer(partner_payload, conn)
+                            cur.execute("RELEASE SAVEPOINT partner_notification")
                             bac_partner_notifications+=1
                             summary["bac_partner_messages"]+=1
                             if str((result or {}).get("status") or "").upper() == "SKIPPED_UNMATCHED_TRANSFER":
@@ -799,6 +813,8 @@ def sync_mailbox(conn, triggered_by="SCHEDULER", max_messages=50, account_email:
                                 summary["bac_partner_imported"]+=1
                                 imported+=1
                         except Exception as exc:
+                            if partner_payload.get("partner_transfer_version") == 2:
+                                cur.execute("ROLLBACK TO SAVEPOINT partner_notification")
                             errors+=1
                             error_details.append(f"Transferencia BAC socios: {exc}")
                 for part in _walk_parts(payload):

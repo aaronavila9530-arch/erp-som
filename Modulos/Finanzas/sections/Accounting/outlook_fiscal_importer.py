@@ -509,6 +509,11 @@ def _parse_bac_card_transaction(message, account, folder_name):
 
 def _parse_bac_partner_transfer(message, account, folder_name):
     text=_message_text(message)
+    from backend_api.services.partner_transfers import parse_transfer, partner_name as known_partner
+    partner_payload = parse_transfer(text, str(getattr(message, "Subject", "") or ""),
+                                     account, str(getattr(message, "EntryID", "") or ""), folder_name)
+    if partner_payload:
+        return partner_payload
     normalized=_normalized(text)
     if "bac" not in normalized or "transferencia" not in normalized:
         return None
@@ -518,7 +523,8 @@ def _parse_bac_partner_transfer(message, account, folder_name):
     }
     partner_name=None
     for _,(needle,label) in partner_map.items():
-        if needle in normalized:
+        recipient = re.search(r"Estimad[oa]\s*\(a\)\s+([^:]+):", text or "", re.IGNORECASE)
+        if recipient and needle in _normalized(recipient.group(1)):
             partner_name=label
             break
     if not partner_name:
@@ -531,6 +537,9 @@ def _parse_bac_partner_transfer(message, account, folder_name):
         if subject_match:
             partner_name=re.sub(r"\s+"," ",subject_match.group(1)).strip()
     if not partner_name:
+        return None
+    if known_partner(partner_name):
+        # A known recipient must pass source-company and receipt validation above.
         return None
     money=_parse_bac_money(text)
     if not money:
@@ -559,7 +568,7 @@ def _parse_bac_partner_transfer(message, account, folder_name):
     }
 
 
-def _scan_bac_partner_transfer_folder(folder,state,summary,account,folder_name,limit):
+def _scan_bac_partner_transfer_folder(folder,state,summary,account,folder_name,limit,partners_only=False):
     items=folder.Items; items.Sort("[ReceivedTime]",True)
     scanned=0
     imported_messages=0
@@ -568,7 +577,7 @@ def _scan_bac_partner_transfer_folder(folder,state,summary,account,folder_name,l
             break
         scanned+=1
         message=items.Item(index)
-        card_parsed=_parse_bac_card_transaction(message,account,folder_name)
+        card_parsed=None if partners_only else _parse_bac_card_transaction(message,account,folder_name)
         if card_parsed:
             key=hashlib.sha256(
                 f"BAC_CARD|{account}|{card_parsed.get('reference')}|{card_parsed.get('authorization')}|{card_parsed.get('card_last4')}|{card_parsed['transaction_date']}|{card_parsed['amount']}|{card_parsed['currency']}".encode("utf-8")
@@ -609,8 +618,11 @@ def _scan_bac_partner_transfer_folder(folder,state,summary,account,folder_name,l
         parsed=_parse_bac_partner_transfer(message,account,folder_name)
         if not parsed:
             continue
+        if partners_only and parsed.get("partner_transfer_version") != 2:
+            continue
+        prefix = f"BAC_PARTNER|v2|{parsed['company_code']}" if parsed.get('partner_transfer_version') == 2 else "BAC_PARTNER"
         key=hashlib.sha256(
-            f"BAC_PARTNER|{account}|{parsed['reference']}|{parsed['partner_name']}|{parsed['amount']}|{parsed['currency']}".encode("utf-8")
+            f"{prefix}|{account}|{parsed['reference']}|{parsed['partner_name']}|{parsed['amount']}|{parsed['currency']}".encode("utf-8")
         ).hexdigest()
         if state.get(key,{}).get("status") in {
             "IMPORTED",
@@ -618,6 +630,8 @@ def _scan_bac_partner_transfer_folder(folder,state,summary,account,folder_name,l
             "IMPORTED_INTERCOMPANY",
             "UPDATED_INTERCOMPANY",
             "DUPLICATE",
+            "POSTED",
+            "EXISTING",
             "SKIPPED_UNMATCHED_TRANSFER",
         }:
             continue
@@ -871,6 +885,12 @@ def scan_and_import(max_messages=None,progress=None, process_corporate_cards=Non
                     )
                     summary["bac_partner_store"]=str(bac_store)
                     summary["bac_partner_folder"]=str(bac_folder.Name)
+                    # Forwarded BCR and BCT receipts usually remain in Inbox.
+                    _, inbox = _find_folder(namespace, bac_account, "Inbox")
+                    _scan_bac_partner_transfer_folder(
+                        inbox, state, summary, bac_account,
+                        str(getattr(inbox, "FolderPath", "Inbox")), limit, partners_only=True,
+                    )
                     if progress: progress(dict(summary))
                 except Exception as exc:
                     summary["bac_partner_errors"]+=1

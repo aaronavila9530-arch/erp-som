@@ -5325,6 +5325,19 @@ def post_itp_biweekly_obligations_apply_api(payload: dict):
 
 
 def post_bac_partner_transfer_api(payload: dict):
+    if payload.get("partner_transfer_version") == 2:
+        from backend_api.services.partner_transfers import post_transfer
+        from backend_api.database import get_conn as partner_conn, release_conn as partner_release
+        connection = partner_conn()
+        try:
+            result = post_transfer(connection, payload)
+            connection.commit()
+            return result
+        except Exception:
+            connection.rollback()
+            raise
+        finally:
+            partner_release(connection)
     import sys
     import hashlib
     import re
@@ -5424,7 +5437,13 @@ def post_bac_partner_transfer_api(payload: dict):
         return re.sub(r"[^A-Z0-9]+", " ", str(value or "").upper()).strip()
 
     def is_known_partner(value):
-        normalized = norm(value)
+        import unicodedata
+
+        ascii_name = "".join(
+            char for char in unicodedata.normalize("NFKD", str(value or ""))
+            if not unicodedata.combining(char)
+        )
+        normalized = norm(ascii_name)
         known = (
             "DIANA VERONICA QUIROS BENAMBOURG",
             "DIANA QUIROS BENAMBOURG",
