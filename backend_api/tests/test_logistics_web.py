@@ -64,6 +64,9 @@ class LogisticsTests(unittest.TestCase):
                 self.assertNotIn('{process_text}',text)
                 self.assertNotIn('{findings_operational_text}',text)
                 if not cover:self.assertIn('UNIQUE_findings_operational_text',text)
+                if not cover:
+                    conclusion=next(p for p in doc.paragraphs if p.text.strip().startswith('CONCLUS'))
+                    self.assertTrue(conclusion.paragraph_format.keep_with_next)
                 self.assertTrue(doc.inline_shapes or doc.part.rels)
             data['company_code']='MCI-CR'
             with self.assertRaises(ValueError):word(data,path)

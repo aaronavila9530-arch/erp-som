@@ -37,6 +37,7 @@ def word(data, target, presentation=False):
     replace(doc)
     for section in doc.sections:
         replace(section.header);replace(section.footer)
+    apply_docx_autofit(doc)
     if presentation:
         for p in doc.paragraphs:
             if p.text.strip() in (values['vessel_name'], values['customer']) or p.text.strip().startswith('PUERTO'):
@@ -53,7 +54,6 @@ def word(data, target, presentation=False):
                 for following in paragraphs[i+1:]:
                     if following.text.strip():break
                     following.paragraph_format.keep_with_next=True
-    apply_docx_autofit(doc)
     doc.save(target)
 
 def build(data, format):
