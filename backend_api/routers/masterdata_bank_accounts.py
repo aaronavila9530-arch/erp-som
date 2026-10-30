@@ -236,7 +236,16 @@ def _build_bank_letter_pdf(row: dict, company: str, company_name: str | None, la
             if not line:
                 wrapped.append("")
                 continue
-            words = line.split(" ")
+            words = []
+            for word in line.split():
+                part = ""
+                for char in word:
+                    if part and stringWidth(part + char, font_name, font_size) > max_width:
+                        words.append(part)
+                        part = ""
+                    part += char
+                if part:
+                    words.append(part)
             current = ""
             for word in words:
                 candidate = word if not current else f"{current} {word}"
@@ -358,19 +367,26 @@ def _build_bank_letter_pdf(row: dict, company: str, company_name: str | None, la
     label_w = 1.75 * inch
     value_x = left + label_w + 0.15 * inch
     for label, value in details:
-        if y < footer_y + 1.9 * inch:
-            c.showPage()
-            draw_static()
-            y = top_y
-        c.setFillColorRGB(0.96, 0.97, 0.98)
-        c.rect(left, y - 4, body_width, 20, fill=1, stroke=0)
-        c.setFillColorRGB(0, 0, 0)
-        c.setFont("Helvetica-Bold", 9)
-        c.drawString(left + 8, y + 1, label)
-        c.setFont("Helvetica", 9)
-        for i, line in enumerate(wrap_text(value or "-", "Helvetica", 9, body_width - label_w - 0.3 * inch)):
-            c.drawString(value_x, y + 1 - (i * 11), line)
-        y -= 24
+        lines = wrap_text(value or "-", "Helvetica", 9, body_width - label_w - 0.3 * inch)
+        # Size each background to its text; split exceptionally long values across pages.
+        while lines:
+            capacity = int((y - (footer_y + 1.9 * inch)) // 11) + 1
+            if capacity < 1:
+                c.showPage()
+                draw_static()
+                y = top_y
+                continue
+            chunk, lines = lines[:capacity], lines[capacity:]
+            row_height = 20 + (len(chunk) - 1) * 11
+            c.setFillColorRGB(0.96, 0.97, 0.98)
+            c.rect(left, y + 16 - row_height, body_width, row_height, fill=1, stroke=0)
+            c.setFillColorRGB(0, 0, 0)
+            c.setFont("Helvetica-Bold", 9)
+            c.drawString(left + 8, y + 1, label)
+            c.setFont("Helvetica", 9)
+            for i, line in enumerate(chunk):
+                c.drawString(value_x, y + 1 - (i * 11), line)
+            y -= row_height + 4
 
     y -= 12
     closing = (
@@ -378,6 +394,11 @@ def _build_bank_letter_pdf(row: dict, company: str, company_name: str | None, la
         if language == "ES"
         else "This certification is issued for any purpose the interested party may deem appropriate."
     )
+    closing_height = len(wrap_text(closing, "Helvetica", 10, body_width)) * 15
+    if y - closing_height < footer_y + 2.2 * inch:
+        c.showPage()
+        draw_static()
+        y = top_y
     y = draw_wrapped(closing, "Helvetica", 10, y)
 
     if y < footer_y + 1.65 * inch:
