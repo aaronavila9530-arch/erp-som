@@ -775,11 +775,13 @@ def _preferred_tax_documents_sql(where_sql: str) -> str:
         WITH tax_ranked AS (
             SELECT d.*,
                    ROW_NUMBER() OVER (
-                       PARTITION BY d.direction,
+                       PARTITION BY d.company_code, d.direction,
+                                    CASE WHEN d.direction = 'PURCHASE' THEN COALESCE(NULLIF(LTRIM(REGEXP_REPLACE(d.issuer_identification, '[^0-9]', '', 'g'), '0'), ''), d.issuer_name, '') ELSE '' END,
                                     COALESCE(NULLIF(d.document_number, ''), NULLIF(d.electronic_key, ''), d.source_table || ':' || d.source_id, d.id::text)
                        ORDER BY
                            CASE
-                               WHEN d.source_table IN ('hacienda_emitted_excel', 'hacienda_acceptance_excel', 'xml_upload') THEN 0
+                               WHEN d.source_table IN ('hacienda_emitted_excel', 'hacienda_acceptance_excel') THEN -1
+                               WHEN d.source_table = 'xml_upload' THEN 0
                                WHEN d.xml_path IS NOT NULL THEN 1
                                WHEN d.source_table IN ('invoicing', 'collections') THEN 2
                                WHEN d.source_table = 'payment_obligations' THEN 3
@@ -792,7 +794,24 @@ def _preferred_tax_documents_sql(where_sql: str) -> str:
             WHERE {where_sql}
         )
         SELECT * FROM tax_ranked WHERE tax_rank = 1
+          AND UPPER(TRIM(COALESCE(hacienda_status, ''))) NOT IN ('REJECTED', 'RECHAZADO', 'RECHAZADA')
+          AND UPPER(TRIM(COALESCE(status, ''))) NOT IN ('REJECTED', 'RECHAZADO', 'RECHAZADA')
     )"""
+
+
+def _fiscal_amount_sql(column: str) -> str:
+    if column not in {'subtotal', 'exempt_amount', 'tax_amount', 'total'}:
+        raise ValueError('Unsupported fiscal amount column')
+    return ("CASE WHEN UPPER(TRIM(COALESCE(document_type,''))) IN ('NC','NCE','03') "
+            f"THEN -ABS({column}) ELSE {column} END")
+
+
+def _signed_book_rows(rows):
+    for row in rows:
+        if str(row.get('document_type') or '').strip().upper() in {'NC', 'NCE', '03'}:
+            for field in ('subtotal', 'exempt_amount', 'tax_amount', 'total'):
+                row[field] = -abs(_money(row.get(field)))
+    return rows
 
 
 def _company_tax_scope_sql(company: str) -> str:
@@ -859,7 +878,7 @@ def tax_book(
           issuer_identification,issuer_name,receiver_identification,receiver_name,subtotal,exempt_amount,tax_amount,total,
           hacienda_status,xml_path FROM {_preferred_tax_documents_sql(f"d.direction=%s AND {_company_tax_scope_sql(company)} AND d.issue_datetime >= %s AND d.issue_datetime < %s AND COALESCE(d.issue_datetime::date, CURRENT_DATE) <= CURRENT_DATE")} preferred
           ORDER BY issue_datetime,document_number""",(direction,start,end))
-        rows=cur.fetchall()
+        rows=_signed_book_rows(cur.fetchall())
     totals={k:float(sum((_money(r[k]) for r in rows),Decimal("0"))) for k in ("subtotal","exempt_amount","tax_amount","total")}
     return {"period":period,"direction":direction,"data":rows,"totals":totals}
 
@@ -889,10 +908,10 @@ def tax_iva(
         errors = []
         try:
             cur.execute(f"""SELECT direction,
-              COALESCE(SUM({amount_crc % ('subtotal', 'subtotal')}),0) subtotal,
-              COALESCE(SUM({amount_crc % ('exempt_amount', 'exempt_amount')}),0) exempt,
-              COALESCE(SUM({amount_crc % ('tax_amount', 'tax_amount')}),0) tax,
-              COALESCE(SUM({amount_crc % ('total', 'total')}),0) total,
+              COALESCE(SUM({amount_crc % (_fiscal_amount_sql('subtotal'), _fiscal_amount_sql('subtotal'))}),0) subtotal,
+              COALESCE(SUM({amount_crc % (_fiscal_amount_sql('exempt_amount'), _fiscal_amount_sql('exempt_amount'))}),0) exempt,
+              COALESCE(SUM({amount_crc % (_fiscal_amount_sql('tax_amount'), _fiscal_amount_sql('tax_amount'))}),0) tax,
+              COALESCE(SUM({amount_crc % (_fiscal_amount_sql('total'), _fiscal_amount_sql('total'))}),0) total,
               COUNT(*) documents,
               COUNT(*) FILTER(WHERE xml_path IS NULL) missing_xml,COUNT(*) FILTER(WHERE hacienda_status='PENDING') pending_hacienda
               FROM {_preferred_tax_documents_sql(f"{_company_tax_scope_sql(company)} AND d.issue_datetime >= %s AND d.issue_datetime < %s AND COALESCE(d.issue_datetime::date, CURRENT_DATE) <= CURRENT_DATE")} preferred
