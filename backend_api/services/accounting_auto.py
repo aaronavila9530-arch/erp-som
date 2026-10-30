@@ -189,10 +189,15 @@ def sync_collections_to_accounting(conn, company_code_filter: str | None = None)
 
         rows = cur.fetchall() or []
 
+        from services.accounting_reconciliation_guard import load_reconciled_documents, is_reconciled
+        reconciled_sales = load_reconciled_documents(cur, 'SALE', company)
+
         for c in rows:
 
             collection_id = c.get("id")
             numero = (c.get("numero_documento") or "").strip()
+            if is_reconciled(reconciled_sales, company, collection_id, numero):
+                continue
 
             nombre_cliente = (c.get("nombre_cliente") or "").strip()
             moneda = (c.get("moneda") or "").upper()
@@ -1160,6 +1165,10 @@ def sync_itp_to_accounting(conn, company_code_filter: str | None = None, obligat
 
     try:
 
+        from services.accounting_reconciliation_guard import load_reconciled_documents, is_reconciled
+        reconciled_purchases = load_reconciled_documents(cur, 'PURCHASE', company_filter)
+        protected_accrual_ids = sorted({int(i) for _, snapshot in reconciled_purchases for i in snapshot.get('source_ids', [])})
+
         # ============================================================
         # HELPERS
         # ============================================================
@@ -1308,6 +1317,9 @@ def sync_itp_to_accounting(conn, company_code_filter: str | None = None, obligat
                 "COALESCE(created_by, 'SYSTEM') = 'SYSTEM'",
             ]
             params = []
+            if protected_accrual_ids:
+                clauses.append("(origin <> 'ITP' OR NOT (origin_id = ANY(%s)))")
+                params.append(protected_accrual_ids)
             if scoped_ids is not None:
                 clauses.append("origin_id = ANY(%s)")
                 params.append(scoped_ids)
@@ -1376,6 +1388,7 @@ def sync_itp_to_accounting(conn, company_code_filter: str | None = None, obligat
         if scoped_ids is None:
             backfill_missing_bank_accounts(cur)
         employee_itp_ids = employee_obligation_ids(cur)
+        employee_itp_ids = [value for value in employee_itp_ids if value not in protected_accrual_ids]
         if scoped_ids is not None:
             employee_itp_ids = [value for value in employee_itp_ids if value in scoped_ids]
         if employee_itp_ids:
@@ -1759,51 +1772,29 @@ def sync_itp_to_accounting(conn, company_code_filter: str | None = None, obligat
             ap_debit = calc_total if is_credit_note else 0
             ap_credit = 0 if is_credit_note else calc_total
 
-            itp_entry_id = _upsert_entry(
-                origin="ITP",
-                origin_id=obligation_id,
-                entry_date=issue_date,
-                period=period,
-                description=detail_text,
-                company=obligation_company
+            preserve_accrual = is_reconciled(
+                reconciled_purchases, obligation_company, obligation_id,
+                current_electronic_key or current_reference, payee_name,
             )
-
-            # 🔥 Blindado: siempre recrear líneas para evitar residuos
-            cur.execute("""
-                DELETE FROM accounting_lines
-                WHERE entry_id = %s
-            """, (itp_entry_id,))
-
-            # Gasto
-            _insert_line(
-                entry_id=itp_entry_id,
-                code=expense_account,
-                name=expense_name,
-                debit=expense_debit,
-                credit=expense_credit,
-                desc=detail_text
-            )
-
-            # IVA crédito fiscal (solo si aplica y existe en COA)
-            if iva_account_ok:
-                _insert_line(
-                    entry_id=itp_entry_id,
-                    code=IVA_CF_CODE,
-                    name=IVA_CF_NAME,
-                    debit=iva_debit,
-                    credit=iva_credit,
-                    desc=detail_text
+            if not preserve_accrual:
+                itp_entry_id = _upsert_entry(
+                    origin="ITP", origin_id=obligation_id, entry_date=issue_date,
+                    period=period, description=detail_text, company=obligation_company,
                 )
-
-            # CxP
-            _insert_line(
-                entry_id=itp_entry_id,
-                code=AP_CODE,
-                name=AP_NAME,
-                debit=ap_debit,
-                credit=ap_credit,
-                desc=detail_text
-            )
+                cur.execute("DELETE FROM accounting_lines WHERE entry_id = %s", (itp_entry_id,))
+                _insert_line(
+                    entry_id=itp_entry_id, code=expense_account, name=expense_name,
+                    debit=expense_debit, credit=expense_credit, desc=detail_text,
+                )
+                if iva_account_ok:
+                    _insert_line(
+                        entry_id=itp_entry_id, code=IVA_CF_CODE, name=IVA_CF_NAME,
+                        debit=iva_debit, credit=iva_credit, desc=detail_text,
+                    )
+                _insert_line(
+                    entry_id=itp_entry_id, code=AP_CODE, name=AP_NAME,
+                    debit=ap_debit, credit=ap_credit, desc=detail_text,
+                )
 
 
             # ============================================================
