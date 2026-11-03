@@ -1,10 +1,11 @@
 """Web-only MCI survey contract; independent from desktop report columns."""
-from datetime import date, datetime
+from datetime import date, datetime, time
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 from services.mci_container_schema import TITLES as CONTAINER_TITLES
 from services.mci_logistics_schema import TITLES as LOGISTICS_TITLES
+from services.mci_port_captancy_schema import TITLES as PORT_CAPTANCY_TITLES
 
 
 SECTION_TITLES = {
@@ -75,11 +76,26 @@ class SurveyContent(BaseModel):
     arrival_date: date | None = None
     inspection_date: date | None = None
     supervision_completed_date: date | None = None
+    report_type: str = Field(default='', max_length=1000)
+    operation: str = Field(default='', max_length=2000)
+    continent: str = Field(default='', max_length=500)
+    arrival_time: time | None = None
+    inspection_time: time | None = None
+    ts_date_0: date | None = None
+    ts_date_1: date | None = None
+    ts_date_2: date | None = None
+    ts_date_3: date | None = None
+    ts_date_4: date | None = None
+    ts_time_0: time | None = None
+    ts_time_1: time | None = None
+    ts_time_2: time | None = None
+    ts_time_3: time | None = None
+    ts_time_4: time | None = None
     sections: dict[str, OptionalSection] = Field(default_factory=dict)
 
     @model_validator(mode="after")
     def validate_content(self):
-        if set(self.sections) - (SECTION_TITLES.keys() | CONTAINER_TITLES.keys() | LOGISTICS_TITLES.keys()):
+        if set(self.sections) - (SECTION_TITLES.keys() | CONTAINER_TITLES.keys() | LOGISTICS_TITLES.keys() | PORT_CAPTANCY_TITLES.keys()):
             raise ValueError("Unknown report section")
         if self.period_start and self.period_end:
             if (self.period_start.tzinfo is None) != (self.period_end.tzinfo is None):
@@ -100,11 +116,26 @@ class SurveyContent(BaseModel):
 
 class SurveySave(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    kind: Literal["vessel", "condition", "cargo", "container", "logistics"]
+    kind: Literal["vessel", "condition", "cargo", "container", "logistics", "port_captancy"]
     service_id: int = Field(gt=0)
     content: SurveyContent
     version: str | None = None
     submit: bool = False
+    @model_validator(mode='after')
+    def port_captancy_limits(self):
+        if self.kind == 'port_captancy':
+            for key, section in self.content.sections.items():
+                if key not in PORT_CAPTANCY_TITLES:
+                    raise ValueError('Section not available for Port Captancy')
+                if len(section.blocks) > (1 if key == 'enclosure' else 15):
+                    raise ValueError('Port Captancy supports 15 text blocks and one picture link')
+            c = self.content
+            if c.ts_date_3 and c.ts_date_4:
+                start = datetime.combine(c.ts_date_3, c.ts_time_3 or time.min)
+                end = datetime.combine(c.ts_date_4, c.ts_time_4 or time.max)
+                if end < start:
+                    raise ValueError('Supervision completion precedes commencement')
+        return self
     # Company, report number, vessel and client are server-derived, not accepted.
 
 

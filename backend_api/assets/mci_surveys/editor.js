@@ -29,6 +29,7 @@
       root.innerHTML=`<header class="cert-head"><h2>${esc({vessel:'Vessel Survey',condition:'Vessel Condition Survey',cargo:'Cargo Condition Survey'}[opts.kind])}</h2><span>MCI-CR</span></header><nav class="cert-workflows">${s.boot?.permissions.create?`<button data-create aria-pressed="${mode==='create'}">Create</button>`:''}<button data-review aria-pressed="${mode==='review'}">Review</button></nav><p id="mci-error" role="alert"></p>${body}`;
       if(opts.kind==='container')$('h2').textContent='Container Survey Report';
       if(opts.kind==='logistics')$('h2').textContent='Logistics Supervision';
+      if(opts.kind==='port_captancy')$('h2').textContent='Port Captancy';
       if(s.boot && !s.boot.ready){root.querySelectorAll('nav button').forEach(b=>b.disabled=true);return;}
       if($('[data-create]'))$('[data-create]').onclick=()=>{if(canLeave()){s.dirty=false;run(()=>services());}};
       $('[data-review]').onclick=()=>{if(canLeave()){s.dirty=false;run(list);}};
@@ -60,6 +61,27 @@
         original.onclick=()=>run(async()=>{const r=await fetchBounded(`/informes/mci-surveys/${row.id}/original`,{headers:opts.headers()});if(!r.ok)throw Error('Original unavailable');const url=URL.createObjectURL(await r.blob()),a=document.createElement('a');a.href=url;a.download=row.source_filename;a.click();setTimeout(()=>URL.revokeObjectURL(url),30000);});
         $('#mci-form .cert-tools').appendChild(original);
       }
+      if(opts.kind==='port_captancy'){
+        const context=document.createElement('p');context.className='cert-meta';
+        context.textContent=[c.continent,c.operation].filter(Boolean).join(' / ');
+        $('#mci-form').prepend(context);
+        const grid=$('#mci-form .cert-fields');
+        const groups=[['Report particulars',k=>!k.startsWith('ts_')&&!['master','chief_officer','surveyor','arrival_date','arrival_time','inspection_date','inspection_time'].includes(k)],
+          ['Representatives',k=>['master','chief_officer','surveyor'].includes(k)],
+          ['Arrival and inspection',k=>['arrival_date','arrival_time','inspection_date','inspection_time'].includes(k)],
+          ['Extract time sheet',k=>k.startsWith('ts_')]];
+        const labels=[...grid.children];
+        for(const [index,[title,matches]] of groups.entries()){
+          const section=document.createElement('details');section.className='cert-section';section.open=index===0;
+          section.innerHTML=`<summary>${title}</summary><div class="cert-fields"></div>`;
+          for(const label of labels)if(matches(label.querySelector('input')?.name||''))section.lastChild.append(label);
+          grid.before(section);
+        }
+        grid.remove();
+        if(row.id)window.SOMPortAttachments($('#mci-form'),{
+          url:`/informes/mci-surveys/${row.id}/bundle`,headers:opts.headers,run,dirty:()=>s.dirty,signal:s.abort.signal
+        });
+      }
       const mark=()=>{s.dirty=true;$('#mci-save-state').textContent='Unsaved changes';};
       function sections(){
         if(c.sections.enclosure?.enabled){
@@ -73,16 +95,27 @@
         const enclosureEditor=root.querySelector('[data-add="enclosure"]')?.closest('.mci-text-section');
         if(enclosureEditor)enclosureEditor.innerHTML=`<label for="mci-picture-link">Picture link</label><input id="mci-picture-link" type="text" inputmode="url" autocomplete="off" spellcheck="false" data-block="enclosure" data-index="0" maxlength="30000" placeholder="https://" value="${esc(c.sections.enclosure.blocks[0].text)}" style="display:block;box-sizing:border-box;width:100%;max-width:560px;min-height:40px;margin:6px 0 0">`;
         root.querySelectorAll('[data-block]').forEach(t=>t.oninput=()=>{c.sections[t.dataset.block].blocks[+t.dataset.index].text=t.value;mark();});
-        root.querySelectorAll('[data-add]').forEach(b=>b.onclick=()=>{c.sections[b.dataset.add].blocks.push({text:''});mark();sections();});
+        root.querySelectorAll('[data-add]').forEach(b=>{
+          b.disabled=c.sections[b.dataset.add].blocks.length>=(s.boot.max_blocks||100);
+          b.onclick=()=>{if(c.sections[b.dataset.add].blocks.length>=(s.boot.max_blocks||100))return;c.sections[b.dataset.add].blocks.push({text:''});mark();sections();};
+        });
         root.querySelectorAll('[data-remove]').forEach(b=>b.onclick=()=>{const a=c.sections[b.dataset.remove].blocks,i=+b.dataset.index;if(a[i].text.trim()&&!confirm('Remove this text?'))return;a.splice(i,1);mark();sections();});
         if(opts.kind==='logistics'&&editable&&window.SOMLogisticsAssist)root.querySelectorAll('textarea[data-block]').forEach(input=>window.SOMLogisticsAssist(input,{
           request:body=>request('/informes/certificates/logistics-assist','POST',body),run,alive:live,
           mark:()=>input.dispatchEvent(new Event('input',{bubbles:true}))
         }));
+        if(opts.kind==='port_captancy'&&editable&&window.SOMLogisticsAssist)root.querySelectorAll('textarea[data-block]').forEach(input=>window.SOMLogisticsAssist(input,{
+          request:body=>request('/informes/certificates/port-captancy-assist','POST',body),run,alive:live,
+          mark:()=>input.dispatchEvent(new Event('input',{bubbles:true}))
+        }));
       }
       sections();root.querySelectorAll('#mci-form input[name]').forEach(el=>{
         if(opts.kind==='logistics' && el.name.endsWith('_date'))el.type='date';
-        el.oninput=()=>{c[el.name]=el.value||((el.name.endsWith('_date')||el.name.startsWith('period_'))?null:'');mark();};
+        if(opts.kind==='port_captancy'){
+          if(el.name.endsWith('_date')||el.name.startsWith('ts_date_'))el.type='date';
+          if(el.name.endsWith('_time')||el.name.startsWith('ts_time_'))el.type='time';
+        }
+        el.oninput=()=>{c[el.name]=el.value||((['date','time','datetime-local'].includes(el.type))?null:'');mark();};
       });
       async function save(submit){if(!editable)return;await run(async()=>{const d=await request('/informes/mci-surveys'+(row.id?'/'+row.id:''),row.id?'PATCH':'POST',{kind:opts.kind,service_id:row.service_id,content:c,version:payload.version,submit});if(live()){s.dirty=false;editor(d);$('#mci-save-state').textContent='Saved';}});}
       $('#mci-form').onsubmit=e=>{e.preventDefault();save(false);};if($('[data-submit]'))$('[data-submit]').onclick=()=>save(true);

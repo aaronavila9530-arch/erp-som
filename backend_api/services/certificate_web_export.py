@@ -179,6 +179,9 @@ def word(kind, data, target):
 
 
 def build(kind, data, format):
+    if kind == 'port_captancy':
+        from services.port_captancy_web_export import build as build_port_captancy
+        return build_port_captancy(data, format)
     if kind == 'logistics':
         from services.logistics_web_export import build as build_logistics
         return build_logistics(data, format)

@@ -56,7 +56,7 @@ def build_word(row):
         return element
     add(clone('PROFESSIONAL TECHNICAL REPORT'))
     add(clone('M/V LINA AKSOY', row['vessel']))
-    report_type = {'vessel':'Vessel Survey', 'condition':'Vessel Condition Survey', 'cargo':'Cargo Condition Survey', 'logistics':'Logistics Supervision'}.get(row.get('kind'), 'Survey Report')
+    report_type = {'vessel':'Vessel Survey', 'condition':'Vessel Condition Survey', 'cargo':'Cargo Condition Survey', 'logistics':'Logistics Supervision', 'port_captancy':'Port Captancy'}.get(row.get('kind'), 'Survey Report')
     add(clone('Multiple mooring-line failures during bulk cargo discharge\nBerth No. 4 - Puerto Caldera, Costa Rica', report_type+'\n'+row.get('location', content.location)))
     table = deepcopy(source.tables[0]._tbl)
     values = [row['requested_by'], f"{row['vessel']} / IMO {content.imo}", content.length_and_tonnage,
@@ -99,6 +99,16 @@ def build_word(row):
                         findings='4. SURVEY FINDINGS', documentary='4.1 Documentary findings',
                         operational='4.2 Operational control findings', incidents='4.3 Incidents',
                         conclusion='5. CONCLUSION', enclosure='6. ENCLOSURE')
+    if row.get('kind') == 'port_captancy':
+        from services.mci_port_captancy_schema import TITLES, GROUPS
+        parents = {child: parent for parent, children in GROUPS.items() for child in children}
+        sections = [(key, TITLES[key], [b.text for b in content.sections[key].blocks if b.text.strip()])
+                    for key in TITLES if key in content.sections and content.sections[key].enabled
+                    and (key not in parents or (content.sections.get(parents[key]) and content.sections[parents[key]].enabled))]
+        heading_sources.update(particulars='SURVEY FINDINGS', operation_summary='SURVEY FINDINGS', remarks='SURVEY FINDINGS')
+        headings.update(particulars='2. VESSEL PARTICULARS', operation_summary='3. OPERATION SUMMARY',
+                        remarks='4. REMARKS', conclusion='5. CONCLUSION', enclosure='6. ENCLOSURE',
+                        chronology='1.3 Extract time sheet')
     for key, title, blocks in sections:
         heading = clone(heading_sources[key], headings[key])
         # Explicit hierarchical labels must not inherit the template's flat list.
@@ -109,7 +119,7 @@ def build_word(row):
         add(heading)
         if key == 'representatives':
             blocks = [f'Master: {content.master}', f'Chief officer: {content.chief_officer}', f'Surveyor: {content.surveyor}'] + blocks
-        elif key == 'particulars' and row.get('kind') == 'logistics':
+        elif key == 'particulars' and row.get('kind') in ('logistics','port_captancy'):
             blocks = [f'Vessel: {row["vessel"]}', f'Flag / port of registry: {content.flag_port_registry}',
                       f'GRT: {content.grt}', f'NRT: {content.nrt}', f'IMO: {content.imo}',
                       f'Year built: {content.build_year}'] + blocks
@@ -117,6 +127,17 @@ def build_word(row):
             blocks = [f'{label}: {english_date(value)}' for label,value in (
                 ('Arrival',content.arrival_date), ('Inspection',content.inspection_date),
                 ('Supervision completed',content.supervision_completed_date)) if value] + blocks
+        elif key == 'instructions' and row.get('kind') == 'port_captancy':
+            blocks = [f'{label}: {value}' for label, value in (
+                ('Survey scope', content.report_type), ('Operation', content.operation),
+                ('Continent', content.continent)) if value] + blocks
+        elif key == 'chronology' and row.get('kind') == 'port_captancy':
+            from services.port_captancy_web_fields import EVENTS
+            events = [('Arrival', content.arrival_date, content.arrival_time),
+                      ('Inspection', content.inspection_date, content.inspection_time)]
+            events += [(label, getattr(content, f'ts_date_{i}'), getattr(content, f'ts_time_{i}')) for i,label in enumerate(EVENTS)]
+            blocks = [f'{label}: {english_date(d)}' + (' '+t.strftime('%H:%M')+' LT' if t else '')
+                      for label,d,t in events if d or t] + blocks
         elif key == 'enclosure':
             blocks = ['Picture link: ' + '\n'.join(blocks)]
         for text in blocks:
@@ -195,5 +216,12 @@ def build_word(row):
     doc.settings.element.append(setting)
     from services.web_docx_layout import fit_web_docx
     fit_web_docx(doc)
+    if row.get('kind') == 'port_captancy':
+        for section in doc.sections:
+            for tag in ('headerReference','footerReference'):
+                default=next((r for r in section._sectPr.findall(qn('w:'+tag)) if r.get(qn('w:type'))=='default'),None)
+                if default is None:continue
+                for typ in ('first','even'):
+                    ref=deepcopy(default);ref.set(qn('w:type'),typ);default.addnext(ref)
     output = BytesIO(); doc.save(output)
     return output.getvalue()

@@ -99,11 +99,12 @@
           for(const key of Object.keys(fields)) delete fields[key];
           Object.assign(fields,{cert_no:service.num_informe,vessel_name:service.buque_contenedor,requested_by:service.cliente});
         }
-        if(['condition','cargo_condition'].includes(s.kind)) {
+        if(['condition','cargo_condition','port_captancy'].includes(s.kind)) {
           for(const key of Object.keys(fields))delete fields[key];
           Object.assign(fields,{report_number:service.num_informe,vessel:service.buque_contenedor,
             requested_by:service.cliente,continent:service.continente,country:service.pais,port:service.puerto,
             service_start_date:String(service.fecha_inicio||'').slice(0,10),operation:service.operacion});
+          if(s.kind==='port_captancy')delete fields.service_start_date;
         }
         if(s.kind==="weight") Object.assign(fields,{continent:service.continente,operation:service.operacion});
         if(s.kind==="holds")fields.load_port=service.puerto;
@@ -127,7 +128,19 @@
         </div><div class="cert-action-group"><span class="cert-action-label">Exportacion</span>${row.id?`<select id="cert-format" aria-label="Formato de exportacion"><option value="${spec.document}">${spec.document==="word"?"Word":"Excel"}</option><option value="pdf">Informe PDF</option>${['grain','logistics'].includes(s.kind)?'<option value="presentation">Presentacion PDF</option><option value="complete">Presentacion + informe PDF</option>':""}</select><button type="button" id="cert-export">Descargar</button>`:""}
         </div><span id="cert-save-state" class="cert-meta" role="status"></span></footer></form>`);
       $("#cert-form").prepend($(".cert-actions"));
+      if(s.kind==='port_captancy'&&row.id)window.SOMPortAttachments($('#cert-form'),{
+        url:`/informes/certificates/port_captancy/${row.id}/bundle`,headers:options.headers,run,
+        dirty:()=>s.dirty,signal:s.controller.signal
+      });
+      if(s.kind==='port_captancy' && row.id){
+        $('#cert-format').add(new Option('Presentacion PDF','presentation'));
+        $('#cert-format').add(new Option('Presentacion + informe PDF','complete'));
+      }
       if(s.kind==='logistics')for(const key of ['customer','vessel_name','port','country'])$(`[name="${key}"]`).readOnly=true;
+      if(s.kind==='port_captancy')for(const key of ['requested_by','vessel','continent','port','country','operation'])$(`[name="${key}"]`).readOnly=true;
+      if(s.kind==='port_captancy' && editable)root.querySelectorAll('textarea[name]').forEach(input=>window.SOMLogisticsAssist(input,{
+        request:body=>api('/port-captancy-assist','POST',body),run,alive,mark:()=>input.dispatchEvent(new Event('input',{bubbles:true}))
+      }));
       if(s.kind==='logistics' && editable)root.querySelectorAll('textarea[name]').forEach(input=>window.SOMLogisticsAssist(input,{
         request:body=>api('/logistics-assist','POST',body),run,alive,mark:()=>input.dispatchEvent(new Event('input',{bubbles:true}))
       }));
@@ -211,12 +224,40 @@
     }
     await run(async()=>{
       s.boot=await api("/bootstrap");
-      s.boot.types=Object.fromEntries(Object.entries(s.boot.types).filter(([k])=>options.kind ? k===options.kind : !['grain','condition','cargo_condition','logistics'].includes(k)));
+      s.boot.types=Object.fromEntries(Object.entries(s.boot.types).filter(([k])=>options.kind ? k===options.kind : !['grain','condition','cargo_condition','logistics','port_captancy'].includes(k)));
       if(alive())await list();
     });
   }
   window.SOMCertificates={mount,canLeave,destroy};
 })();
+
+window.SOMPortAttachments=(form,options)=>{
+  const box=document.createElement('details');box.className='cert-section';
+  box.innerHTML='<summary>PDF annexes</summary><div class="cert-tools"><input type="file" accept="application/pdf,.pdf" multiple aria-label="PDF annexes"><button type="button" disabled>Download report with annexes</button></div><ol></ol>';
+  form.append(box);let files=[];
+  const input=box.querySelector('input'),download=box.querySelector('button'),list=box.querySelector('ol');
+  function show(){
+    list.replaceChildren();download.disabled=!files.length;
+    files.forEach((file,i)=>{const li=document.createElement('li'),name=document.createElement('span');name.textContent=file.name;name.style.overflowWrap='anywhere';li.append(name);
+      for(const [label,symbol,action,disabled] of [
+        ['Move up','\u2191',()=>{[files[i-1],files[i]]=[files[i],files[i-1]];show();},i===0],
+        ['Move down','\u2193',()=>{[files[i+1],files[i]]=[files[i],files[i+1]];show();},i===files.length-1],
+        ['Remove','\u2212',()=>{files.splice(i,1);show();},false]]){
+        const b=document.createElement('button');b.type='button';b.textContent=symbol;b.title=label;b.setAttribute('aria-label',label);b.disabled=disabled;b.onclick=action;li.append(b);
+      }list.append(li);
+    });
+  }
+  input.onchange=()=>{files.push(...input.files);input.value='';show();};
+  download.onclick=()=>options.run(async()=>{
+    if(options.dirty())throw Error('Save changes before downloading.');
+    if(files.length>10||files.some(f=>f.size>20*1024*1024)||files.reduce((n,f)=>n+f.size,0)>40*1024*1024)throw Error('Maximum 10 PDFs, 20 MB per file, 40 MB total.');
+    const body=new FormData();files.forEach(file=>body.append('files',file));
+    const headers={...options.headers()};for(const k of Object.keys(headers))if(k.toLowerCase()==='content-type')delete headers[k];
+    const response=await fetch(options.url,{method:'POST',headers,body,signal:options.signal});
+    if(!response.ok){const data=await response.json().catch(()=>null);throw Error(data?.detail||'Could not assemble PDF.');}
+    const url=URL.createObjectURL(await response.blob()),a=document.createElement('a');a.href=url;a.download='Port_Captancy_complete.pdf';a.click();setTimeout(()=>URL.revokeObjectURL(url),30000);
+  });
+};
 
 window.SOMLogisticsAssist=(input,options)=>{
   const tools=document.createElement('div');tools.className='cert-tools';
