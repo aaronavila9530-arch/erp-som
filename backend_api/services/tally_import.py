@@ -46,8 +46,9 @@ def workbook_rows(content):
             wb.close()
 
 
-def driver_records(content, sheet_name=None):
+def driver_records(content, sheet_name=None, multiple=False):
     records = {}
+    pairs = {}
     conflicts = set()
     for name, rows in workbook_rows(content):
         if sheet_name and name != sheet_name:
@@ -69,11 +70,12 @@ def driver_records(content, sheet_name=None):
             driver = ' '.join(driver.split())
             if len(plate) > 30 or len(driver) > 150:
                 raise ValueError('Placa o chofer demasiado largo')
+            pairs.setdefault((plate, header(driver)), (plate, driver))
             if plate in records and header(records[plate]) != header(driver):
                 conflicts.add(plate)
             records[plate] = driver
-    if conflicts:
+    if conflicts and not multiple:
         raise ValueError('Placas con varios choferes: ' + ', '.join(sorted(conflicts)))
     if not records:
         raise ValueError('No se encontraron columnas Placa y Choferes con datos')
-    return records
+    return list(pairs.values()) if multiple else records

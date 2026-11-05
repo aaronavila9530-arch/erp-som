@@ -63,6 +63,10 @@ def schema(conn):
             SELECT p.id,d.plate,d.driver FROM tally_projects p JOIN tally_drivers d ON d.company_code=p.company_code
             WHERE NOT p.driver_scope_ready ON CONFLICT DO NOTHING""")
         cur.execute("UPDATE tally_projects SET driver_scope_ready=TRUE WHERE NOT driver_scope_ready")
+        cur.execute("""CREATE TABLE IF NOT EXISTS tally_project_driver_options (
+            project_id BIGINT NOT NULL REFERENCES tally_projects(id), plate TEXT NOT NULL,
+            driver_key TEXT NOT NULL, driver TEXT NOT NULL,
+            PRIMARY KEY(project_id,plate,driver_key))""")
         cur.execute("""CREATE TABLE IF NOT EXISTS tally_audit (
             id BIGSERIAL PRIMARY KEY, project_id BIGINT NOT NULL REFERENCES tally_projects(id),
             hold INTEGER, action TEXT NOT NULL, revision INTEGER, performed_by TEXT NOT NULL,
@@ -117,6 +121,7 @@ class TallyRow(BaseModel):
     guide: str = ""
     seal: str = ""
     plate: str = ""
+    driver: str | None = Field(default=None, max_length=150)
     stowage: str = ""
     notes: str = ""
 
@@ -156,13 +161,15 @@ class CompanyInput(BaseModel):
 
 
 def refresh_project_driver_rows(cur, pid, records, ctx):
+    choices = project_driver_choices(cur, pid)
     cur.execute("SELECT hold,rows,revision FROM tally_sheets WHERE project_id=%s FOR UPDATE", (pid,))
     for sheet in cur.fetchall():
         changed = False
         for row in sheet['rows']:
             key = plate_key(row.get('plate'))
-            if key in records and row.get('driver') != records[key]:
-                row['driver'] = records[key]
+            options = choices.get(key, [])
+            if key in records and not row.get('driver') and len(options) == 1:
+                row['driver'] = options[0]
                 changed = True
         if changed:
             cur.execute("UPDATE tally_sheets SET rows=%s,revision=revision+1,updated_by=%s,updated_at=NOW() WHERE project_id=%s AND hold=%s",
@@ -172,6 +179,42 @@ def refresh_project_driver_rows(cur, pid, records, ctx):
 
 def plate_key(value):
     return re.sub(r"[\s-]+", "", str(value or "")).upper()
+
+
+def project_driver_choices(cur, pid):
+    cur.execute("""WITH target AS (SELECT %s::bigint AS id)
+        SELECT plate,driver FROM tally_project_drivers WHERE project_id=(SELECT id FROM target)
+        UNION SELECT plate,driver FROM tally_project_driver_options WHERE project_id=(SELECT id FROM target)
+        ORDER BY plate,driver""", (pid,))
+    choices = {}
+    from services.tally_import import header
+    for row in cur.fetchall():
+        options = choices.setdefault(row['plate'], [])
+        if not any(header(d) == header(row['driver']) for d in options):
+            options.append(row['driver'])
+    return choices
+
+
+def register_driver(cur, pid, plate, driver):
+    from services.tally_import import header
+    driver = ' '.join(driver.split())
+    # Keep the legacy default intact; additional drivers are separate associations.
+    cur.execute("INSERT INTO tally_project_drivers VALUES(%s,%s,%s) ON CONFLICT(project_id,plate) DO NOTHING", (pid, plate, driver))
+    cur.execute("""INSERT INTO tally_project_driver_options(project_id,plate,driver_key,driver)
+        VALUES(%s,%s,%s,%s) ON CONFLICT DO NOTHING""", (pid, plate, header(driver), driver))
+
+
+def resolve_driver(plate, selected, choices, previous=None):
+    options = choices.get(plate, [])
+    previous = previous or {}
+    historical = previous.get('driver', '') if plate_key(previous.get('plate')) == plate else ''
+    if selected is None:
+        return historical or (options[0] if len(options) == 1 else '')
+    if selected:
+        if selected in options or selected == historical:
+            return selected
+        raise HTTPException(422, 'Chofer no registrado para la placa: ' + plate)
+    return options[0] if len(options) == 1 else ''
 
 
 @router.get("/som/tally-assets/{name}", include_in_schema=False)
@@ -247,8 +290,8 @@ def get_sheet(pid: int, hold: int, ctx=Depends(context), conn=Depends(get_db)):
             raise HTTPException(404, "Bodega no configurada")
         cur.execute("SELECT * FROM tally_sheets WHERE project_id=%s AND hold=%s", (pid, hold))
         result = cur.fetchone() or dict(rows=[], revision=0, hold=hold)
-        cur.execute("SELECT plate,driver FROM tally_project_drivers WHERE project_id=%s ORDER BY plate", (pid,))
-        result['drivers'] = cur.fetchall()
+        result['drivers'] = [{'plate': plate, 'driver': driver}
+                             for plate, drivers in project_driver_choices(cur, pid).items() for driver in drivers]
         return result
 
 
@@ -260,11 +303,12 @@ def save_sheet(pid: int, hold: int, body: SheetInput, ctx=Depends(writer), conn=
         if hold not in p["holds"]:
             raise HTTPException(404, "Bodega no configurada")
         cur.execute("INSERT INTO tally_sheets(project_id,hold) VALUES(%s,%s) ON CONFLICT DO NOTHING", (pid, hold))
-        cur.execute("SELECT revision FROM tally_sheets WHERE project_id=%s AND hold=%s FOR UPDATE", (pid, hold))
-        if cur.fetchone()["revision"] != body.revision:
+        cur.execute("SELECT revision,rows FROM tally_sheets WHERE project_id=%s AND hold=%s FOR UPDATE", (pid, hold))
+        stored = cur.fetchone()
+        if stored["revision"] != body.revision:
             raise HTTPException(409, "Otra persona modifico esta bodega. Sus cambios no se sobrescribieron. Exporte su borrador y recargue.")
-        cur.execute("SELECT plate,driver FROM tally_project_drivers WHERE project_id=%s", (pid,))
-        drivers = {r["plate"]: r["driver"] for r in cur.fetchall()}
+        previous = {r['id']: r for r in stored.get('rows', [])}
+        drivers = project_driver_choices(cur, pid)
         cur.execute("SELECT name FROM tally_companies WHERE company_code=%s", (ctx["company"],))
         companies = {r["name"] for r in cur.fetchall()}
         rows = []
@@ -273,7 +317,7 @@ def save_sheet(pid: int, hold: int, body: SheetInput, ctx=Depends(writer), conn=
             row["plate"] = plate_key(row["plate"])
             if row["company"] and row["company"] not in companies:
                 raise HTTPException(422, "Empresa no registrada en catalogo: " + row["company"])
-            row["driver"] = drivers.get(row["plate"], "")
+            row["driver"] = resolve_driver(row['plate'], row['driver'], drivers, previous.get(row['id']))
             rows.append(row)
         revision = body.revision + 1
         cur.execute("UPDATE tally_sheets SET rows=%s,revision=%s,updated_by=%s,updated_at=NOW() WHERE project_id=%s AND hold=%s", (Json(rows), revision, ctx["user"], pid, hold))
@@ -290,7 +334,7 @@ def put_driver(pid: int, body: DriverInput, ctx=Depends(writer), conn=Depends(ge
         raise HTTPException(422, "Placa y chofer requeridos")
     with conn.cursor(cursor_factory=RealDictCursor) as cur:
         project(cur, pid, ctx, True)
-        cur.execute("INSERT INTO tally_project_drivers VALUES(%s,%s,%s) ON CONFLICT(project_id,plate) DO UPDATE SET driver=EXCLUDED.driver", (pid, key, body.driver.strip()))
+        register_driver(cur, pid, key, body.driver)
         refresh_project_driver_rows(cur, pid, {key: body.driver.strip()}, ctx)
         audit(cur, pid, ctx, 'DRIVER_UPDATED', {'plate': key, 'driver': body.driver.strip()})
     conn.commit()
@@ -314,7 +358,7 @@ def import_catalog(pid: int, file: UploadFile = File(...), sheet_name: str | Non
     if len(content) > 5 * 1024 * 1024:
         raise HTTPException(413, "Archivo mayor a 5 MB")
     try:
-        records = driver_records(content, sheet_name)
+        records = driver_records(content, sheet_name, multiple=True)
     except ValueError as exc:
         raise HTTPException(422, str(exc)) from exc
     except Exception as exc:
@@ -322,9 +366,9 @@ def import_catalog(pid: int, file: UploadFile = File(...), sheet_name: str | Non
     schema(conn)
     with conn.cursor(cursor_factory=RealDictCursor) as cur:
         project(cur, pid, ctx, True)
-        for plate, driver in records.items():
-            cur.execute("INSERT INTO tally_project_drivers VALUES(%s,%s,%s) ON CONFLICT(project_id,plate) DO UPDATE SET driver=EXCLUDED.driver", (pid, plate, driver))
-        refresh_project_driver_rows(cur, pid, records, ctx)
+        for plate, driver in records:
+            register_driver(cur, pid, plate, driver)
+        refresh_project_driver_rows(cur, pid, {p for p, _ in records}, ctx)
         audit(cur, pid, ctx, 'DRIVERS_IMPORTED', {'count': len(records), 'filename': file.filename})
     conn.commit()
     return {"processed": len(records), "project_id": pid}

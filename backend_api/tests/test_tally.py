@@ -60,7 +60,7 @@ class TallyTests(unittest.TestCase):
         self.assertEqual(row.number, "001")
         self.assertEqual(row.seal, "Si")
         self.assertEqual(tally.plate_key(" ab-012 "), "AB012")
-        for data in ({"date":"2026-02-30"}, {"entry":"25:00"}, {"seal":"maybe"}, {"driver":"forged"}):
+        for data in ({"date":"2026-02-30"}, {"entry":"25:00"}, {"seal":"maybe"}, {"driver":"x"*151}):
             with self.assertRaises(ValidationError):
                 tally.TallyRow(id=uuid4(), **data)
         with self.assertRaises(ValidationError):
@@ -104,6 +104,34 @@ class TallyTests(unittest.TestCase):
         self.assertIn('tally_project_drivers',lookup.args[0])
         self.assertEqual(lookup.args[1],(1,))
         self.assertTrue(any("INSERT INTO tally_audit" in c.args[0] for c in self.cur.execute.call_args_list))
+
+    def test_multiple_drivers_imported_without_losing_pairs(self):
+        wb=Workbook();ws=wb.active;ws.append(['Placa','Choferes'])
+        ws.append(['148358','FRANCISCO QUESADA ARAYA'])
+        ws.append(['148358','CRISTIAN JOSE QUESADA VARGAS'])
+        ws.append(['148358','  FRANCISCO QUESADA ARAYA '])
+        out=BytesIO();wb.save(out)
+        self.assertEqual(driver_records(out.getvalue(), multiple=True), [
+            ('148358','FRANCISCO QUESADA ARAYA'), ('148358','CRISTIAN JOSE QUESADA VARGAS')])
+
+    def test_driver_selection_and_legacy_preservation(self):
+        choices={'148358':['Francisco','Cristian'], '001':['Only']}
+        self.assertEqual(tally.resolve_driver('148358',None,choices),'')
+        self.assertEqual(tally.resolve_driver('148358','Cristian',choices),'Cristian')
+        self.assertEqual(tally.resolve_driver('001',None,choices),'Only')
+        old={'plate':'148358','driver':'Francisco'}
+        self.assertEqual(tally.resolve_driver('148358',None,choices,old),'Francisco')
+        self.assertEqual(tally.resolve_driver('other',None,choices,old),'')
+        with self.assertRaises(HTTPException):
+            tally.resolve_driver('148358','Forged',choices)
+
+    def test_adding_driver_does_not_reassign_historical_trips(self):
+        self.cur.fetchall.side_effect=[[
+            {'plate':'148358','driver':'Francisco'}, {'plate':'148358','driver':'Cristian'}],
+            [{'hold':1,'revision':2,'rows':[{'plate':'148358','driver':'Francisco'},
+                                         {'plate':'148358','driver':''}]}]]
+        tally.refresh_project_driver_rows(self.cur,3,{'148358'},self.ctx)
+        self.assertFalse(any('UPDATE tally_sheets' in c.args[0] for c in self.cur.execute.call_args_list))
 
     def test_excel_columns_dates_and_formula_safety(self):
         out=tally.export_workbook({"holds":[1,3,5]}, {3:[dict(number="001",plate="001234",date="2026-10-05",entry="08:30:00",notes='=HYPERLINK("bad")')]})

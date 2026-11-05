@@ -6,12 +6,14 @@ from fastapi import FastAPI, HTTPException
 from fastapi.responses import HTMLResponse, StreamingResponse
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from routers.tally import router, SheetInput, ProjectInput, export_workbook
+from routers.tally import router, SheetInput, ProjectInput, export_workbook, resolve_driver
 
 app=FastAPI()
 projects=[dict(id=1,name="MV DEMO - Tally",holds=[1,3,5],service_id=100,revision=0)]
 sheets={}
-drivers=[dict(plate="AB123",driver="CHOFER DEMO")]
+drivers=[dict(plate="AB123",driver="CHOFER DEMO"),
+         dict(plate="148358",driver="FRANCISCO QUESADA ARAYA"),
+         dict(plate="148358",driver="CRISTIAN JOSE QUESADA VARGAS")]
 companies=["TRANSPORTE DEMO"]
 
 @app.get("/")
@@ -37,14 +39,15 @@ def update(pid:int,body:ProjectInput):
 
 @app.get("/tally/projects/{pid}/sheets/{hold}")
 def read(pid:int,hold:int):
-    return sheets.get((pid,hold),dict(revision=0,rows=[]))
+    return {**sheets.get((pid,hold),dict(revision=0,rows=[])), 'drivers':drivers}
 
 @app.put("/tally/projects/{pid}/sheets/{hold}")
 def save(pid:int,hold:int,body:SheetInput):
     old=read(pid,hold)
     if old['revision']!=body.revision:raise HTTPException(409,'Otra persona modifico esta bodega. Sus cambios no se sobrescribieron.')
     rows=[r.model_dump(mode='json') for r in body.rows]
-    for r in rows:r['driver']=next((d['driver'] for d in drivers if d['plate']==r['plate']),'')
+    choices={p:[d['driver'] for d in drivers if d['plate']==p] for p in {d['plate'] for d in drivers}}
+    for r in rows:r['driver']=resolve_driver(r['plate'],r['driver'],choices)
     sheets[(pid,hold)]=dict(revision=body.revision+1,rows=rows)
     return dict(revision=body.revision+1,count=len(rows))
 

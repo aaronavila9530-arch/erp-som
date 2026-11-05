@@ -1,6 +1,6 @@
 (function () {
   'use strict';
-  const fields = ['number','date','entry','exit','spc','company','ticket','guide','seal','plate','stowage','notes'];
+  const fields = ['number','date','entry','exit','spc','company','ticket','guide','seal','plate','driver','stowage','notes'];
   const esc = value => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
   const plateKey = value => String(value || '').replace(/[\s-]+/g, '').toUpperCase();
   function pasteValue(field,value) {
@@ -88,8 +88,9 @@
       })();
       return saving;
     }
-    function driver(plate) {return boot.drivers.find(d=>d.plate===plateKey(plate))?.driver || '';}
-    function enrich(row) {return {...row,hold,driver:driver(row.plate)};}
+    function driverChoices(plate) {return [...new Set(boot.drivers.filter(d=>d.plate===plateKey(plate)).map(d=>d.driver))];}
+    function driver(plate) {const choices=driverChoices(plate);return choices.length===1?choices[0]:'';}
+    function enrich(row) {return {...row,hold,driver:row.driver || driver(row.plate)};}
     let typingCell=false;
     const sheetPositions=new Map();
     const positionKey=()=>`${current.id}:${hold}`;
@@ -107,7 +108,7 @@
       holder.scrollLeft=position.left;
     }
     function choiceEditor(cell,onRendered,success,cancel) {
-      const field=cell.getField(),values=field==='company'?boot.companies:['Si','No'];
+      const field=cell.getField(),values=field==='company'?boot.companies:field==='driver'?driverChoices(cell.getRow().getData().plate):['Si','No'];
       const box=document.createElement('div'),editor=document.createElement('input'),list=document.createElement('datalist');
       list.id='tally-options-'+crypto.randomUUID();editor.setAttribute('list',list.id);editor.value=cell.getValue()||'';
       values.forEach(value=>{const option=document.createElement('option');option.value=value;list.append(option);});
@@ -137,7 +138,7 @@
       const columns=range.getColumns().map(c=>c.getField()).filter(f=>fields.includes(f));
       if(rows.length<2||!columns.length)return;
       const source=rows[0].getData(),values=Object.fromEntries(columns.map(f=>[f,source[f]??'']));
-      if(columns.includes('plate')){values.plate=plateKey(values.plate);values.driver=driver(values.plate);}
+      if(columns.includes('plate')){values.plate=plateKey(values.plate);values.driver=columns.includes('driver')?source.driver:driver(values.plate);}
       clearTimeout(timer);
       for(const row of rows.slice(1))await row.update({...values});
       changed();
@@ -287,7 +288,7 @@
             if(needed>0)await table.addData(Array.from({length:needed},()=>enrich(blank())),false);
             const targets=table.getRows().slice(start,start+rows.length);
             for(let i=0;i<rows.length;i++){const clean=rows[i];
-              if(Object.hasOwn(clean,'plate')){clean.plate=plateKey(clean.plate);clean.driver=driver(clean.plate);}
+              if(Object.hasOwn(clean,'plate')){clean.plate=plateKey(clean.plate);clean.driver=clean.driver||driver(clean.plate);}
               await targets[i].update(clean);
             }
             changed();
@@ -303,7 +304,8 @@
           input('Entrada','entry',100,{editor:boot.editable&&!conflict?temporalEditor:false,formatter:cell=>esc(pasteValue('entry',cell.getValue()))}),input('Salida','exit',100,{editor:boot.editable&&!conflict?temporalEditor:false,formatter:cell=>esc(pasteValue('exit',cell.getValue()))}),
           input('SPC','spc',120),input('Empresa','company',155,{editor:boot.editable&&!conflict?choiceEditor:false}),
           input('Ficha','ticket',95),input('Guia Surco','guide',115),input('Guia Sello','seal',105,{editor:boot.editable&&!conflict?choiceEditor:false}),
-          input('Placa','plate',120),{title:'Chofer',field:'driver',width:260,formatter:'plaintext',cssClass:'tally-readonly'},
+          input('Placa','plate',120),input('Chofer','driver',260,{editor:boot.editable&&!conflict?choiceEditor:false,
+            formatter:cell=>esc(cell.getValue()||(driverChoices(cell.getRow().getData().plate).length>1?'Seleccionar chofer':''))}),
           input('Consecutivo Estiba','stowage',170),input('Observacion','notes',280)
         ].map(column=>({...column,minWidth:column.width,maxWidth:column.width,widthGrow:0,widthShrink:0}))
       });
@@ -371,6 +373,8 @@
       if(!await flush())return;
       const d=dialog('Catalogos',`<form id="driverForm"><label>Placa<input name="plate" maxlength="30" required list="tallyPlates"></label><datalist id="tallyPlates">${boot.drivers.map(x=>`<option value="${esc(x.plate)}">${esc(x.driver)}</option>`).join('')}</datalist><label>Chofer<input name="driver" maxlength="150" required></label><button type="submit">Guardar chofer</button></form><hr><form id="companyForm"><label>Empresa<input name="name" maxlength="100" required></label><button type="submit">Agregar empresa</button></form><p>${boot.companies.map(esc).join(', ')||'Sin empresas'}</p><hr><label>Importar catalogo desde Excel<input id="catalogFile" type="file" accept=".xlsx"></label><button id="catalogImport">Importar hoja Choferes</button><p>${boot.drivers.length} placas registradas</p>`);
       d.querySelector('h2').textContent=`Choferes de ${current.name}`;
+      d.querySelector('#driverForm button').textContent='Agregar chofer';
+      d.querySelector('#catalogImport').nextElementSibling.textContent=`${new Set(boot.drivers.map(d=>d.plate)).size} placas · ${boot.drivers.length} asociaciones placa-chofer`;
       d.querySelector('#catalogFile').accept='.xlsx,.xls';
       d.querySelector('#catalogImport').textContent='Importar placas y choferes';
       d.querySelector('#catalogFile').parentElement.insertAdjacentHTML('afterend','<label>Hoja (opcional)<input id="catalogSheet" placeholder="Todas las hojas"></label>');
