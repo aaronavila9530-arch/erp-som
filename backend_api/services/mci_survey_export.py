@@ -56,7 +56,7 @@ def build_word(row):
         return element
     add(clone('PROFESSIONAL TECHNICAL REPORT'))
     add(clone('M/V LINA AKSOY', row['vessel']))
-    report_type = {'vessel':'Vessel Survey', 'condition':'Vessel Condition Survey', 'cargo':'Cargo Condition Survey', 'logistics':'Logistics Supervision', 'port_captancy':'Port Captancy'}.get(row.get('kind'), 'Survey Report')
+    report_type = {'vessel':'Vessel Survey', 'condition':'Vessel Condition Survey', 'cargo':'Cargo Condition Survey', 'logistics':'Logistics Supervision', 'port_captancy':'Port Captancy', 'crane':'Crane Inspections'}.get(row.get('kind'), 'Survey Report')
     add(clone('Multiple mooring-line failures during bulk cargo discharge\nBerth No. 4 - Puerto Caldera, Costa Rica', report_type+'\n'+row.get('location', content.location)))
     table = deepcopy(source.tables[0]._tbl)
     values = [row['requested_by'], f"{row['vessel']} / IMO {content.imo}", content.length_and_tonnage,
@@ -109,6 +109,33 @@ def build_word(row):
         headings.update(particulars='2. VESSEL PARTICULARS', operation_summary='3. OPERATION SUMMARY',
                         remarks='4. REMARKS', conclusion='5. CONCLUSION', enclosure='6. ENCLOSURE',
                         chronology='1.3 Extract time sheet')
+    if row.get('kind') == 'crane':
+        from services.mci_crane_schema import TITLES, GROUPS, POINTS
+        from services.crane_web_fields import SUFFIXES
+        parents={child:parent for parent,children in GROUPS.items() for child in children}
+        sections=[]
+        for number,(parent,children) in enumerate(GROUPS.items(),1):
+            heading_sources[parent]='SURVEY FINDINGS'
+            headings[parent]=f'{number}. {TITLES[parent]}'
+            for index,child in enumerate(children,1):
+                heading_sources[child]='2.1 Visual inspection';headings[child]=f'{number}.{index} {TITLES[child]}'
+        for key,title in TITLES.items():
+            sec=content.sections.get(key)
+            if not sec or not sec.enabled:continue
+            if key in parents and not (content.sections.get(parents[key]) and content.sections[parents[key]].enabled):continue
+            blocks=[b.text for b in sec.blocks if b.text.strip()]
+            if key=='crane_intro' and content.inspection_date:
+                blocks.insert(0,'Inspection date: '+english_date(content.inspection_date)+((' '+content.inspection_time.strftime('%H:%M')+' LT') if content.inspection_time else ''))
+            if key=='instructions':
+                blocks=[f'{label}: {value}' for label,value in (('GRT',content.grt),('NRT',content.nrt)) if value]+blocks
+            if key=='crane_checklist':
+                blocks=[]
+                for point,label in POINTS.items():
+                    check=content.crane_checks.get(point)
+                    if not check:continue
+                    statuses=[getattr(check,s) for s in SUFFIXES if getattr(check,s)]
+                    if check.done or statuses:blocks.append(label+': '+(', '.join(statuses) if statuses else 'Inspection performed; status not specified')+'.')
+            sections.append((key,title,blocks))
     for key, title, blocks in sections:
         heading = clone(heading_sources[key], headings[key])
         # Explicit hierarchical labels must not inherit the template's flat list.
@@ -216,7 +243,7 @@ def build_word(row):
     doc.settings.element.append(setting)
     from services.web_docx_layout import fit_web_docx
     fit_web_docx(doc)
-    if row.get('kind') == 'port_captancy':
+    if row.get('kind') in ('port_captancy','crane'):
         for section in doc.sections:
             for tag in ('headerReference','footerReference'):
                 default=next((r for r in section._sectPr.findall(qn('w:'+tag)) if r.get(qn('w:type'))=='default'),None)

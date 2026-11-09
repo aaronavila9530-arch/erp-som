@@ -31,6 +31,10 @@
 .som-certificates .cert-action-label {width:100%;font-size:11px;font-weight:600;text-transform:uppercase;color:#586e76}
 .som-certificates .cert-section summary {cursor:pointer;font-size:15px;font-weight:600;padding:10px 0 18px;color:#263b43}
 .som-certificates .cert-section[open] summary {color:#007c82}
+.som-certificates.som-crane .cert-section:not([open]) {padding:0;margin-bottom:0}
+.som-certificates.som-crane .cert-section:not([open]) summary {padding:14px 0;min-height:44px}
+.som-certificates.som-crane #cert-form .mci-section-option {flex-direction:row;align-items:center;gap:10px}
+.som-certificates.som-crane #cert-form input[type=checkbox] {appearance:auto;width:18px;height:18px;min-height:18px;min-width:18px;margin:0;padding:0;accent-color:#007c82}
 .som-report-tabs {display:flex;gap:6px;flex-wrap:wrap;border-bottom:1px solid #d5dfe3;padding:12px 0;background:#fff}
 .som-report-tabs {align-items:center;padding:16px;gap:20px}
 .cert-workflows {display:flex;gap:4px;padding:16px 0}

@@ -34,3 +34,5 @@ from services.logistics_web_fields import SPEC as LOGISTICS_SPEC
 VESSEL_TYPES['logistics'] = LOGISTICS_SPEC
 from services.port_captancy_web_fields import SPEC as PORT_CAPTANCY_SPEC
 VESSEL_TYPES['port_captancy'] = PORT_CAPTANCY_SPEC
+from services.crane_web_fields import SPEC as CRANE_SPEC
+VESSEL_TYPES['crane'] = CRANE_SPEC

@@ -11,6 +11,7 @@
     s.unload=e=>{if(s.dirty||s.busy){e.preventDefault();e.returnValue='';}};window.addEventListener('beforeunload',s.unload);
     const $=q=>root.querySelector(q),live=()=>active===s;
     root.classList.add('som-certificates');
+    root.classList.toggle('som-crane',opts.kind==='crane');
     async function fetchBounded(path,options={},timeout=45000){
       const controller=new AbortController();let expired=false;
       const cancel=()=>controller.abort();s.abort.signal.addEventListener('abort',cancel,{once:true});
@@ -30,6 +31,7 @@
       if(opts.kind==='container')$('h2').textContent='Container Survey Report';
       if(opts.kind==='logistics')$('h2').textContent='Logistics Supervision';
       if(opts.kind==='port_captancy')$('h2').textContent='Port Captancy';
+      if(opts.kind==='crane')$('h2').textContent='Crane Inspections';
       if(s.boot && !s.boot.ready){root.querySelectorAll('nav button').forEach(b=>b.disabled=true);return;}
       if($('[data-create]'))$('[data-create]').onclick=()=>{if(canLeave()){s.dirty=false;run(()=>services());}};
       $('[data-review]').onclick=()=>{if(canLeave()){s.dirty=false;run(list);}};
@@ -52,6 +54,7 @@
       const fields=s.boot.fields||defaultFields;
       if(!live())return;const row=payload.data,c=structuredClone(row.content),editable=row.id?s.boot.permissions.edit&&row.status!=='Approved':s.boot.permissions.create;
       c.sections ||= {};
+      c.crane_checks ||= {};
       const groups=s.boot.groups||defaultGroups,parents=Object.fromEntries(Object.entries(groups).flatMap(([parent,children])=>children.map(k=>[k,parent])));
       if((c.hierarchy_version||1)===1){for(const [parent,children] of Object.entries(groups)){if(children.some(k=>c.sections[k]?.enabled))(c.sections[parent]||={enabled:false,blocks:[]}).enabled=true;}}
       c.hierarchy_version=2;
@@ -83,7 +86,9 @@
         });
       }
       const mark=()=>{s.dirty=true;$('#mci-save-state').textContent='Unsaved changes';};
+      if(opts.kind==='crane'&&row.id)window.SOMPortAttachments($('#mci-form'),{url:`/informes/mci-surveys/${row.id}/bundle`,filename:'Crane_Inspection_complete.pdf',headers:opts.headers,run,dirty:()=>s.dirty,signal:s.abort.signal});
       function sections(){
+        const limit=k=>s.boot.block_limits?.[k]??s.boot.max_blocks??100;
         if(c.sections.enclosure?.enabled){
           const enclosure=c.sections.enclosure;
           enclosure.blocks=[{text:enclosure.blocks.map(b=>b.text).filter(Boolean).join('\n')}];
@@ -91,13 +96,21 @@
         const option=(k,child=false)=>`<label class="mci-section-option ${child?'mci-child-option':'mci-parent-option'}"><input type="checkbox" data-enable="${k}" ${c.sections[k]?.enabled?'checked':''} ${child&&!c.sections[parents[k]]?.enabled?'disabled':''}><span>${esc(s.boot.sections[k])}</span></label>`;
         const textEditor=(k,label)=>{const sec=c.sections[k]||{blocks:[]};return `<section class="mci-text-section"><header><h3>${esc(label)}</h3><button type="button" data-add="${k}" title="Add text" aria-label="Add text to ${esc(label)}" ${sec.blocks.length>=100?'disabled':''}>+</button></header>${sec.blocks.map((b,i)=>`<div class="mci-text-block"><label>Text ${i+1}<textarea data-block="${k}" data-index="${i}" maxlength="30000">${esc(b.text)}</textarea></label><button type="button" data-remove="${k}" data-index="${i}" title="Remove text" aria-label="Remove text ${i+1}">&#8722;</button></div>`).join('')}</section>`;};
         $('#mci-sections').innerHTML=`<h3>Report sections</h3><div class="mci-section-options mci-hierarchy">${Object.entries(groups).map(([parent,children])=>`<div class="mci-section-group">${option(parent)}<div class="mci-subsections">${children.map(k=>option(k,true)).join('')}</div></div>`).join('')}</div><div class="mci-section-editors">${Object.entries(groups).filter(([parent])=>c.sections[parent]?.enabled).map(([parent,children])=>`<div class="mci-editor-group"><h3 class="mci-group-title">${esc(s.boot.sections[parent])}</h3>${children.length?(c.sections[parent]?.blocks.length?textEditor(parent,'Section introduction'):'')+children.filter(k=>c.sections[k]?.enabled).map(k=>textEditor(k,s.boot.sections[k])).join(''):textEditor(parent,s.boot.sections[parent])}</div>`).join('')}</div>`;
-        root.querySelectorAll('[data-enable]').forEach(b=>b.onchange=()=>{const key=b.dataset.enable,sec=c.sections[key] ||= {enabled:false,blocks:[]};sec.enabled=b.checked;if(sec.enabled&&!sec.blocks.length&&!(groups[key]?.length))sec.blocks.push({text:''});mark();sections();root.querySelector(`[data-enable="${key}"]`)?.focus({preventScroll:true});});
+        root.querySelectorAll('[data-enable]').forEach(b=>b.onchange=()=>{const key=b.dataset.enable,sec=c.sections[key] ||= {enabled:false,blocks:[]};sec.enabled=b.checked;if(sec.enabled&&!sec.blocks.length&&!(groups[key]?.length)&&limit(key)>0)sec.blocks.push({text:''});mark();sections();root.querySelector(`[data-enable="${key}"]`)?.focus({preventScroll:true});});
+        const checklist=root.querySelector('[data-add="crane_checklist"]')?.closest('.mci-text-section');
+        if(checklist){
+          checklist.innerHTML=Object.entries(s.boot.crane_points).map(([key,label])=>{
+            const check=c.crane_checks[key]||{};
+            return `<details class="cert-section"><summary>${esc(label)}</summary><label class="mci-section-option"><input type="checkbox" data-check="${key}" data-check-field="done" ${check.done?'checked':''}><span>Inspection performed</span></label><div class="cert-fields">${['status','status1','status2','status3'].map((field,i)=>`<label>${i?'Additional status '+i:'Status'}<select data-check="${key}" data-check-field="${field}">${s.boot.crane_options.map(v=>`<option value="${esc(v)}" ${v===(check[field]||'')?'selected':''}>${esc(v||'Not specified')}</option>`).join('')}</select></label>`).join('')}</div></details>`;
+          }).join('');
+          checklist.querySelectorAll('[data-check]').forEach(input=>input.onchange=()=>{const check=c.crane_checks[input.dataset.check]||={};check[input.dataset.checkField]=input.type==='checkbox'?input.checked:input.value;mark();});
+        }
         const enclosureEditor=root.querySelector('[data-add="enclosure"]')?.closest('.mci-text-section');
         if(enclosureEditor)enclosureEditor.innerHTML=`<label for="mci-picture-link">Picture link</label><input id="mci-picture-link" type="text" inputmode="url" autocomplete="off" spellcheck="false" data-block="enclosure" data-index="0" maxlength="30000" placeholder="https://" value="${esc(c.sections.enclosure.blocks[0].text)}" style="display:block;box-sizing:border-box;width:100%;max-width:560px;min-height:40px;margin:6px 0 0">`;
         root.querySelectorAll('[data-block]').forEach(t=>t.oninput=()=>{c.sections[t.dataset.block].blocks[+t.dataset.index].text=t.value;mark();});
         root.querySelectorAll('[data-add]').forEach(b=>{
-          b.disabled=c.sections[b.dataset.add].blocks.length>=(s.boot.max_blocks||100);
-          b.onclick=()=>{if(c.sections[b.dataset.add].blocks.length>=(s.boot.max_blocks||100))return;c.sections[b.dataset.add].blocks.push({text:''});mark();sections();};
+          b.disabled=c.sections[b.dataset.add].blocks.length>=limit(b.dataset.add);
+          b.onclick=()=>{if(c.sections[b.dataset.add].blocks.length>=limit(b.dataset.add))return;c.sections[b.dataset.add].blocks.push({text:''});mark();sections();};
         });
         root.querySelectorAll('[data-remove]').forEach(b=>b.onclick=()=>{const a=c.sections[b.dataset.remove].blocks,i=+b.dataset.index;if(a[i].text.trim()&&!confirm('Remove this text?'))return;a.splice(i,1);mark();sections();});
         if(opts.kind==='logistics'&&editable&&window.SOMLogisticsAssist)root.querySelectorAll('textarea[data-block]').forEach(input=>window.SOMLogisticsAssist(input,{
@@ -108,9 +121,14 @@
           request:body=>request('/informes/certificates/port-captancy-assist','POST',body),run,alive:live,
           mark:()=>input.dispatchEvent(new Event('input',{bubbles:true}))
         }));
+        if(opts.kind==='crane'&&editable&&window.SOMLogisticsAssist)root.querySelectorAll('textarea[data-block]').forEach(input=>window.SOMLogisticsAssist(input,{
+          request:body=>request('/informes/certificates/crane-assist','POST',body),run,alive:live,
+          mark:()=>input.dispatchEvent(new Event('input',{bubbles:true}))
+        }));
       }
       sections();root.querySelectorAll('#mci-form input[name]').forEach(el=>{
-        if(opts.kind==='logistics' && el.name.endsWith('_date'))el.type='date';
+        if(['logistics','crane'].includes(opts.kind) && el.name.endsWith('_date'))el.type='date';
+        if(opts.kind==='crane' && el.name==='inspection_time')el.type='time';
         if(opts.kind==='port_captancy'){
           if(el.name.endsWith('_date')||el.name.startsWith('ts_date_'))el.type='date';
           if(el.name.endsWith('_time')||el.name.startsWith('ts_time_'))el.type='time';

@@ -6,6 +6,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 from services.mci_container_schema import TITLES as CONTAINER_TITLES
 from services.mci_logistics_schema import TITLES as LOGISTICS_TITLES
 from services.mci_port_captancy_schema import TITLES as PORT_CAPTANCY_TITLES
+from services.mci_crane_schema import TITLES as CRANE_TITLES, POINTS as CRANE_POINTS, LIMITS as CRANE_LIMITS, CraneCheck
 
 
 SECTION_TITLES = {
@@ -92,10 +93,13 @@ class SurveyContent(BaseModel):
     ts_time_3: time | None = None
     ts_time_4: time | None = None
     sections: dict[str, OptionalSection] = Field(default_factory=dict)
+    crane_checks: dict[str, CraneCheck] = Field(default_factory=dict)
 
     @model_validator(mode="after")
     def validate_content(self):
-        if set(self.sections) - (SECTION_TITLES.keys() | CONTAINER_TITLES.keys() | LOGISTICS_TITLES.keys() | PORT_CAPTANCY_TITLES.keys()):
+        if set(self.crane_checks) - CRANE_POINTS.keys():
+            raise ValueError('Unknown crane checklist point')
+        if set(self.sections) - (SECTION_TITLES.keys() | CONTAINER_TITLES.keys() | LOGISTICS_TITLES.keys() | PORT_CAPTANCY_TITLES.keys() | CRANE_TITLES.keys()):
             raise ValueError("Unknown report section")
         if self.period_start and self.period_end:
             if (self.period_start.tzinfo is None) != (self.period_end.tzinfo is None):
@@ -116,13 +120,17 @@ class SurveyContent(BaseModel):
 
 class SurveySave(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    kind: Literal["vessel", "condition", "cargo", "container", "logistics", "port_captancy"]
+    kind: Literal["vessel", "condition", "cargo", "container", "logistics", "port_captancy", "crane"]
     service_id: int = Field(gt=0)
     content: SurveyContent
     version: str | None = None
     submit: bool = False
     @model_validator(mode='after')
     def port_captancy_limits(self):
+        if self.kind == 'crane':
+            for key,section in self.content.sections.items():
+                if key not in CRANE_TITLES or len(section.blocks)>CRANE_LIMITS[key]:
+                    raise ValueError('Crane section or text count not supported')
         if self.kind == 'port_captancy':
             for key, section in self.content.sections.items():
                 if key not in PORT_CAPTANCY_TITLES:

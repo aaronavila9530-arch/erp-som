@@ -24,6 +24,7 @@
     window.addEventListener("beforeunload", s.unload);
     s.error = message => {if (alive() && $("#cert-error")) $("#cert-error").textContent = message;};
     root.classList.add("som-certificates");
+    root.classList.toggle('som-crane',options.kind==='crane');
     root.innerHTML = '<div role="status">Cargando certificados...</div><div id="cert-error" role="alert"></div>';
     async function api(path, method="GET", body) {
       const response = await fetch("/informes/certificates" + path, {method, headers:{...options.headers(),"Content-Type":"application/json"}, signal:s.controller.signal, body:body === undefined ? undefined : JSON.stringify(body)});
@@ -90,6 +91,7 @@
       root.querySelectorAll("[data-service]").forEach(b=>b.onclick=()=>{
         const service=data.data[Number(b.dataset.service)], spec=s.boot.types[s.kind];
         const fields={[spec.number]:service.num_informe,port:service.puerto,country:service.pais,customer:service.cliente};
+        if(s.kind==='crane'){fields.client=service.cliente;delete fields.customer;}
         if(s.kind!=="lashing") fields.vessel=service.buque_contenedor;
         if(s.kind==='logistics') {
           delete fields.vessel;
@@ -119,8 +121,10 @@
       if(row.id)s.mode='review';
       const editable=row.id ? s.boot.permissions.edit && row.status!=="Approved" : s.boot.permissions.create;
       shell(`<div class="cert-tools"><button id="cert-back">Volver</button><strong>${esc(row[spec.number])}</strong><span class="cert-status">${esc(statusText(row.status || "Draft"))}</span></div>
-        <form id="cert-form"><div class="cert-editor"><nav class="cert-sections">${spec.sections.map((g,i)=>`<a href="#cert-section-${i}">${esc(g.title)}</a>`).join("")}</nav><div>${spec.sections.map((g,i)=>`<details class="cert-section" id="cert-section-${i}" ${s.kind!=="grain" || i<3 ? "open" : ""}><summary>${esc(g.title)}</summary><div class="cert-fields">${g.fields.map(f=>{
+        <form id="cert-form"><div class="cert-editor"><nav class="cert-sections">${spec.sections.map((g,i)=>`<a href="#cert-section-${i}">${esc(g.title)}</a>`).join("")}</nav><div>${spec.sections.map((g,i)=>`<details class="cert-section" id="cert-section-${i}" ${!['grain','crane'].includes(s.kind) || i<3 ? "open" : ""}><summary>${esc(g.title)}</summary><div class="cert-fields">${g.fields.map(f=>{
           const value=f.type==="date"?dateText(row[f.key]):row[f.key];
+          if(f.type==='checkbox')return `<label class="mci-section-option"><input type="checkbox" name="${f.key}" ${value?'checked':''} ${!editable?'disabled':''}><span>${esc(f.label)}</span></label>`;
+          if(f.type==='select')return `<label>${esc(f.label)}<select name="${f.key}" ${!editable?'disabled':''}>${f.options.map(v=>`<option value="${esc(v)}" ${v===(value||'')?'selected':''}>${esc(v||'Not specified')}</option>`).join('')}</select></label>`;
           return `<label class="${f.type==="textarea"?"cert-wide":""}">${esc(f.label)}${f.type==="textarea"?`<textarea name="${f.key}" maxlength="30000" ${!editable?"disabled":""}>${esc(value)}</textarea>`:`<input type="text" name="${f.key}" value="${esc(value)}" maxlength="2000" ${f.type==="date"?'placeholder="DD/MM/YYYY"':f.type==="time"?'placeholder="HH:MM"':f.type==="datetime"?'placeholder="DD/MM/YYYY HH:MM"':""} ${f.key===spec.number?"readonly":""} ${!editable?"disabled":""}>`}</label>`;
         }).join("")}</div></details>`).join("")}</div></div>
         <footer class="cert-actions"><div class="cert-action-group"><span class="cert-action-label">Edicion</span>${editable?'<button type="submit" class="cert-primary">Guardar borrador</button><button type="button" id="cert-submit">Enviar a revision</button>':""}
@@ -128,6 +132,16 @@
         </div><div class="cert-action-group"><span class="cert-action-label">Exportacion</span>${row.id?`<select id="cert-format" aria-label="Formato de exportacion"><option value="${spec.document}">${spec.document==="word"?"Word":"Excel"}</option><option value="pdf">Informe PDF</option>${['grain','logistics'].includes(s.kind)?'<option value="presentation">Presentacion PDF</option><option value="complete">Presentacion + informe PDF</option>':""}</select><button type="button" id="cert-export">Descargar</button>`:""}
         </div><span id="cert-save-state" class="cert-meta" role="status"></span></footer></form>`);
       $("#cert-form").prepend($(".cert-actions"));
+      if(s.kind==='crane'){
+        for(const key of ['client','vessel','port','country'])$(`[name="${key}"]`).readOnly=true;
+        const link=$('[name="link_picture"]');link.inputMode='url';link.placeholder='https://';
+        if(row.id){
+          $('#cert-format').add(new Option('Presentacion PDF','presentation'));
+          $('#cert-format').add(new Option('Presentacion + informe PDF','complete'));
+          window.SOMPortAttachments($('#cert-form'),{url:`/informes/certificates/crane/${row.id}/bundle`,filename:'Crane_Inspection_complete.pdf',headers:options.headers,run,dirty:()=>s.dirty,signal:s.controller.signal});
+        }
+        if(editable)root.querySelectorAll('textarea[name]').forEach(input=>window.SOMLogisticsAssist(input,{request:body=>api('/crane-assist','POST',body),run,alive,mark:()=>input.dispatchEvent(new Event('input',{bubbles:true}))}));
+      }
       if(s.kind==='port_captancy'&&row.id)window.SOMPortAttachments($('#cert-form'),{
         url:`/informes/certificates/port_captancy/${row.id}/bundle`,headers:options.headers,run,
         dirty:()=>s.dirty,signal:s.controller.signal
@@ -185,15 +199,16 @@
       }
       $("#cert-back").onclick=()=>{if(canLeave()){s.dirty=false;run(list);}};
       $("#cert-form").oninput=e=>{
-        if(!e.target.matches("input[name], textarea[name]"))return;
+        if(!e.target.matches("input[name], textarea[name], select[name]"))return;
         s.dirty=true;$("#cert-save-state").textContent="Cambios sin guardar";
       };
       async function save(submit) {
         // Snapshot before disabling controls; disabled fields are omitted by FormData.
         const fields={};
         for(const f of spec.sections.flatMap(g=>g.fields)) {
-          const v=$("#cert-form").elements.namedItem(f.key).value;
-          const old=f.type==="date"?dateText(row[f.key]):String(row[f.key]??"");
+          const input=$("#cert-form").elements.namedItem(f.key);
+          const v=f.type==='checkbox'?input.checked:input.value;
+          const old=f.type==='checkbox'?!!row[f.key]:f.type==="date"?dateText(row[f.key]):String(row[f.key]??"");
           if(!row.id || v!==old) fields[f.key]=v;
         }
         await run(async()=>{
@@ -224,7 +239,7 @@
     }
     await run(async()=>{
       s.boot=await api("/bootstrap");
-      s.boot.types=Object.fromEntries(Object.entries(s.boot.types).filter(([k])=>options.kind ? k===options.kind : !['grain','condition','cargo_condition','logistics','port_captancy'].includes(k)));
+      s.boot.types=Object.fromEntries(Object.entries(s.boot.types).filter(([k])=>options.kind ? k===options.kind : !['grain','condition','cargo_condition','logistics','port_captancy','crane'].includes(k)));
       if(alive())await list();
     });
   }
@@ -255,7 +270,7 @@ window.SOMPortAttachments=(form,options)=>{
     const headers={...options.headers()};for(const k of Object.keys(headers))if(k.toLowerCase()==='content-type')delete headers[k];
     const response=await fetch(options.url,{method:'POST',headers,body,signal:options.signal});
     if(!response.ok){const data=await response.json().catch(()=>null);throw Error(data?.detail||'Could not assemble PDF.');}
-    const url=URL.createObjectURL(await response.blob()),a=document.createElement('a');a.href=url;a.download='Port_Captancy_complete.pdf';a.click();setTimeout(()=>URL.revokeObjectURL(url),30000);
+    const url=URL.createObjectURL(await response.blob()),a=document.createElement('a');a.href=url;a.download=options.filename||'Port_Captancy_complete.pdf';a.click();setTimeout(()=>URL.revokeObjectURL(url),30000);
   });
 };
 

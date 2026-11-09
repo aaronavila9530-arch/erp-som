@@ -14,6 +14,7 @@ from services.mci_survey_schema import SurveySave, SurveyContent, SECTION_TITLES
 from services.mci_container_schema import TITLES as CONTAINER_TITLES, GROUPS as CONTAINER_GROUPS, FIELDS as CONTAINER_FIELDS
 from services.mci_logistics_schema import TITLES as LOGISTICS_TITLES, GROUPS as LOGISTICS_GROUPS, FIELDS as LOGISTICS_FIELDS
 from services.mci_port_captancy_schema import TITLES as PORT_TITLES, GROUPS as PORT_GROUPS, FIELDS as PORT_FIELDS
+from services.mci_crane_schema import TITLES as CRANE_TITLES, GROUPS as CRANE_GROUPS, FIELDS as CRANE_FIELDS, LIMITS as CRANE_LIMITS, POINTS, OPTIONS
 
 router = APIRouter(prefix='/informes/mci-surveys', tags=['MCI Surveys Web'])
 
@@ -38,7 +39,7 @@ def enrich(cur, row):
     service = cur.fetchone()
     row['location'] = service_location(service or {})
     content = SurveyContent.model_validate(row['content'])
-    row['content'] = (content if row['kind'] in ('container','logistics','port_captancy') else hierarchical_content(content)).model_dump(mode='json')
+    row['content'] = (content if row['kind'] in ('container','logistics','port_captancy','crane') else hierarchical_content(content)).model_dump(mode='json')
     row['content']['location'] = row['location']
     if row['kind'] == 'port_captancy':
         row['content']['operation'] = (service or {}).get('operacion') or ''
@@ -56,6 +57,9 @@ def bootstrap(kind: str = 'vessel', ctx=Depends(mci_access), conn=Depends(get_db
     with conn.cursor() as cur:
         cur.execute("SELECT to_regclass('public.mci_generic_surveys') IS NOT NULL")
         ready = cur.fetchone()[0]
+    if kind=='crane':
+        return dict(ready=ready,permissions=ctx['permissions'],sections=CRANE_TITLES,groups=CRANE_GROUPS,
+                    fields=CRANE_FIELDS,block_limits=CRANE_LIMITS,crane_points=POINTS,crane_options=OPTIONS)
     return dict(ready=ready, permissions=ctx['permissions'],
                 sections=PORT_TITLES if kind == 'port_captancy' else CONTAINER_TITLES if kind == 'container' else LOGISTICS_TITLES if kind == 'logistics' else SECTION_TITLES,
                 groups=PORT_GROUPS if kind == 'port_captancy' else CONTAINER_GROUPS if kind == 'container' else LOGISTICS_GROUPS if kind == 'logistics' else SECTION_GROUPS,
@@ -66,7 +70,7 @@ def bootstrap(kind: str = 'vessel', ctx=Depends(mci_access), conn=Depends(get_db
 @router.get('')
 def listing(kind: str, q: str = Query('', max_length=150), offset: int = Query(0, ge=0),
             ctx=Depends(mci_access), conn=Depends(get_db)):
-    if kind not in ('vessel','condition','cargo','container','logistics','port_captancy'):
+    if kind not in ('vessel','condition','cargo','container','logistics','port_captancy','crane'):
         raise HTTPException(422, 'Tipo invalido')
     with conn.cursor(cursor_factory=RealDictCursor) as cur:
         cur.execute("""SELECT id,report_number,vessel,requested_by,status,updated_at FROM mci_generic_surveys
@@ -103,10 +107,14 @@ def persist(body, ctx, conn, rid=None):
                     raise HTTPException(422, 'No se puede cambiar el servicio ni el tipo de informe.')
             cur.execute("""SELECT consec,num_informe,buque_contenedor,cliente,puerto,pais,continente,operacion FROM servicios
                 WHERE consec=%s AND company_code='MCI-CR' AND NULLIF(TRIM(num_informe),'') IS NOT NULL"""
-                + (" AND tipo='Buque'" if body.kind in ('logistics','port_captancy') else ''), (body.service_id,))
+                + (" AND tipo='Buque'" if body.kind in ('logistics','port_captancy','crane') else ''), (body.service_id,))
             service = cur.fetchone()
             if not service:
                 raise HTTPException(404, 'Servicio MCI no encontrado o sin numero de informe.')
+            if body.kind=='crane' and not rid:
+                cur.execute('SELECT pg_advisory_xact_lock(hashtext(%s))',('mci_crane:'+service['num_informe'],))
+                cur.execute("SELECT id FROM mci_generic_surveys WHERE company_code='MCI-CR' AND kind='crane' AND report_number=%s",(service['num_informe'],))
+                if cur.fetchone():raise HTTPException(409,'Ya existe un informe. Abralo en Revisar.')
             if body.kind == 'port_captancy' and not rid:
                 cur.execute('SELECT pg_advisory_xact_lock(hashtext(%s))', ('mci_port_captancy:'+service['num_informe'],))
                 cur.execute("SELECT id FROM mci_generic_surveys WHERE company_code='MCI-CR' AND kind='port_captancy' AND report_number=%s",
@@ -115,9 +123,10 @@ def persist(body, ctx, conn, rid=None):
                     raise HTTPException(409, 'Ya existe un informe. Abralo en Revisar.')
             status = 'Pending for review' if body.submit else 'Draft'
             allowed = PORT_TITLES if body.kind == 'port_captancy' else CONTAINER_TITLES if body.kind == 'container' else LOGISTICS_TITLES if body.kind == 'logistics' else SECTION_TITLES
+            if body.kind=='crane':allowed=CRANE_TITLES
             if set(body.content.sections) - allowed.keys():
                 raise HTTPException(422, 'Seccion incompatible con el tipo de informe.')
-            normalized = body.content.model_copy(deep=True) if body.kind in ('container','logistics','port_captancy') else hierarchical_content(body.content)
+            normalized = body.content.model_copy(deep=True) if body.kind in ('container','logistics','port_captancy','crane') else hierarchical_content(body.content)
             normalized.location = service_location(service)
             if body.kind == 'port_captancy':
                 normalized.operation = service.get('operacion') or ''
@@ -213,10 +222,10 @@ def original(rid: int, ctx=Depends(mci_access), conn=Depends(get_db)):
 @router.post('/{rid}/bundle')
 def port_captancy_bundle(rid: int, files: list[UploadFile] = File(...), ctx=Depends(mci_access), conn=Depends(get_db)):
     with conn.cursor(cursor_factory=RealDictCursor) as cur:
-        if record(cur,rid)['kind']!='port_captancy':
+        if record(cur,rid)['kind'] not in ('port_captancy','crane'):
             raise HTTPException(422,'Anexos no disponibles para este tipo')
     from services.port_captancy_bundle import read_annexes, merge
     annexes=read_annexes(files)
     report=export(rid,'pdf',ctx,conn)
     return Response(merge(report.body,annexes),media_type='application/pdf',
-                    headers={'Content-Disposition':f'attachment; filename="Port_Captancy_{rid}_complete.pdf"'})
+                    headers={'Content-Disposition':f'attachment; filename="Survey_{rid}_complete.pdf"'})
