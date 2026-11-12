@@ -118,7 +118,9 @@
             conflict=true;remember();
             try {if(await reconcile(false)){timer=setTimeout(()=>flush().catch(fail),250);return false;}}catch(recoveryError){fail(recoveryError);}
           }
-          controls(); fail(err);
+          controls();
+          if(conflict)status('Borrador conservado. Pulse Revisar cambios para continuar sin salir.',true);
+          else fail(err);
           if(!conflict&&!destroyed)timer=setTimeout(()=>flush().catch(fail),5000);
           return false;
         } finally {saving=null;}
