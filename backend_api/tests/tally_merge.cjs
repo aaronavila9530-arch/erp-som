@@ -1,0 +1,17 @@
+const fs=require('fs'),vm=require('vm'),assert=require('assert');
+const context={window:{},crypto:require('crypto').webcrypto};vm.createContext(context);
+vm.runInContext(fs.readFileSync(require('path').join(__dirname,'../assets/tally/tally.js'),'utf8'),context);
+const merge=(...args)=>JSON.parse(JSON.stringify(context.window.SOMTally.mergeRows(...args)));
+const row=(id,notes='',ticket='')=>({id,notes,ticket});
+let b=[row('1','base')],l=[row('1','mine')],r=[row('1','base','remote')];
+let m=merge(b,l,r);assert.equal(m.conflicts.length,0);assert.equal(m.rows[0].notes,'mine');assert.equal(m.rows[0].ticket,'remote');
+assert.equal(merge(b,l,l).conflicts.length,0,'Lost response retry');
+m=merge(b,l,[row('1','theirs')]);assert.equal(m.conflicts.length,1);
+assert.equal(merge(b,l,[row('1','theirs')],{'1:notes':'remote'}).rows[0].notes,'theirs');
+assert.equal(merge(b,[],b).rows.length,0,'Local delete unchanged remote');
+assert.equal(merge(b,b,[]).rows.length,0,'Remote delete unchanged local');
+assert.equal(merge(b,l,[]).conflicts.length,1,'Remote delete versus local edit');
+assert.equal(merge(b,[],l).conflicts.length,1,'Local delete versus remote edit');
+assert.equal(merge([], [row('a','mine')],[row('b','theirs')]).rows.length,2,'Concurrent additions');
+assert.equal(merge([], [row('a','mine')],[row('a','theirs')]).conflicts.length,1);
+console.log('PASS 10 tally merge cases');

@@ -16,7 +16,7 @@ async function run(){
   await page.evaluate(async()=>{
    const projects=[{id:1,name:'MV LAURA',holds:[1,4],revision:0},{id:2,name:'OTHER OPERATION',holds:[1],revision:0}];
    await SOMTally.mount(document.querySelector('#app'),{user:'test',company:'TEST',headers:()=>({}),
-    getJSON:async p=>p==='/tally/bootstrap'?{projects,drivers:[],companies:['AEGRA','MANEJOS'],services:[],editable:true}:{revision:0,drivers:[{plate:'123',driver:p.includes('/1/sheets')?'LAURA DRIVER':'OTHER DRIVER'}],rows:[80,79,78,81,77].map(n=>({id:crypto.randomUUID(),stowage:String(n),plate:'123',date:'2026-10-16'}))},
+    getJSON:async p=>p==='/tally/bootstrap'?{projects,drivers:[],companies:['AEGRA','GUEAL','MANEJOS'],services:[],editable:true}:{revision:0,drivers:[{plate:'123',driver:p.includes('/1/sheets')?'LAURA DRIVER':'OTHER DRIVER'}],rows:[80,79,78,81,77].map(n=>({id:crypto.randomUUID(),stowage:String(n),plate:'123',date:'2026-10-16'}))},
     sendJSON:async(method,path,body)=>{window.saveAttempts=(window.saveAttempts||0)+1;if(window.failNextSave){window.failNextSave=false;throw Error('Sin conexion');}window.savedRows=body.rows;return {revision:1};},postJSON:async()=>({})});
   });
   assert.deepEqual(await page.evaluate(()=>SOMTally.metrics([80,79,78,81,77].map(n=>({id:String(n),stowage:String(n)})))),{count:5,max:81,missing:76,duplicates:0,invalid:0});
@@ -47,7 +47,7 @@ async function run(){
   await entry.dblclick();await entry.locator('input').fill('25:90');await entry.locator('input').press('Enter');
   assert.equal(await entry.innerText(),'09:01');
   assert.equal(await page.evaluate(()=>SOMTally.pasteValue('entry','09:01:00')),'09:01');
-  for(const [field,letter,expected] of [['company','A','AEGRA'],['company','M','MANEJOS'],['seal','S','Si'],['seal','N','No']]){
+  for(const [field,letter,expected] of [['company','A','AEGRA'],['company','M','MANEJOS'],['company','G','GUEAL'],['company','g','GUEAL'],['seal','S','Si'],['seal','N','No']]){
    const cell=page.locator(`.tabulator-row .tabulator-cell[tabulator-field="${field}"]`).first();
    await cell.dblclick();await cell.locator('input').fill(letter);await cell.locator('input').press('Enter');
    assert.equal(await cell.innerText(),expected);

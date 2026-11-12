@@ -12,7 +12,33 @@
   const blank = () => ({id:crypto.randomUUID(), ...Object.fromEntries(fields.map(f => [f,'']))});
   const payloadRows = data => data.filter(row => fields.some(f => row[f] !== '' && row[f] != null))
     .map(row => ({id:row.id, ...Object.fromEntries(fields.map(f => [f, row[f] ?? '']))}));
+  // Three-way merge: never silently replace two different edits to the same cell.
+  function mergeRows(base, local, remote, choices={}) {
+    const maps=[base,local,remote].map(rows=>new Map(payloadRows(rows).map(r=>[r.id,r])));
+    const same=(a,b)=>JSON.stringify(a)===JSON.stringify(b);
+    const rows=[], conflicts=[];
+    const pick=(id,field,b,l,r)=>{
+      if(same(l,b))return r;
+      if(same(r,b)||same(l,r))return l;
+      const key=id+':'+field;
+      if(choices[key])return choices[key]==='remote'?r:l;
+      conflicts.push({key,id,field,local:l,remote:r});return l;
+    };
+    for(const id of new Set([...maps[2].keys(),...maps[1].keys()])) {
+      const [b,l,r]=maps.map(m=>m.get(id));
+      let row;
+      if(!b||!l||!r)row=pick(id,'row',b,l,r);
+      else row={id,...Object.fromEntries(fields.map(f=>[f,pick(id,f,b[f],l[f],r[f])]))};
+      if(row)rows.push(row);
+    }
+    return {rows,conflicts};
+  }
   let active = null;
+  async function bounded(request) {
+    let timeout;
+    try {return await Promise.race([request,new Promise((_,reject)=>{timeout=setTimeout(()=>reject(Error('La conexion tardo demasiado. Su borrador se conserva; se reintentara.')),25000);})]);}
+    finally {clearTimeout(timeout);}
+  }
   function metrics(data) {
     const rows=payloadRows(data), nums=rows.map(r=>{
       const match=String(r.stowage||'').trim().match(/^(?:con\s*secutivo\s*#?\s*)?(\d+)$/i);
@@ -32,14 +58,19 @@
       const m=metrics(data);
       $('.tally-metrics').innerHTML=`<div><span>Estiba mayor</span><strong>${m.max}</strong></div><div><span>Lineas ingresadas</span><strong>${m.count}</strong></div><div><span>Consecutivos faltantes</span><strong>${m.missing}</strong></div><div><span>Repetidos</span><strong>${m.duplicates}</strong></div><div><span>Sin consecutivo valido</span><strong>${m.invalid}</strong></div>`;
     }
-    let boot, current, hold, grid, revision=0, generation=0, saved=0, timer, saving=null, destroyed=false, conflict=false, switching=false;
+    let boot, current, hold, grid, revision=0, generation=0, saved=0, timer, saving=null, destroyed=false, conflict=false, switching=false, baseRows=[];
     const drafts = key => `som:tally:${api.user}:${api.company}:${key}`;
     const draftKey = () => drafts(`${current.id}:${hold}`);
+    let tabId,recoveredBackup=null;
+    try {tabId=sessionStorage.getItem('som:tally:tab')||crypto.randomUUID();sessionStorage.setItem('som:tally:tab',tabId);}catch{tabId=crypto.randomUUID();}
+    const backupKey=()=>draftKey()+':backup:'+tabId;
+    function clearDraft(){if(sessionStorage.getItem(draftKey()+':editing')){remember();return;}sessionStorage.removeItem(draftKey());try{localStorage.removeItem(backupKey());if(recoveredBackup&&localStorage.getItem(recoveredBackup.key)===recoveredBackup.raw)localStorage.removeItem(recoveredBackup.key);recoveredBackup=null;}catch{}}
     const status = (message, error=false) => { if(destroyed)return; $('#tallyStatus').textContent=error?message:''; $('#tallyStatus').classList.toggle('error',error); $('#tallyDraft').hidden=!error; };
     const fail = err => status(err.message || String(err),true);
     const wrap = fn => async (...args) => {try {await fn(...args);} catch(err){fail(err);}};
     const dirty = () => generation !== saved;
     const settleEditor=()=>{const editor=$('.tabulator-editing input');if(editor)editor.blur();};
+    $('#tallyReload').insertAdjacentHTML('afterend','<button id="tallyResolve" hidden>Revisar cambios</button>');
     const unload = e => {settleEditor();if(dirty()){remember();e.preventDefault();e.returnValue='';}};
     const background=()=>{if(document.visibilityState==='hidden'){settleEditor();if(dirty()){remember();flush().catch(fail);}}};
     document.addEventListener('visibilitychange',background);
@@ -52,14 +83,15 @@
       $('#tallyProject').disabled=switching;$('#tallyCatalog').disabled=switching;
       for(const id of ['tallyNew','tallySettings','tallyCatalog','tallyHistory'])$('#'+id).hidden=!!boot.restricted;
       $('.tally-grid').inert=switching;
+      $('#tallyResolve').hidden=!conflict;
     };
     function remember() {
-      try {sessionStorage.setItem(draftKey(),JSON.stringify({revision,rows:payloadRows(grid.getData())}));}
+      try {const value=JSON.stringify({revision,baseRows,rows:payloadRows(grid.getData()),editing:JSON.parse(sessionStorage.getItem(draftKey()+':editing')||'null'),updatedAt:Date.now()});sessionStorage.setItem(draftKey(),value);localStorage.setItem(backupKey(),value);}
       catch {status('Borrador sin respaldo local. Guarde antes de cerrar.',true);}
     }
     function changed() {
       if (!boot.editable || destroyed) return;
-      generation++; remember(); status(conflict ? 'Conflicto: descargue su borrador antes de recargar.' : 'Cambios pendientes',conflict);
+      generation++; remember(); status(conflict ? 'Borrador conservado. Pulse Revisar cambios para continuar.' : 'Cambios pendientes',conflict);
       updateMetrics(grid.getData());
       clearTimeout(timer); if(!conflict) timer=setTimeout(()=>flush().catch(fail),250);
       $('.tally-footer').textContent=`${payloadRows(grid.getData()).length} registros · Bodega ${hold}`;
@@ -74,19 +106,55 @@
           while(dirty()) {
             const snapshot=generation;
             status('Guardando...');
-            const result=await api.sendJSON('PUT',`/tally/projects/${current.id}/sheets/${hold}`,{revision,rows:payloadRows(grid.getData())});
-            revision=result.revision; saved=snapshot;
-            if(dirty()) remember(); else sessionStorage.removeItem(draftKey());
+            const sent=payloadRows(grid.getData());
+            const result=await bounded(api.sendJSON('PUT',`/tally/projects/${current.id}/sheets/${hold}`,{revision,rows:sent}));
+            if(destroyed)return false;
+            revision=result.revision; baseRows=sent; saved=snapshot;
+            if(dirty()) remember(); else clearDraft();
           }
           status('Guardado'); return true;
         } catch(err) {
-          if(/modifico|modificó|sobrescrib|cambio|cambió/i.test(err.message)) conflict=true;
+          if(/modifico|modificó|sobrescrib|cambio|cambió/i.test(err.message)) {
+            conflict=true;remember();
+            try {if(await reconcile(false)){timer=setTimeout(()=>flush().catch(fail),250);return false;}}catch(recoveryError){fail(recoveryError);}
+          }
           controls(); fail(err);
           if(!conflict&&!destroyed)timer=setTimeout(()=>flush().catch(fail),5000);
           return false;
         } finally {saving=null;}
       })();
       return saving;
+    }
+    async function reconcile(interactive) {
+      settleEditor();remember();
+      const remote=await bounded(api.getJSON(`/tally/projects/${current.id}/sheets/${hold}`));
+      if(destroyed)return false;
+      settleEditor();
+      const local=payloadRows(grid.getData());
+      // Old drafts lack a baseline; require an explicit decision instead of guessing.
+      const merged=baseRows===null?{rows:local,conflicts:[{key:'legacy',field:'borrador completo',local,remote:remote.rows}]}:mergeRows(baseRows,local,remote.rows);
+      if(merged.conflicts.length){
+        conflict=true;controls();status('Cambios en la misma celda. Pulse Revisar cambios; su borrador esta conservado.',true);
+        if(interactive){
+          const show=v=>v===undefined?'Fila eliminada':typeof v==='object'?JSON.stringify(v):String(v);
+          const d=dialog('Resolver cambios',merged.conflicts.map((c,i)=>`<label>${esc(c.field)} · ${esc(c.id||'Borrador')}<select data-choice="${i}"><option value="">Seleccione...</option><option value="local">Mi cambio: ${esc(show(c.local))}</option><option value="remote">Guardado: ${esc(show(c.remote))}</option></select></label>`).join('')+'<button id="applyChanges">Aplicar seleccion</button>');
+          d.querySelector('#applyChanges').onclick=wrap(async()=>{
+            const selections=[...d.querySelectorAll('[data-choice]')];if(selections.some(s=>!s.value)){d.querySelector('[role=alert]').textContent='Seleccione una opcion para cada diferencia.';return;}
+            const latest=await bounded(api.getJSON(`/tally/projects/${current.id}/sheets/${hold}`));
+            if(latest.revision!==remote.revision){d.close();await reconcile(true);return;}
+            const choices=Object.fromEntries(selections.map((s,i)=>[merged.conflicts[i].key,s.value]));
+            const resolved=baseRows===null?(choices.legacy==='remote'?remote.rows:local):mergeRows(baseRows,local,remote.rows,choices).rows;
+            await acceptMerge(remote,resolved);d.close();await flush();
+          });
+        }
+        return false;
+      }
+      await acceptMerge(remote,merged.rows);return true;
+    }
+    async function acceptMerge(remote,rows){
+      if(destroyed)return;
+      rememberPosition();revision=remote.revision;baseRows=remote.rows;conflict=false;generation++;
+      await renderGrid(rows);await restorePosition();remember();controls();
     }
     function driverChoices(plate) {return [...new Set(boot.drivers.filter(d=>d.plate===plateKey(plate)).map(d=>d.driver))];}
     function driver(plate) {const choices=driverChoices(plate);return choices.length===1?choices[0]:'';}
@@ -240,7 +308,7 @@
       if(!element||!current||!event.target.matches('input,textarea'))return;
       const row=grid.getRows().find(row=>row.getElement()===element.parentElement);
       const cell=row?.getCell(element.getAttribute('tabulator-field'));
-      if(cell)try{sessionStorage.setItem(draftKey()+':editing',JSON.stringify({id:cell.getRow().getIndex(),field:cell.getField(),value:event.target.value}));}catch{}
+      if(cell)try{sessionStorage.setItem(draftKey()+':editing',JSON.stringify({id:cell.getRow().getIndex(),field:cell.getField(),value:event.target.value}));remember();}catch{}
     });
     async function renderGrid(rows) {
       if(grid)grid.destroy();
@@ -309,9 +377,9 @@
           input('Consecutivo Estiba','stowage',170),input('Observacion','notes',280)
         ].map(column=>({...column,minWidth:column.width,maxWidth:column.width,widthGrow:0,widthShrink:0}))
       });
-      grid.on('cellEdited',cell=>{if(cell.getField()==='plate'){const key=plateKey(cell.getValue());cell.getRow().update({plate:key,driver:driver(key)});} changed();sessionStorage.removeItem(draftKey()+':editing');});
+      grid.on('cellEdited',cell=>{if(cell.getField()==='plate'){const key=plateKey(cell.getValue());cell.getRow().update({plate:key,driver:driver(key)});} sessionStorage.removeItem(draftKey()+':editing');changed();});
       grid.on('historyUndo',()=>changed()); grid.on('historyRedo',()=>changed());
-      grid.on('cellEditCancelled',()=>sessionStorage.removeItem(draftKey()+':editing'));
+      grid.on('cellEditCancelled',()=>{sessionStorage.removeItem(draftKey()+':editing');if(dirty())remember();else clearDraft();});
       await new Promise(resolve=>grid.on('tableBuilt',resolve));
       updateMetrics(rows);
       $('.tally-footer').textContent=`${rows.length} registros · Bodega ${hold}`;
@@ -322,16 +390,24 @@
       try {
       if(!await flush())return;
       rememberPosition();
-      const result=await api.getJSON(`/tally/projects/${nextProject.id}/sheets/${next}`);
+      const result=await bounded(api.getJSON(`/tally/projects/${nextProject.id}/sheets/${next}`));
       if(destroyed)return;
       boot.drivers=result.drivers||[];
       current=nextProject;$('#tallyProject').value=current.id;
-      hold=next; revision=result.revision; generation=saved=0; conflict=false;
+      hold=next; revision=result.revision; generation=saved=0; conflict=false;baseRows=result.rows;recoveredBackup=null;
       let rows=result.rows;
-      try {const draft=JSON.parse(sessionStorage.getItem(draftKey())||'null');if(draft){rows=draft.rows;generation=1;conflict=draft.revision!==revision;}} catch{}
+      try {
+        let draft=JSON.parse(sessionStorage.getItem(draftKey())||'null');
+        if(!draft){
+          const backups=Object.keys(localStorage).filter(k=>k.startsWith(draftKey()+':backup:')).map(k=>({key:k,raw:localStorage.getItem(k),value:JSON.parse(localStorage.getItem(k))})).sort((a,b)=>b.value.updatedAt-a.value.updatedAt);
+          if(backups.length&&confirm('Hay un borrador local pendiente de esta bodega. Recuperarlo?')){draft=backups[0].value;recoveredBackup=backups[0];}
+        }
+        if(draft){rows=draft.rows;generation=1;conflict=draft.revision!==revision;baseRows=draft.baseRows??(conflict?null:result.rows);if(draft.editing)sessionStorage.setItem(draftKey()+':editing',JSON.stringify(draft.editing));}
+      } catch{}
       $('.tally-tabs').innerHTML=current.holds.map(n=>`<button role="tab" aria-selected="${n===hold}" data-hold="${n}">Bodega ${n}</button>`).join('');
       $('.tally-tabs').querySelectorAll('button').forEach(btn=>btn.onclick=wrap(()=>openSheet(Number(btn.dataset.hold))));
-      await renderGrid(rows); await restorePosition(); controls(); status(conflict?'Borrador recuperado con conflicto. Descarguelo antes de recargar.':dirty()?'Borrador recuperado; pendiente de guardar':'Guardado',conflict);
+      await renderGrid(rows); await restorePosition(); controls(); status(conflict?'Borrador recuperado. Revisando cambios pendientes.':dirty()?'Borrador recuperado; pendiente de guardar':'Guardado',conflict);
+      if(conflict)await reconcile(false);
       const pending=JSON.parse(sessionStorage.getItem(draftKey()+':editing')||'null');
       if(pending&&boot.editable&&!conflict){
         let row=grid.getRow(pending.id);
@@ -410,7 +486,8 @@
     $('#tallyNew').onclick=wrap(()=>projectDialog());$('#tallySettings').onclick=wrap(()=>projectDialog(true));$('#tallyCatalog').onclick=wrap(catalogDialog);
     $('#tallyAdd').onclick=wrap(async()=>{await grid.addData(Array.from({length:20},()=>enrich(blank())),false);grid.scrollToRow(grid.getRows().at(-1),'bottom',false);});
     $('#tallyDelete').onclick=wrap(()=>deleteRows([...new Set(grid.getRanges().flatMap(r=>r.getRows()))]));
-    $('#tallyReload').onclick=wrap(async()=>{if(dirty()&&!confirm('Descartar el borrador local y cargar lo guardado?'))return;sessionStorage.removeItem(draftKey());generation=saved=0;conflict=false;await openSheet(hold);});
+    $('#tallyResolve').onclick=wrap(async()=>{if(await reconcile(true))await flush();});
+    $('#tallyReload').onclick=wrap(async()=>{settleEditor();if(dirty()||conflict){if(await reconcile(true))await flush();return;}await openSheet(hold);});
     $('#tallyDraft').onclick=()=>download(new Blob([JSON.stringify({project:current,hold,revision,rows:payloadRows(grid.getData())},null,2)],{type:'application/json'}),`Tally-${current.id}-bodega-${hold}-borrador.json`);
     $('#tallyExcel').onclick=wrap(async()=>{if(!await flush())return;const path=`/tally/projects/${current.id}/excel`;const resp=await fetch(api.url?api.url(path):path,{headers:api.headers()});if(!resp.ok)throw Error('No se pudo exportar');const disposition=resp.headers.get('Content-Disposition')||'';const encoded=disposition.match(/filename\*=UTF-8''([^;]+)/i),plain=disposition.match(/filename="([^"]+)"/i);download(await resp.blob(),encoded?decodeURIComponent(encoded[1]):plain?plain[1]:`Tally Control ${current.name}.xlsx`);});
     if(api.manageAccess){
@@ -438,5 +515,5 @@
     try {await refreshBootstrap();if(destroyed)return;workflow.hidden=!!boot.restricted;workflow.querySelector('[data-tally-mode="create"]').hidden=!boot.editable;projectOptions();controls();if(boot.projects.length){$('#tallyProject').value=boot.projects[0].id;await chooseProject(boot.projects[0].id);}else{$('.tally-footer').textContent='Sin proyectos';}}
     catch(err){fail(err);}
   }
-  window.SOMTally={mount,canLeave:()=>!active||active.canLeave(),destroy:()=>{active?.destroy();active=null;},plateKey,payloadRows,pasteValue,metrics};
+  window.SOMTally={mount,canLeave:()=>!active||active.canLeave(),destroy:()=>{active?.destroy();active=null;},plateKey,payloadRows,pasteValue,metrics,mergeRows};
 })();
