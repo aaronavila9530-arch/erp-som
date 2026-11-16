@@ -268,8 +268,8 @@ window.SOMPortAttachments=(form,options)=>{
     if(files.length>10||files.some(f=>f.size>20*1024*1024)||files.reduce((n,f)=>n+f.size,0)>40*1024*1024)throw Error('Maximum 10 PDFs, 20 MB per file, 40 MB total.');
     const body=new FormData();files.forEach(file=>body.append('files',file));
     const headers={...options.headers()};for(const k of Object.keys(headers))if(k.toLowerCase()==='content-type')delete headers[k];
-    const url=options.getLanguage?`${options.url}?language=${encodeURIComponent(options.getLanguage())}`:options.url;
-    const response=await fetch(url,{method:'POST',headers,body,signal:options.signal});
+    const requestUrl=options.getLanguage?`${options.url}?language=${encodeURIComponent(options.getLanguage())}`:options.url;
+    const response=await fetch(requestUrl,{method:'POST',headers,body,signal:options.signal});
     if(!response.ok){const data=await response.json().catch(()=>null);throw Error(data?.detail||'Could not assemble PDF.');}
     const url=URL.createObjectURL(await response.blob()),a=document.createElement('a');a.href=url;a.download=options.filename||'Port_Captancy_complete.pdf';a.click();setTimeout(()=>URL.revokeObjectURL(url),30000);
   });
