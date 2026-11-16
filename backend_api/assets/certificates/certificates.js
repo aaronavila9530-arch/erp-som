@@ -278,17 +278,20 @@ window.SOMLogisticsAssist=(input,options)=>{
   const tools=document.createElement('div');tools.className='cert-tools';
   tools.innerHTML='<select aria-label="PORTIA language"><option value="EN">English</option><option value="ES">Espa\u00f1ol</option></select><button type="button">PORTIA</button><div class="cert-ai-result" hidden></div>';
   input.after(tools);
+  if(options.getLanguage)tools.querySelector('select').value=options.getLanguage();
+  tools.querySelector('select').onchange=()=>options.onLanguageChange?.(tools.querySelector('select').value);
   tools.querySelector('button').onclick=()=>options.run(async()=>{
     const original=input.value;
     if(!original.trim()||original.length>6000)throw Error('PORTIA requires between 1 and 6000 characters.');
-    const result=await options.request({text:original,language:tools.querySelector('select').value});
+    const language=tools.querySelector('select').value;
+    const result=await options.request({text:original,language});
     if(!options.alive()||!input.isConnected)return;
     const panel=tools.querySelector('div');panel.hidden=false;
     panel.innerHTML='<label>PORTIA proposal<textarea readonly></textarea></label><button type="button" data-accept>Accept</button><button type="button" data-discard>Discard</button>';
     panel.querySelector('textarea').value=result.text;
     panel.querySelector('[data-accept]').onclick=()=>{
       if(input.value!==original&&!confirm('The original text changed. Replace it with this proposal?'))return;
-      input.value=result.text;options.mark();panel.hidden=true;
+      input.value=result.text;options.onLanguageChange?.(language);options.mark();panel.hidden=true;
     };
     panel.querySelector('[data-discard]').onclick=()=>panel.hidden=true;
   });

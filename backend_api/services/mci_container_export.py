@@ -11,6 +11,7 @@ from services.mci_survey_schema import SurveyContent
 from services.mci_container_schema import TITLES, GROUPS
 from services.mci_survey_export import set_text
 from services.web_docx_layout import fit_web_docx
+from services.mci_report_language import translate, localize_document, DISCLAIMER
 
 
 def build_word(row):
@@ -21,6 +22,7 @@ def build_word(row):
     values.update({k: row.get(k, '') for k in ('vessel','requested_by','report_number')})
     values['survey_place'] = c.survey_place or row.get('location', c.location)
     doc = Document(Path(__file__).resolve().parents[1]/'templates/mci_container_original.docx')
+    localize_document(doc, c.language)
     parents = {child: parent for parent, children in GROUPS.items() for child in children}
     def enabled(key):
         section = c.sections.get(key)
@@ -41,11 +43,11 @@ def build_word(row):
             append_extra(p._p,current)
             current = heading[1]
             if enabled(current):
-                set_text(p,TITLES[current])
+                set_text(p,translate(TITLES[current], c.language))
                 p.paragraph_format.keep_with_next=True
             else:p._p.getparent().remove(p._p)
             continue
-        disclaimer=p.text.startswith('THIS BONAFIDE')
+        disclaimer=p.text.startswith(('THIS BONAFIDE', DISCLAIMER))
         if disclaimer:append_extra(p._p,current)
         if current and not enabled(current) and not disclaimer:
             p._p.getparent().remove(p._p)

@@ -21,6 +21,8 @@ async function main(){
   await page.goto('http://mci.test/');await page.evaluate(()=>SOMMCISurveys.mount(document.querySelector('main'),{kind:'vessel',headers:()=>({})}));
   await page.locator('[data-create]').click();await page.locator('[data-service]').waitFor();assert.equal(await page.locator('[data-open]').count(),0);
   await page.locator('[data-service]').click();
+  assert.equal(await page.getByLabel('Idioma del informe',{exact:true}).inputValue(),'EN');
+  await page.getByLabel('Idioma del informe',{exact:true}).selectOption('ES');
   assert.equal(await page.locator('[name=title]').count(),0);
   assert.equal(await page.locator('#mci-location').inputValue(),'Caldera, Costa Rica');
   assert(await page.locator('#mci-location').evaluate(e=>e.readOnly));
@@ -56,6 +58,8 @@ async function main(){
   conflict=true;await page.locator('button[type=submit]').click();await page.getByText('Conflicto de version').waitFor();assert.equal(await page.locator('[data-block=work]').inputValue(),'Preserved text');
   conflict=false;await page.locator('button[type=submit]').click();await page.getByText('Saved',{exact:true}).waitFor();
   assert.equal(writes.at(-1).content.hierarchy_version,2);
+  assert.equal(writes.at(-1).content.language,'ES');
+  assert.equal(await page.getByLabel('Idioma del informe',{exact:true}).inputValue(),'ES');
   assert.equal(writes.at(-1).service_id,3);assert(!('company_code' in writes.at(-1)));assert(!('vessel' in writes.at(-1)));assert.equal(writes.at(-1).content.sections.work.blocks[0].text,'Preserved text');
   assert.deepEqual(errors,[]);console.log('PASS MCI create/review, optional sections, add/remove, retained disabled text, identity, conflicts, 3 viewports. Screenshots:',dir);
  }finally{await browser.close();}

@@ -45,6 +45,7 @@ class OptionalSection(BaseModel):
 
 class SurveyContent(BaseModel):
     model_config = ConfigDict(extra="forbid")
+    language: Literal['EN', 'ES'] = 'EN'
     hierarchy_version: Literal[1, 2] = 1
     imo: str = Field(default="", max_length=100)
     length_and_tonnage: str = Field(default="", max_length=1000)

@@ -58,6 +58,7 @@
       const groups=s.boot.groups||defaultGroups,parents=Object.fromEntries(Object.entries(groups).flatMap(([parent,children])=>children.map(k=>[k,parent])));
       if((c.hierarchy_version||1)===1){for(const [parent,children] of Object.entries(groups)){if(children.some(k=>c.sections[k]?.enabled))(c.sections[parent]||={enabled:false,blocks:[]}).enabled=true;}}
       c.hierarchy_version=2;
+      c.language ||= 'EN';
       shell(row.id?'review':'create',`<p><strong>${esc(row.report_number)}</strong> · ${esc(row.vessel)} · ${esc(row.requested_by)}</p><form id="mci-form" lang="en"><div class="cert-tools">${editable?'<button type="submit">Save draft</button><button type="button" data-submit>Submit for review</button>':''}${row.id?'<button type="button" data-export="word">Word</button><button type="button" data-export="pdf">PDF</button>':''}${row.id&&s.boot.permissions.approve?'<button type="button" data-status="Approved">Approve</button><button type="button" data-status="Rejected">Reject</button>':''}<span id="mci-save-state" role="status"></span></div><fieldset ${!editable?'disabled':''}><div class="cert-fields"><label>Location<input id="mci-location" readonly value="${esc(row.location||'')}" placeholder="Not set in the linked service"></label>${Object.entries(fields).map(([k,label])=>`<label>${label}<input name="${k}" type="${k==='issue_date'?'date':k.startsWith('period_')?'datetime-local':'text'}" value="${esc(c[k]||'')}" maxlength="${k==='cargo'?3000:1000}"></label>`).join('')}</div><div id="mci-sections"></div></fieldset></form>`);
       if(row.source_filename){
         const original=document.createElement('button');original.type='button';original.textContent='Original Word';
@@ -86,6 +87,14 @@
         });
       }
       const mark=()=>{s.dirty=true;$('#mci-save-state').textContent='Unsaved changes';};
+      const languageLabel=document.createElement('label');languageLabel.textContent='Idioma del informe / Report language ';
+      const languageSelect=document.createElement('select');languageSelect.setAttribute('aria-label','Idioma del informe');
+      languageSelect.innerHTML='<option value="EN">English</option><option value="ES">Espa\u00f1ol</option>';
+      languageSelect.value=c.language;languageSelect.disabled=!editable;languageLabel.append(languageSelect);
+      $('#mci-form fieldset').prepend(languageLabel);
+      const setLanguage=value=>{if(c.language===value)return;c.language=value;languageSelect.value=value;$('#mci-form').lang=value.toLowerCase();root.querySelectorAll('[aria-label="PORTIA language"]').forEach(el=>el.value=value);mark();};
+      languageSelect.onchange=()=>setLanguage(languageSelect.value);
+      $('#mci-form').lang=c.language.toLowerCase();
       if(opts.kind==='crane'&&row.id)window.SOMPortAttachments($('#mci-form'),{url:`/informes/mci-surveys/${row.id}/bundle`,filename:'Crane_Inspection_complete.pdf',headers:opts.headers,run,dirty:()=>s.dirty,signal:s.abort.signal});
       function sections(){
         const limit=k=>s.boot.block_limits?.[k]??s.boot.max_blocks??100;
@@ -114,14 +123,17 @@
         });
         root.querySelectorAll('[data-remove]').forEach(b=>b.onclick=()=>{const a=c.sections[b.dataset.remove].blocks,i=+b.dataset.index;if(a[i].text.trim()&&!confirm('Remove this text?'))return;a.splice(i,1);mark();sections();});
         if(opts.kind==='logistics'&&editable&&window.SOMLogisticsAssist)root.querySelectorAll('textarea[data-block]').forEach(input=>window.SOMLogisticsAssist(input,{
+          getLanguage:()=>c.language,onLanguageChange:setLanguage,
           request:body=>request('/informes/certificates/logistics-assist','POST',body),run,alive:live,
           mark:()=>input.dispatchEvent(new Event('input',{bubbles:true}))
         }));
         if(opts.kind==='port_captancy'&&editable&&window.SOMLogisticsAssist)root.querySelectorAll('textarea[data-block]').forEach(input=>window.SOMLogisticsAssist(input,{
+          getLanguage:()=>c.language,onLanguageChange:setLanguage,
           request:body=>request('/informes/certificates/port-captancy-assist','POST',body),run,alive:live,
           mark:()=>input.dispatchEvent(new Event('input',{bubbles:true}))
         }));
         if(opts.kind==='crane'&&editable&&window.SOMLogisticsAssist)root.querySelectorAll('textarea[data-block]').forEach(input=>window.SOMLogisticsAssist(input,{
+          getLanguage:()=>c.language,onLanguageChange:setLanguage,
           request:body=>request('/informes/certificates/crane-assist','POST',body),run,alive:live,
           mark:()=>input.dispatchEvent(new Event('input',{bubbles:true}))
         }));

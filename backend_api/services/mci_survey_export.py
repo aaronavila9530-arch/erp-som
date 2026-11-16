@@ -7,6 +7,7 @@ from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
 from docx.text.paragraph import Paragraph
 from services.mci_survey_schema import SurveyContent, export_sections
+from services.mci_report_language import translate, localize_document, localize_template
 
 TEMPLATES = Path(__file__).resolve().parents[1] / 'templates'
 MONTHS = ('January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December')
@@ -36,8 +37,15 @@ def build_word(row):
     if row.get('company_code') != 'MCI-CR':
         raise ValueError('MCI document requires MCI context')
     content = SurveyContent.model_validate(row['content'])
+    tr = lambda text: translate(text, content.language)
+    def date_text(value, time=False):
+        if content.language != 'ES' or not value:
+            return english_date(value, time)
+        months = ('enero','febrero','marzo','abril','mayo','junio','julio','agosto','septiembre','octubre','noviembre','diciembre')
+        return f'{value.day} de {months[value.month-1]} de {value.year}' + (value.strftime(' %H:%M') + ' hora local' if time else '')
     source = Document(TEMPLATES / 'mci_general_original.docx')
     doc = Document(TEMPLATES / 'mci_letterhead_original.docx')
+    localize_document(doc, content.language)
     body = doc.element.body
     insertion = body[0]
     existing_styles = {s.style_id for s in doc.styles}
@@ -53,24 +61,27 @@ def build_word(row):
             sect.getparent().remove(sect)
         if value is not None:
             set_text(element, value)
+        else:
+            set_text(element, tr(p.text))
         return element
     add(clone('PROFESSIONAL TECHNICAL REPORT'))
     add(clone('M/V LINA AKSOY', row['vessel']))
     report_type = {'vessel':'Vessel Survey', 'condition':'Vessel Condition Survey', 'cargo':'Cargo Condition Survey', 'logistics':'Logistics Supervision', 'port_captancy':'Port Captancy', 'crane':'Crane Inspections'}.get(row.get('kind'), 'Survey Report')
-    add(clone('Multiple mooring-line failures during bulk cargo discharge\nBerth No. 4 - Puerto Caldera, Costa Rica', report_type+'\n'+row.get('location', content.location)))
+    add(clone('Multiple mooring-line failures during bulk cargo discharge\nBerth No. 4 - Puerto Caldera, Costa Rica', tr(report_type)+'\n'+row.get('location', content.location)))
     table = deepcopy(source.tables[0]._tbl)
+    localize_template(table, content.language)
     values = [row['requested_by'], f"{row['vessel']} / IMO {content.imo}", content.length_and_tonnage,
-              content.cargo, ' - '.join(english_date(d, time=True) for d in (content.period_start,content.period_end) if d),
-              english_date(content.issue_date), content.report_status or 'Draft']
-    for tr, value in zip(table.xpath('./w:tr'), values):
-        cell = tr.xpath('./w:tc')[1]
+              content.cargo, ' - '.join(date_text(d, time=True) for d in (content.period_start,content.period_end) if d),
+              date_text(content.issue_date), tr(content.report_status or 'Draft')]
+    for table_row, value in zip(table.xpath('./w:tr'), values):
+        cell = table_row.xpath('./w:tc')[1]
         paragraphs = cell.xpath('./w:p')
         set_text(paragraphs[0], value)
         for p in paragraphs[1:]:
             cell.remove(p)
     add(table)
     text='This report is issued exclusively for the client that instructed MSL and its advisers.\nIt does not constitute an admission of liability or a legal opinion.'
-    add(clone(text, text.replace('instructed MSL', 'instructed MCI')))
+    add(clone(text, tr(text.replace('instructed MSL', 'instructed MCI'))))
     heading_sources = {
         'instructions':'INSTRUCTIONS, SCOPE AND METHODOLOGY', 'work':'1.1 Work performed',
         'limitations':'1.2 Main limitations of this report',
@@ -125,7 +136,7 @@ def build_word(row):
             if key in parents and not (content.sections.get(parents[key]) and content.sections[parents[key]].enabled):continue
             blocks=[b.text for b in sec.blocks if b.text.strip()]
             if key=='crane_intro' and content.inspection_date:
-                blocks.insert(0,'Inspection date: '+english_date(content.inspection_date)+((' '+content.inspection_time.strftime('%H:%M')+' LT') if content.inspection_time else ''))
+                blocks.insert(0,tr('Inspection date')+': '+date_text(content.inspection_date)+((' '+content.inspection_time.strftime('%H:%M')+(' hora local' if content.language=='ES' else ' LT')) if content.inspection_time else ''))
             if key=='instructions':
                 blocks=[f'{label}: {value}' for label,value in (('GRT',content.grt),('NRT',content.nrt)) if value]+blocks
             if key=='crane_checklist':
@@ -134,10 +145,10 @@ def build_word(row):
                     check=content.crane_checks.get(point)
                     if not check:continue
                     statuses=[getattr(check,s) for s in SUFFIXES if getattr(check,s)]
-                    if check.done or statuses:blocks.append(label+': '+(', '.join(statuses) if statuses else 'Inspection performed; status not specified')+'.')
+                    if check.done or statuses:blocks.append(tr(label)+': '+(', '.join(tr(s) for s in statuses) if statuses else tr('Inspection performed; status not specified'))+'.')
             sections.append((key,title,blocks))
     for key, title, blocks in sections:
-        heading = clone(heading_sources[key], headings[key])
+        heading = clone(heading_sources[key], tr(headings[key]))
         # Explicit hierarchical labels must not inherit the template's flat list.
         ppr = heading.get_or_add_pPr()
         ppr.get_or_add_keepNext().val = True
@@ -145,17 +156,17 @@ def build_word(row):
         numbering.get_or_add_numId().val = 0
         add(heading)
         if key == 'representatives':
-            blocks = [f'Master: {content.master}', f'Chief officer: {content.chief_officer}', f'Surveyor: {content.surveyor}'] + blocks
+            blocks = [f'{tr(label)}: {value}' for label,value in [('Master',content.master),('Chief officer',content.chief_officer),('Surveyor',content.surveyor)]] + blocks
         elif key == 'particulars' and row.get('kind') in ('logistics','port_captancy'):
-            blocks = [f'Vessel: {row["vessel"]}', f'Flag / port of registry: {content.flag_port_registry}',
+            blocks = [f'{tr("Vessel")}: {row["vessel"]}', f'{tr("Flag / port of registry")}: {content.flag_port_registry}',
                       f'GRT: {content.grt}', f'NRT: {content.nrt}', f'IMO: {content.imo}',
-                      f'Year built: {content.build_year}'] + blocks
+                      f'{tr("Year built")}: {content.build_year}'] + blocks
         elif key == 'chronology' and row.get('kind') == 'logistics':
-            blocks = [f'{label}: {english_date(value)}' for label,value in (
+            blocks = [f'{tr(label)}: {date_text(value)}' for label,value in (
                 ('Arrival',content.arrival_date), ('Inspection',content.inspection_date),
                 ('Supervision completed',content.supervision_completed_date)) if value] + blocks
         elif key == 'instructions' and row.get('kind') == 'port_captancy':
-            blocks = [f'{label}: {value}' for label, value in (
+            blocks = [f'{tr(label)}: {value}' for label, value in (
                 ('Survey scope', content.report_type), ('Operation', content.operation),
                 ('Continent', content.continent)) if value] + blocks
         elif key == 'chronology' and row.get('kind') == 'port_captancy':
@@ -163,16 +174,19 @@ def build_word(row):
             events = [('Arrival', content.arrival_date, content.arrival_time),
                       ('Inspection', content.inspection_date, content.inspection_time)]
             events += [(label, getattr(content, f'ts_date_{i}'), getattr(content, f'ts_time_{i}')) for i,label in enumerate(EVENTS)]
-            blocks = [f'{label}: {english_date(d)}' + (' '+t.strftime('%H:%M')+' LT' if t else '')
+            blocks = [f'{tr(label)}: {date_text(d)}' + (' '+t.strftime('%H:%M')+(' hora local' if content.language=='ES' else ' LT') if t else '')
                       for label,d,t in events if d or t] + blocks
         elif key == 'enclosure':
-            blocks = ['Picture link: ' + '\n'.join(blocks)]
+            blocks = [tr('Picture link')+': ' + '\n'.join(blocks)]
         for text in blocks:
             p = deepcopy(normal._p)
             set_text(p, text)
             add(p)
     disclaimer = next(p.text for p in source.paragraphs if p.text.startswith('THIS BONA FIDE'))
-    add(clone(disclaimer))
+    disclaimer_element = clone(disclaimer)
+    if content.language == 'ES':
+        disclaimer_element.get_or_add_pPr().get_or_add_keepLines().val = True
+    add(disclaimer_element)
     # The first section has a clean footer; the separate signature page retains
     # the original footer-anchored seal and logo, and the original body spacers.
     break_p = OxmlElement('w:p')
@@ -236,8 +250,8 @@ def build_word(row):
             continue
         seen_headers.add(header.part.partname)
         for p in header._element.xpath('.//w:p'):
-            if 'CONFIDENTIAL - WITHOUT PREJUDICE' in ''.join(p.xpath('.//w:t/text()')):
-                number=deepcopy(p);set_text(number,f"Cert. No. {row['report_number']}");p.addprevious(number)
+            if tr('CONFIDENTIAL - WITHOUT PREJUDICE') in ''.join(p.xpath('.//w:t/text()')):
+                number=deepcopy(p);set_text(number,f"{'Informe No.' if content.language=='ES' else 'Cert. No.'} {row['report_number']}");p.addprevious(number)
                 break
     setting = OxmlElement('w:updateFields'); setting.set(qn('w:val'), 'true')
     doc.settings.element.append(setting)
