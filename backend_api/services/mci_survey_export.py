@@ -61,7 +61,7 @@ def build_word(row):
             sect.getparent().remove(sect)
         if value is not None:
             set_text(element, value)
-        else:
+        elif content.language == 'ES':
             set_text(element, tr(p.text))
         return element
     add(clone('PROFESSIONAL TECHNICAL REPORT'))
