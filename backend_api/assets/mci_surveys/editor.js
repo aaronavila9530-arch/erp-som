@@ -83,19 +83,19 @@
         }
         grid.remove();
         if(row.id)window.SOMPortAttachments($('#mci-form'),{
-          url:`/informes/mci-surveys/${row.id}/bundle`,headers:opts.headers,run,dirty:()=>s.dirty,signal:s.abort.signal
+          url:`/informes/mci-surveys/${row.id}/bundle`,getLanguage:()=>c.language,headers:opts.headers,run,dirty:()=>s.dirty,signal:s.abort.signal
         });
       }
       const mark=()=>{s.dirty=true;$('#mci-save-state').textContent='Unsaved changes';};
       const languageLabel=document.createElement('label');languageLabel.textContent='Idioma del informe / Report language ';
       const languageSelect=document.createElement('select');languageSelect.setAttribute('aria-label','Idioma del informe');
       languageSelect.innerHTML='<option value="EN">English</option><option value="ES">Espa\u00f1ol</option>';
-      languageSelect.value=c.language;languageSelect.disabled=!editable;languageLabel.append(languageSelect);
-      $('#mci-form fieldset').prepend(languageLabel);
-      const setLanguage=value=>{if(c.language===value)return;c.language=value;languageSelect.value=value;$('#mci-form').lang=value.toLowerCase();root.querySelectorAll('[aria-label="PORTIA language"]').forEach(el=>el.value=value);mark();};
+      languageSelect.value=c.language;languageLabel.append(languageSelect);
+      $('#mci-form .cert-tools').append(languageLabel);
+      const setLanguage=value=>{if(c.language===value)return;c.language=value;languageSelect.value=value;$('#mci-form').lang=value.toLowerCase();root.querySelectorAll('[aria-label="PORTIA language"]').forEach(el=>el.value=value);if(editable)mark();};
       languageSelect.onchange=()=>setLanguage(languageSelect.value);
       $('#mci-form').lang=c.language.toLowerCase();
-      if(opts.kind==='crane'&&row.id)window.SOMPortAttachments($('#mci-form'),{url:`/informes/mci-surveys/${row.id}/bundle`,filename:'Crane_Inspection_complete.pdf',headers:opts.headers,run,dirty:()=>s.dirty,signal:s.abort.signal});
+      if(opts.kind==='crane'&&row.id)window.SOMPortAttachments($('#mci-form'),{url:`/informes/mci-surveys/${row.id}/bundle`,getLanguage:()=>c.language,filename:'Crane_Inspection_complete.pdf',headers:opts.headers,run,dirty:()=>s.dirty,signal:s.abort.signal});
       function sections(){
         const limit=k=>s.boot.block_limits?.[k]??s.boot.max_blocks??100;
         if(c.sections.enclosure?.enabled){
@@ -150,7 +150,7 @@
       async function save(submit){if(!editable)return;await run(async()=>{const d=await request('/informes/mci-surveys'+(row.id?'/'+row.id:''),row.id?'PATCH':'POST',{kind:opts.kind,service_id:row.service_id,content:c,version:payload.version,submit});if(live()){s.dirty=false;editor(d);$('#mci-save-state').textContent='Saved';}});}
       $('#mci-form').onsubmit=e=>{e.preventDefault();save(false);};if($('[data-submit]'))$('[data-submit]').onclick=()=>save(true);
       root.querySelectorAll('[data-status]').forEach(b=>b.onclick=()=>{if(s.dirty){$('#mci-error').textContent='Save changes before reviewing.';return;}if(!confirm('Confirm status change?'))return;run(async()=>editor(await request(`/informes/mci-surveys/${row.id}/status`,'POST',{version:payload.version,status:b.dataset.status})));});
-      root.querySelectorAll('[data-export]').forEach(b=>b.onclick=()=>{if(s.dirty){$('#mci-error').textContent='Save changes before downloading.';return;}run(async()=>{const r=await fetch(`/informes/mci-surveys/${row.id}/export/${b.dataset.export}`,{headers:opts.headers(),signal:s.abort.signal});if(!r.ok)throw Error('The document could not be generated. The saved report has not changed.');const url=URL.createObjectURL(await r.blob()),a=document.createElement('a');a.href=url;a.download=`Survey_${row.id}.${b.dataset.export==='word'?'docx':'pdf'}`;a.click();setTimeout(()=>URL.revokeObjectURL(url),30000);});});
+      root.querySelectorAll('[data-export]').forEach(b=>b.onclick=()=>{if(s.dirty){$('#mci-error').textContent='Save changes before downloading.';return;}run(async()=>{const r=await fetch(`/informes/mci-surveys/${row.id}/export/${b.dataset.export}?language=${encodeURIComponent(c.language)}`,{headers:opts.headers(),signal:s.abort.signal});if(!r.ok)throw Error('The document could not be generated. The saved report has not changed.');const url=URL.createObjectURL(await r.blob()),a=document.createElement('a');a.href=url;a.download=`Survey_${row.id}.${b.dataset.export==='word'?'docx':'pdf'}`;a.click();setTimeout(()=>URL.revokeObjectURL(url),30000);});});
     }
     shell('review','');await run(async()=>{s.boot=await request('/informes/mci-surveys/bootstrap?kind='+encodeURIComponent(opts.kind));if(!s.boot.ready){shell('review','<p>This module is not enabled yet.</p>');return;}await list();});
   }

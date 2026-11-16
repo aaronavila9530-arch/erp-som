@@ -185,10 +185,12 @@ def review(rid: int, body: StatusInput, ctx=Depends(mci_access), conn=Depends(ge
 
 
 @router.get('/{rid}/export/{format}')
-def export(rid: int, format: Literal['word','pdf'], ctx=Depends(mci_access), conn=Depends(get_db)):
+def export(rid: int, format: Literal['word','pdf'], ctx=Depends(mci_access), conn=Depends(get_db), language: Literal['EN','ES'] | None = None):
     with conn.cursor(cursor_factory=RealDictCursor) as cur:
         row=enrich(cur,record(cur,rid))
     try:
+        if language is not None:
+            row = {**row, 'content': {**row['content'], 'language': language}}
         if row['kind'] == 'container':
             from services.mci_container_export import build_word
         else:
@@ -220,12 +222,12 @@ def original(rid: int, ctx=Depends(mci_access), conn=Depends(get_db)):
 
 
 @router.post('/{rid}/bundle')
-def port_captancy_bundle(rid: int, files: list[UploadFile] = File(...), ctx=Depends(mci_access), conn=Depends(get_db)):
+def port_captancy_bundle(rid: int, files: list[UploadFile] = File(...), ctx=Depends(mci_access), conn=Depends(get_db), language: Literal['EN','ES'] | None = None):
     with conn.cursor(cursor_factory=RealDictCursor) as cur:
         if record(cur,rid)['kind'] not in ('port_captancy','crane'):
             raise HTTPException(422,'Anexos no disponibles para este tipo')
     from services.port_captancy_bundle import read_annexes, merge
     annexes=read_annexes(files)
-    report=export(rid,'pdf',ctx,conn)
+    report=export(rid,'pdf',ctx,conn,language)
     return Response(merge(report.body,annexes),media_type='application/pdf',
                     headers={'Content-Disposition':f'attachment; filename="Survey_{rid}_complete.pdf"'})

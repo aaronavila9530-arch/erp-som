@@ -3,6 +3,7 @@ import unittest
 from io import BytesIO
 from pathlib import Path
 from zipfile import ZipFile
+from unittest.mock import MagicMock, patch
 from docx import Document
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from services.mci_survey_export import build_word
@@ -12,6 +13,16 @@ from services.mci_report_language import ES, translate
 
 
 class LanguageTests(unittest.TestCase):
+    def test_export_override_does_not_change_saved_report(self):
+        from routers.mci_surveys_web import export
+        row=dict(company_code='MCI-CR',kind='condition',vessel='QA',requested_by='CLIENT',
+                 report_number='QA',status='Approved',content={'language':'EN','sections':{}})
+        with patch('routers.mci_surveys_web.record',return_value=row), patch('routers.mci_surveys_web.enrich',return_value=row):
+            response=export(1,'word',{},MagicMock(),language='ES')
+        self.assertIn('INFORME',Document(BytesIO(response.body)).paragraphs[0].text)
+        self.assertEqual(row['content']['language'],'EN')
+        self.assertEqual(row['status'],'Approved')
+
     def test_all_mci_report_kinds(self):
         from services.mci_logistics_schema import TITLES as logistics
         from services.mci_port_captancy_schema import TITLES as port
