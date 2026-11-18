@@ -4816,8 +4816,10 @@ def som_web_home() -> HTMLResponse:
         cells.forEach((value,k) => {
           const field=itpBiClipboardFields[start+k];
           if (field==='amount') {
-            const raw=value.trim().replace(/,/g,'');
-            if (!/^\\d+(\\.\\d{1,2})?$/.test(raw)) throw new Error('Monto invalido. Use punto decimal y coma de miles.');
+            let raw=value.trim().replace(/[ \\u00a0]/g,'');
+            if (/^\\d+,\\d{1,2}$/.test(raw) || /^\\d{1,3}(\\.\\d{3})+,\\d{1,2}$/.test(raw)) raw=raw.replace(/\\./g,'').replace(',','.');
+            else if (/^\\d{1,3}(,\\d{3})+(\\.\\d{1,2})?$/.test(raw)) raw=raw.replace(/,/g,'');
+            if (!/^\\d+(\\.\\d{1,2})?$/.test(raw)) throw new Error('Monto invalido. Revise los separadores decimales y de miles.');
             row[field]=Number(raw);
           } else row[field]=value;
         });
