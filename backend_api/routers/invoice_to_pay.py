@@ -2273,7 +2273,7 @@ def biweekly_obligations_preview(
                 balance=ob.get("balance"),
                 origin_company_code=ob.get("company_code") or company,
             ))
-        rows = _dedupe_biweekly_rows_against_itp(_filter_open_biweekly_rows(cur, company, rows))
+        rows = _dedupe_biweekly_rows_against_itp(rows)
         return {"period": period, "fortnight": int(fortnight or 1), "company_code": company, "rows": rows}
     except Exception as exc:
         conn.rollback()
