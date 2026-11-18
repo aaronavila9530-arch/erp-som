@@ -337,6 +337,18 @@ def _biweekly_match_tokens(value: str) -> set[str]:
 def _filter_open_biweekly_rows(cur, company: str, rows: list[dict]) -> list[dict]:
     if not rows:
         return []
+    # A copied draft must not turn an already-posted voucher into a new payment.
+    cur.execute("""
+        SELECT l.category, l.beneficiary AS name, l.amount, l.currency,
+               l.reference, l.obligation_id, l.bank_voucher
+        FROM itp_biweekly_payment_lines l
+        JOIN itp_biweekly_payment_batches b ON b.id=l.batch_id
+        WHERE b.company_code=%s AND b.status='APPLIED'
+          AND l.accounting_entry_id IS NOT NULL
+          AND NULLIF(TRIM(l.bank_voucher),'') IS NOT NULL
+    """, (company,))
+    posted = {(_biweekly_row_key(item), str(item['bank_voucher']).strip()) for item in cur.fetchall() or []}
+    rows = [row for row in rows if (_biweekly_row_key(row), str(row.get('bank_voucher') or '').strip()) not in posted]
     obligation_ids_by_company: dict[str, list[int]] = {}
     for row in rows:
         if str(row.get("obligation_id") or "").strip().isdigit():
@@ -665,6 +677,53 @@ def _load_biweekly_paid_markers(cur, company: str, period: str, fortnight: int) 
         markers["keys"].add(_biweekly_row_key_text(item))
         markers["identities"].add(_biweekly_row_identity_text(item))
     return markers
+
+
+def _biweekly_obligation_due(ob, start, end):
+    scheduled = _coerce_date(ob.get('schedule_date'), start)
+    if scheduled <= end:
+        return True
+    if ob.get('planned_payment_date'):
+        return False
+    text = ' '.join(str(ob.get(k) or '') for k in ('payee_name', 'notes')).lower()
+    monthly_fixed = any(k in text for k in ('prime properties', 'alquiler', 'american data', 'internet'))
+    issued = _coerce_date(ob.get('issue_date'), end)
+    return monthly_fixed and ob.get('issue_date') is not None and issued.year == end.year and issued.month == end.month and issued <= end
+
+
+def _refresh_biweekly_supplier_draft(cur, company, period, fortnight, rows):
+    """Refresh open invoices even when a saved draft predates their import."""
+    start, end = _fortnight_window(period, fortnight)
+    cur.execute("""
+        SELECT id, company_code, payee_name, reference, balance, currency,
+               COALESCE(planned_payment_date, due_date, issue_date) AS schedule_date,
+               payment_bank_account_name, payment_bank, obligation_type, notes,
+               issue_date, planned_payment_date
+        FROM payment_obligations
+        WHERE company_code = ANY(%s) AND COALESCE(active,TRUE)=TRUE
+          AND status IN ('PENDING','PARTIAL') AND balance > 0
+          AND (COALESCE(planned_payment_date,due_date,issue_date) <= %s OR issue_date <= %s)
+          AND obligation_type = 'SUPPLIER_INVOICE'
+        ORDER BY id
+    """, (["MSL-CR", "MCI-CR"], end, end))
+    result = list(rows)
+    seen = {_biweekly_row_key(row) for row in result}
+    for ob in cur.fetchall() or []:
+        if not _biweekly_obligation_due(ob, start, end):
+            continue
+        text = " ".join(str(ob.get(k) or "") for k in ('payee_name','notes')).lower()
+        category = 'Alquiler' if ('prime properties' in text or 'alquiler' in text) else ('Internet' if ('american data' in text or 'internet' in text) else 'Proveedores')
+        amount = float(_money(ob['balance']))
+        _append_unique_biweekly_row(result, seen, dict(
+            category=category, name=ob['payee_name'], amount=amount, balance=amount,
+            currency=ob.get('currency') or 'CRC', obligation_id=ob['id'],
+            reference=display_itp_invoice_reference(ob.get('reference')),
+            origin_company_code=ob['company_code'], source='ITP',
+            due_date=_fortnight_due_date(period, fortnight),
+            bank_account=ob.get('payment_bank_account_name') or ob.get('payment_bank') or '',
+            bank_accounting_code='', bank_voucher='', payment_method='BANK', notes=ob.get('notes') or '',
+        ))
+    return _dedupe_biweekly_rows_against_itp(result)
 
 
 def _save_biweekly_draft(cur, company: str, period: str, fortnight: int, rows: list, user: str):
@@ -1875,7 +1934,7 @@ def biweekly_obligations_preview(
             seen = set()
             for item in carryover_rows + draft["rows"]:
                 _append_unique_biweekly_row(rows, seen, item)
-            rows = _dedupe_biweekly_rows_against_itp(rows)
+            rows = _refresh_biweekly_supplier_draft(cur, company, period, fortnight, rows)
             return {
                 "period": period,
                 "fortnight": int(fortnight or 1),
@@ -2182,7 +2241,8 @@ def biweekly_obligations_preview(
         )
         for ob in cur.fetchall() or []:
             schedule_date = _coerce_date(ob.get("schedule_date") or ob.get("planned_payment_date") or ob.get("due_date") or ob.get("issue_date"), due_start)
-            if schedule_date < due_start or schedule_date > due_end:
+            # Outstanding overdue invoices remain payable in the next fortnight.
+            if not _biweekly_obligation_due(ob, due_start, due_end):
                 continue
             obligation_type_upper = str(ob.get("obligation_type") or "").upper()
             haystack = " ".join(str(ob.get(k) or "") for k in ("payee_name", "obligation_type", "notes", "reference")).lower()
@@ -2213,7 +2273,7 @@ def biweekly_obligations_preview(
                 balance=ob.get("balance"),
                 origin_company_code=ob.get("company_code") or company,
             ))
-        rows = _dedupe_biweekly_rows_against_itp(rows)
+        rows = _dedupe_biweekly_rows_against_itp(_filter_open_biweekly_rows(cur, company, rows))
         return {"period": period, "fortnight": int(fortnight or 1), "company_code": company, "rows": rows}
     except Exception as exc:
         conn.rollback()

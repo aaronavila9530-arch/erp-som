@@ -1263,6 +1263,8 @@ def som_web_home() -> HTMLResponse:
     .itp-bi-table th,.itp-bi-table td { border-bottom:1px solid #e7edf4; padding:7px 8px; }
     .itp-bi-table th { background:#edf4fb; color:#334155; font-size:12px; text-transform:uppercase; }
     .itp-bi-table input,.itp-bi-table select { width:100%; height:30px; border-radius:6px; padding:0 7px; }
+    .itp-bi-table input[type="checkbox"] { width:22px; height:22px; cursor:pointer; }
+    .itp-bi-table th:first-child,.itp-bi-table td:first-child { position:sticky; left:0; z-index:2; background:#fff; }
     .itp-bi-table th:nth-child(1),.itp-bi-table td:nth-child(1) { min-width:54px; text-align:center; }
     .itp-bi-table th:nth-child(2),.itp-bi-table td:nth-child(2) { min-width:170px; }
     .itp-bi-table th:nth-child(3),.itp-bi-table td:nth-child(3) { min-width:250px; }
@@ -4471,8 +4473,8 @@ def som_web_home() -> HTMLResponse:
               <button class="itp-bi-close" onclick="closeModal()">Cerrar</button>
             </div>
             <div class="itp-bi-controls">
-              <label>Periodo <input class="period-input" id="itpBiPeriod" value="${period}" placeholder="YYYY-MM" /></label>
-              <label>Quincena <select class="fortnight-input" id="itpBiFortnight"><option value="1"${fortnight === "1" ? " selected" : ""}>1</option><option value="2"${fortnight === "2" ? " selected" : ""}>2</option></select></label>
+              <label>Periodo <input class="period-input" id="itpBiPeriod" value="${period}" placeholder="YYYY-MM" onchange="loadItpBiweekly()" /></label>
+              <label>Quincena <select class="fortnight-input" id="itpBiFortnight" onchange="loadItpBiweekly()"><option value="1"${fortnight === "1" ? " selected" : ""}>1</option><option value="2"${fortnight === "2" ? " selected" : ""}>2</option></select></label>
               <button onclick="loadItpBiweekly(true)">Generar automático</button>
               <button onclick="saveItpBiweeklyDraft()">Guardar borrador</button>
               <button onclick="exportItpBiweekly()">Exportar Excel</button>
@@ -4492,6 +4494,8 @@ def som_web_home() -> HTMLResponse:
                   <button class="wide" onclick="editSelectedItpBiweeklyLine()">Editar seleccionada</button>
                   <button class="wide" onclick="deleteSelectedItpBiweeklyLine()">Quitar seleccionada</button>
                   <button class="wide" onclick="deleteCheckedItpBiweeklyLines()">Quitar marcadas</button>
+                  <button onclick="copyItpBiweeklyLines()">Copiar marcadas</button>
+                  <span id="itpBiSelectionCount"></span>
                 </div>
                 <div id="itpBiMsg" class="status"></div>
                 <div id="itpBiTable" class="itp-bi-table"></div>
@@ -4545,7 +4549,7 @@ def som_web_home() -> HTMLResponse:
       return row;
     }
     function itpBiReady(row) {
-      return Number(row.amount || 0) > 0
+      return row.payment_status !== "Pagado" && Number(row.amount || 0) > 0
         && String(row.bank_accounting_code || "").trim()
         && String(row.bank_voucher || "").trim()
         && String(row.due_date || "").trim();
@@ -4584,11 +4588,22 @@ def som_web_home() -> HTMLResponse:
       });
       return merged;
     }
+    let itpBiweeklyLoadedScope = "";
+    let itpBiweeklyLoadRevision = 0;
+    function itpBiweeklyScopeReady() {
+      const scope = `${selectedCompany()}|${valueFrom("itpBiPeriod")}|${valueFrom("itpBiFortnight") || "1"}`;
+      if (scope === itpBiweeklyLoadedScope) return true;
+      alert('Espere a que se carguen las obligaciones de la empresa y quincena seleccionadas.');
+      return false;
+    }
     async function loadItpBiweekly(force=false) {
       const msg = $("itpBiMsg");
       const table = $("itpBiTable");
       const company = selectedCompany();
-      const currentRows = force ? collectItpBiweeklyRows() : [];
+      const scope = `${company}|${valueFrom("itpBiPeriod")}|${valueFrom("itpBiFortnight") || "1"}`;
+      const revision = ++itpBiweeklyLoadRevision;
+      const currentRows = force && scope === itpBiweeklyLoadedScope ? collectItpBiweeklyRows().filter(row => itpBiStatus(row) !== "Pagado") : [];
+      if (scope !== itpBiweeklyLoadedScope) itpBiweeklySuppressed = new Set();
       if ($("itpBiCompany")) $("itpBiCompany").textContent = `Empresa: ${company}`;
       msg.className = "status";
       msg.style.display = "block";
@@ -4596,8 +4611,10 @@ def som_web_home() -> HTMLResponse:
       try {
         const params = new URLSearchParams({ period:valueFrom("itpBiPeriod"), fortnight:valueFrom("itpBiFortnight") || "1", force:String(!!force), company:company, _:String(Date.now()) });
         const payload = await getJSON(`/invoice-to-pay/biweekly-obligations/preview?${params.toString()}`, { "Cache-Control":"no-cache" });
+        if (revision !== itpBiweeklyLoadRevision) return;
         const generated = rowsList(payload.rows || payload).map(row => normalizeItpBiPaymentRow({ ...row }));
         itpBiweeklyRows = force ? mergeItpBiweeklyGenerated(generated, currentRows) : generated;
+        itpBiweeklyLoadedScope = scope;
         itpBiweeklyChecked = new Set();
         msg.className = "status";
         msg.style.display = "none";
@@ -4606,6 +4623,7 @@ def som_web_home() -> HTMLResponse:
         msg.textContent = "";
         renderItpBiweeklyTable();
       } catch (err) {
+        if (revision !== itpBiweeklyLoadRevision) return;
         itpBiweeklyRows = [];
         table.innerHTML = "";
         renderItpBiweeklySummary();
@@ -4686,6 +4704,9 @@ def som_web_home() -> HTMLResponse:
     }
     function toggleItpBiweeklyChecked(idx, checked) {
       if (checked) itpBiweeklyChecked.add(idx); else itpBiweeklyChecked.delete(idx);
+      const counter = $("itpBiSelectionCount");
+      if (counter) counter.textContent = `${itpBiweeklyChecked.size} marcadas`;
+      document.querySelectorAll('#itpBiTable tbody tr')[idx]?.classList.toggle('itp-bi-selected', checked);
     }
     function toggleAllItpBiweeklyChecked(checked) {
       collectItpBiweeklyRows();
@@ -4696,7 +4717,7 @@ def som_web_home() -> HTMLResponse:
     function selectItpBiweeklyLine(idx) {
       if (idx < 0 || idx >= itpBiweeklyRows.length) return;
       selectedItpBiweeklyIndex = idx;
-      renderItpBiweeklyTable();
+      document.querySelectorAll('#itpBiTable tbody tr').forEach((row, index) => row.classList.toggle('itp-bi-selected', index === idx));
     }
     function editSelectedItpBiweeklyLine() {
       collectItpBiweeklyRows();
@@ -4748,6 +4769,7 @@ def som_web_home() -> HTMLResponse:
       renderItpBiweeklyTable();
     }
     function addItpBiweeklyLine(category="Otros") {
+      collectItpBiweeklyRows();
       const period = valueFrom("itpBiPeriod") || new Date().toISOString().slice(0,7);
       const fortnight = Number(valueFrom("itpBiFortnight") || 1);
       const [year, month] = period.split("-").map(Number);
@@ -4761,7 +4783,49 @@ def som_web_home() -> HTMLResponse:
         bank_voucher:"", payment_method:"BANK", payment_card_last4:""
       }));
       renderItpBiweeklyTable();
+      const input = document.querySelector(`[data-bi="${itpBiweeklyRows.length-1}"][data-field="name"]`);
+      if (input) { input.scrollIntoView({block:"nearest"}); input.focus(); }
     }
+    const itpBiClipboardFields = ['category','name','amount','currency','bank_account','reference','notes'];
+    async function copyItpBiweeklyLines() {
+      const indexes = checkedItpBiweeklyRows();
+      if (!indexes.length) return alert('Marque las filas que desea copiar.');
+      const text = indexes.map(i => itpBiClipboardFields.map(k => String(itpBiweeklyRows[i][k] ?? '').replace(/[\\t\\r\\n]/g,' ')).join('\\t')).join('\\n');
+      try { await navigator.clipboard.writeText(text); }
+      catch (_) { alert('El navegador no permitio copiar al portapapeles.'); }
+    }
+    document.addEventListener('paste', event => {
+      const target = event.target;
+      if (!target?.matches?.('#itpBiTable [data-bi]')) return;
+      const text = event.clipboardData?.getData('text/plain') || '';
+      if (!/[\\t\\n]/.test(text)) return;
+      const start = itpBiClipboardFields.indexOf(target.dataset.field);
+      if (start < 0) return;
+      const lines = text.replace(/\\r/g,'').replace(/\\n$/, '').split('\\n').map(line => line.split('\\t'));
+      if (lines.length > 500) { event.preventDefault(); return alert('Pegue como maximo 500 filas.'); }
+      if (lines.some(cells => cells.length + start > itpBiClipboardFields.length)) {
+        event.preventDefault(); return alert('Columnas para pegar: rubro, beneficiario, monto, moneda, cuenta destino, referencia y notas.');
+      }
+      event.preventDefault();
+      collectItpBiweeklyRows();
+      const offset = Number(target.dataset.bi);
+      let changes;
+      try { changes = lines.map((cells,j) => {
+        const row = {...(itpBiweeklyRows[offset+j] || {category:'Otros',name:'',amount:0,currency:'CRC',source:'MANUAL',bank_voucher:'',due_date:itpBiweeklyRows[offset]?.due_date})};
+        if (row.obligation_id || itpBiStatus(row)==='Pagado') throw new Error('Pegue solamente sobre filas manuales no pagadas.');
+        cells.forEach((value,k) => {
+          const field=itpBiClipboardFields[start+k];
+          if (field==='amount') {
+            const raw=value.trim().replace(/,/g,'');
+            if (!/^\\d+(\\.\\d{1,2})?$/.test(raw)) throw new Error('Monto invalido. Use punto decimal y coma de miles.');
+            row[field]=Number(raw);
+          } else row[field]=value;
+        });
+        return normalizeItpBiPaymentRow(row);
+      }); } catch (err) { return alert(err.message); }
+      changes.forEach((row,j)=>itpBiweeklyRows[offset+j]=row);
+      renderItpBiweeklyTable();
+    });
     function deleteItpBiweeklyLine(idx) {
       collectItpBiweeklyRows();
       if (itpBiweeklyRows[idx]) itpBiweeklySuppressed.add(itpBiRowKey(itpBiweeklyRows[idx]));
@@ -4771,6 +4835,7 @@ def som_web_home() -> HTMLResponse:
       renderItpBiweeklyTable();
     }
     async function saveItpBiweeklyDraft() {
+      if (!itpBiweeklyScopeReady()) return;
       const msg = $("itpBiMsg");
       msg.className = "status";
       msg.style.display = "block";
@@ -4795,6 +4860,7 @@ def som_web_home() -> HTMLResponse:
       await applyItpBiweeklyRows(itpBiweeklyRows, keys);
     }
     async function applyItpBiweeklyRows(rows, applyKeys=null) {
+      if (!itpBiweeklyScopeReady()) return;
       const keySet = applyKeys ? new Set(applyKeys) : null;
       const targetRows = keySet ? rows.filter(row => keySet.has(itpBiRowKey(row))) : rows;
       const ready = targetRows.filter(itpBiReady);
@@ -4824,6 +4890,7 @@ def som_web_home() -> HTMLResponse:
       }
     }
     async function exportItpBiweekly() {
+      if (!itpBiweeklyScopeReady()) return;
       try {
         const payload = { period:valueFrom("itpBiPeriod"), fortnight:Number(valueFrom("itpBiFortnight") || 1), rows:collectItpBiweeklyRows() };
         const ticket = await postJSON("/invoice-to-pay/biweekly-obligations/export-ticket", payload);
