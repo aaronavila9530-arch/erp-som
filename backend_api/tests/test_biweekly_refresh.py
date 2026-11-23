@@ -5,6 +5,19 @@ from routers import invoice_to_pay as itp
 
 
 class BiweeklyRefreshTests(unittest.TestCase):
+    def test_exclusions_survive_generation_without_hiding_next_payroll(self):
+        old=dict(category='Planilla',name='Erasmo',currency='CRC',due_date='2026-11-13',amount=100)
+        new={**old,'due_date':'2026-11-30'}
+        cur=MagicMock();cur.fetchall.return_value=[dict(row_key=itp._biweekly_exclusion_key(old),row_data=old)]
+        result=itp._finalize_biweekly_preview(cur,'MSL-CR','2026-11',2,[old,new])
+        self.assertEqual(result['rows'],[new])
+        self.assertIn(itp._biweekly_row_key_text(old),result['excluded_keys'])
+        self.assertEqual(cur.execute.call_args.args[1],('MSL-CR','2026-11','2026-11',2))
+
+    def test_invoice_exclusion_is_stable_when_amount_changes(self):
+        self.assertEqual(itp._biweekly_exclusion_key(dict(obligation_id=10,amount=100)),
+                         itp._biweekly_exclusion_key(dict(obligation_id=10,amount=90)))
+
     def test_monthly_fixed_invoice_and_explicit_schedule(self):
         start, end = date(2026,11,16), date(2026,11,30)
         row=dict(payee_name='American Data',issue_date=date(2026,11,1),schedule_date=date(2026,12,1))

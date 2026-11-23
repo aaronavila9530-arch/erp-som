@@ -1570,6 +1570,7 @@ def som_web_home() -> HTMLResponse:
     let selectedItpBiweeklyIndex = null;
     let itpBiweeklyChecked = new Set();
     let itpBiweeklySuppressed = new Set();
+    let itpBiweeklyExcludedRows = [];
     let planningPayload = null;
     let selectedPaidInvoiceIndexes = new Set();
     let disputeRows = [];
@@ -4486,6 +4487,7 @@ def som_web_home() -> HTMLResponse:
                 <div class="itp-bi-tools">
                   <div class="itp-bi-tools-title">Agregar / ajustar lineas</div>
                   <button onclick="addItpBiweeklyLine('Planilla')">+ Planilla</button>
+                  <button onclick="addItpBiweeklyLine('Aguinaldos')">+ Aguinaldos</button>
                   <button onclick="addItpBiweeklyLine('CCSS')">+ CCSS</button>
                   <button onclick="addItpBiweeklyLine('Surveyors')">+ Surveyors</button>
                   <button onclick="addItpBiweeklyLine('Viáticos')">+ Viáticos</button>
@@ -4508,9 +4510,10 @@ def som_web_home() -> HTMLResponse:
       selectedItpBiweeklyIndex = null;
       itpBiweeklyChecked = new Set();
       itpBiweeklySuppressed = new Set();
+      itpBiweeklyExcludedRows = [];
       renderItpBiweeklyTable();
     }
-    const ITP_BI_CATEGORIES = ["Planilla","CCSS","IVA","Surveyors","Viáticos","Tarjetas de credito","Alquiler","Internet","Telefonia","Proveedores","Otros"];
+    const ITP_BI_CATEGORIES = ["Planilla","Aguinaldos","CCSS","IVA","Surveyors","Viáticos","Tarjetas de credito","Alquiler","Internet","Telefonia","Proveedores","Otros"];
     const ITP_BI_BANK_ACCOUNTS = [
       ["1.1.02.02.01","Banco BAC San Jose CRC"],
       ["1.1.02.02.02","Banco BAC San Jose USD"],
@@ -4603,7 +4606,7 @@ def som_web_home() -> HTMLResponse:
       const scope = `${company}|${valueFrom("itpBiPeriod")}|${valueFrom("itpBiFortnight") || "1"}`;
       const revision = ++itpBiweeklyLoadRevision;
       const currentRows = force && scope === itpBiweeklyLoadedScope ? collectItpBiweeklyRows().filter(row => itpBiStatus(row) !== "Pagado") : [];
-      if (scope !== itpBiweeklyLoadedScope) itpBiweeklySuppressed = new Set();
+      if (scope !== itpBiweeklyLoadedScope) { itpBiweeklySuppressed = new Set(); itpBiweeklyExcludedRows = []; }
       if ($("itpBiCompany")) $("itpBiCompany").textContent = `Empresa: ${company}`;
       msg.className = "status";
       msg.style.display = "block";
@@ -4613,7 +4616,8 @@ def som_web_home() -> HTMLResponse:
         const payload = await getJSON(`/invoice-to-pay/biweekly-obligations/preview?${params.toString()}`, { "Cache-Control":"no-cache" });
         if (revision !== itpBiweeklyLoadRevision) return;
         const generated = rowsList(payload.rows || payload).map(row => normalizeItpBiPaymentRow({ ...row }));
-        itpBiweeklyRows = force ? mergeItpBiweeklyGenerated(generated, currentRows) : generated;
+        const excludedKeys = new Set(payload.excluded_keys || []);
+        itpBiweeklyRows = force ? mergeItpBiweeklyGenerated(generated, currentRows.filter(row => !excludedKeys.has(itpBiRowKey(row)))) : generated;
         itpBiweeklyLoadedScope = scope;
         itpBiweeklyChecked = new Set();
         msg.className = "status";
@@ -4737,7 +4741,7 @@ def som_web_home() -> HTMLResponse:
     function deleteCheckedItpBiweeklyLines() {
       const indexes = checkedItpBiweeklyRows();
       if (!indexes.length) return alert("Marque una o varias lineas primero.");
-      indexes.forEach(idx => itpBiweeklySuppressed.add(itpBiRowKey(itpBiweeklyRows[idx])));
+      indexes.forEach(idx => { itpBiweeklySuppressed.add(itpBiRowKey(itpBiweeklyRows[idx])); itpBiweeklyExcludedRows.push({...itpBiweeklyRows[idx]}); });
       itpBiweeklyRows = itpBiweeklyRows.filter((_row, idx) => !itpBiweeklyChecked.has(idx));
       itpBiweeklyChecked = new Set();
       selectedItpBiweeklyIndex = null;
@@ -4830,7 +4834,7 @@ def som_web_home() -> HTMLResponse:
     });
     function deleteItpBiweeklyLine(idx) {
       collectItpBiweeklyRows();
-      if (itpBiweeklyRows[idx]) itpBiweeklySuppressed.add(itpBiRowKey(itpBiweeklyRows[idx]));
+      if (itpBiweeklyRows[idx]) { itpBiweeklySuppressed.add(itpBiRowKey(itpBiweeklyRows[idx])); itpBiweeklyExcludedRows.push({...itpBiweeklyRows[idx]}); }
       itpBiweeklyRows.splice(idx, 1);
       itpBiweeklyChecked = new Set(Array.from(itpBiweeklyChecked).filter(i => i !== idx).map(i => i > idx ? i - 1 : i));
       selectedItpBiweeklyIndex = itpBiweeklyRows.length ? Math.min(idx, itpBiweeklyRows.length - 1) : null;
@@ -4843,7 +4847,8 @@ def som_web_home() -> HTMLResponse:
       msg.style.display = "block";
       msg.textContent = "Guardando borrador...";
       try {
-        const result = await postJSON("/invoice-to-pay/biweekly-obligations/save-draft", { period:valueFrom("itpBiPeriod"), fortnight:Number(valueFrom("itpBiFortnight") || 1), rows:collectItpBiweeklyRows() });
+        const result = await postJSON("/invoice-to-pay/biweekly-obligations/save-draft", { period:valueFrom("itpBiPeriod"), fortnight:Number(valueFrom("itpBiFortnight") || 1), rows:collectItpBiweeklyRows(), excluded_rows:itpBiweeklyExcludedRows });
+        itpBiweeklyExcludedRows = [];
         msg.textContent = `Borrador guardado. Líneas: ${result.rows || result.saved || itpBiweeklyRows.length}`;
         await refreshItpScheduleIfOpen();
       } catch (err) {
@@ -4874,7 +4879,7 @@ def som_web_home() -> HTMLResponse:
       msg.style.display = "block";
       msg.textContent = "Aplicando pagos quincenales...";
       try {
-        const payload = { period:valueFrom("itpBiPeriod"), fortnight:Number(valueFrom("itpBiFortnight") || 1), rows };
+        const payload = { period:valueFrom("itpBiPeriod"), fortnight:Number(valueFrom("itpBiFortnight") || 1), rows, excluded_rows:itpBiweeklyExcludedRows };
         if (applyKeys) payload.apply_keys = applyKeys;
         const result = await postJSON("/invoice-to-pay/biweekly-obligations/apply", payload);
         msg.textContent = `Aplicado. Asientos: ${result.posted || 0}. Pagos ITP: ${result.applied || 0}. Pendientes: ${result.pending || 0}.`;

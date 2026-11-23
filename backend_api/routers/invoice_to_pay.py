@@ -478,6 +478,15 @@ def _dedupe_biweekly_rows_against_itp(rows: list[dict]) -> list[dict]:
 
 def _ensure_biweekly_schema(cur):
     cur.execute("""
+        CREATE TABLE IF NOT EXISTS itp_biweekly_exclusions (
+            company_code TEXT NOT NULL, row_key TEXT NOT NULL,
+            from_period TEXT NOT NULL, from_fortnight INTEGER NOT NULL,
+            row_data JSONB NOT NULL, reason TEXT NOT NULL,
+            created_by TEXT NOT NULL, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            PRIMARY KEY(company_code,row_key,from_period,from_fortnight)
+        )
+    """)
+    cur.execute("""
         CREATE TABLE IF NOT EXISTS itp_biweekly_payment_batches (
             id BIGSERIAL PRIMARY KEY,
             company_code TEXT NOT NULL,
@@ -532,6 +541,38 @@ def _ensure_biweekly_schema(cur):
         ON CONFLICT(account_code) DO UPDATE
         SET account_name=EXCLUDED.account_name, accepts_posting=TRUE, active=TRUE
     """)
+
+
+def _biweekly_exclusion_key(row):
+    if row.get('obligation_id'):
+        return 'ITP|' + str(row['obligation_id'])
+    # Recurring payments in a later fortnight must remain distinct.
+    return '|'.join(str(row.get(k) or '').strip().upper() for k in
+                    ('category','name','currency','reference','due_date'))
+
+
+def _exclude_biweekly_rows(cur, company, period, fortnight, rows, user, reason):
+    for row in rows:
+        cur.execute("""INSERT INTO itp_biweekly_exclusions
+            (company_code,row_key,from_period,from_fortnight,row_data,reason,created_by)
+            VALUES(%s,%s,%s,%s,%s,%s,%s) ON CONFLICT DO NOTHING""",
+            (company,_biweekly_exclusion_key(row),period,int(fortnight),Json(row),reason,user))
+
+
+def _finalize_biweekly_preview(cur, company, period, fortnight, rows):
+    cur.execute("""SELECT row_key,row_data FROM itp_biweekly_exclusions
+        WHERE company_code=%s AND (from_period<%s OR (from_period=%s AND from_fortnight<=%s))""",
+        (company,period,period,int(fortnight)))
+    exclusions=cur.fetchall() or []
+    excluded={r['row_key'] for r in exclusions}
+    blocked={_biweekly_row_key_text(r['row_data']) for r in exclusions}
+    filtered=[]
+    for row in rows:
+        if _biweekly_exclusion_key(row) in excluded:
+            blocked.add(_biweekly_row_key_text(row))
+        else:
+            filtered.append(row)
+    return {'rows':filtered,'excluded_keys':sorted(blocked)}
 
 
 def _load_biweekly_draft(cur, company: str, period: str, fortnight: int):
@@ -817,6 +858,7 @@ def _debit_account_for(category: str):
     category = _normalize_biweekly_category(category)
     mapping = {
         "Planilla": ("2.1.02.07", "Salarios por pagar"),
+        "Aguinaldos": ("2.1.04.03", "Provisión aguinaldo"),
         "CCSS": ("2.1.05.01", "Obligaciones patronales por pagar-CCSS"),
         "IVA": ("2.1.02.03", "Impuesto sobre valor agregado (IVA) por pagar"),
         "Tarjetas de credito": ("2.1.02.10", "Tarjeta corporativa BAC por pagar"),
@@ -1941,7 +1983,7 @@ def biweekly_obligations_preview(
                 "company_code": company,
                 "source": "draft",
                 "batch_id": draft["batch_id"],
-                "rows": rows,
+                **_finalize_biweekly_preview(cur, company, period, fortnight, rows),
             }
     rows = []
     seen_rows = set()
@@ -2274,7 +2316,8 @@ def biweekly_obligations_preview(
                 origin_company_code=ob.get("company_code") or company,
             ))
         rows = _dedupe_biweekly_rows_against_itp(rows)
-        return {"period": period, "fortnight": int(fortnight or 1), "company_code": company, "rows": rows}
+        return {"period": period, "fortnight": int(fortnight or 1), "company_code": company,
+                **_finalize_biweekly_preview(cur, company, period, fortnight, rows)}
     except Exception as exc:
         conn.rollback()
         raise HTTPException(status_code=500, detail=f"No se pudo generar obligaciones quincenales: {exc}")
@@ -2295,6 +2338,10 @@ def biweekly_obligations_save_draft(
         raise HTTPException(status_code=400, detail="Periodo y lineas son obligatorios")
     cur = conn.cursor(cursor_factory=RealDictCursor)
     try:
+        _ensure_biweekly_schema(cur)
+        _exclude_biweekly_rows(cur, company, period, int(payload.get("fortnight") or 1),
+                              payload.get('excluded_rows') or [], user, 'Retirado del plan de pagos por el usuario')
+        rows = _finalize_biweekly_preview(cur, company, period, int(payload.get("fortnight") or 1), rows)['rows']
         result = _save_biweekly_draft(cur, company, period, int(payload.get("fortnight") or 1), rows, user)
         conn.commit()
         return result
@@ -2321,6 +2368,9 @@ def biweekly_obligations_apply(
     cur = conn.cursor(cursor_factory=RealDictCursor)
     _ensure_company_column(cur)
     _ensure_biweekly_schema(cur)
+    _exclude_biweekly_rows(cur, company, period, int(payload.get('fortnight') or 1),
+                          payload.get('excluded_rows') or [], user, 'Retirado del plan de pagos por el usuario')
+    rows = _finalize_biweekly_preview(cur, company, period, int(payload.get('fortnight') or 1), rows)['rows']
     errors = []
     saved = posted = applied = pending = 0
     pending_rows = []
