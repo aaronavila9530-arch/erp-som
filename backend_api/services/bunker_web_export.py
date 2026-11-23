@@ -71,7 +71,7 @@ def msl_excel(data,target):
                 prefix=f'{fuel}_tank_{i}_'
                 ref=lambda suffix:f"B{mapping[prefix+suffix]}"
                 volume,temp,density,gauge=(ref(k) for k in ('volume_m3','temp_c','density_15c','gauge_mtrs'))
-                empty=f'OR({volume}="EMPTY",AND({volume}="",{gauge}="EMPTY"))'
+                empty=f'OR({volume}="EMPTY",AND(OR({volume}="",{volume}=0),{gauge}="EMPTY"))'
                 for suffix,formula in [('temp_f',f'=ROUND({ref("temp_c")}*1.8+32,2)'),
                     ('weight_mt',f'=IF({empty},0,IF(COUNT({volume},{temp},{density})=3,ROUND({volume}*({density}-(0.00063*({temp}-15))),2),NA()))')]:
                     if data.get(prefix+suffix) is not None:db[ref(suffix)]=formula
@@ -360,7 +360,7 @@ def mci_excel(data,target,language='EN'):
             if data.get(prefix+'temp_f') is not None:
                 sheet[f'G{row}']=f'=ROUND(E{row}*1.8+32,2)'
             if data.get(prefix+'weight_mt') is not None:
-                sheet[f'H{row}']=f'=IF(OR(D{row}="EMPTY",AND(D{row}="",C{row}="EMPTY")),0,IF(COUNT(D{row},E{row},F{row})=3,ROUND(D{row}*(F{row}-(0.00063*(E{row}-15))),2),NA()))'
+                sheet[f'H{row}']=f'=IF(OR(D{row}="EMPTY",AND(OR(D{row}="",D{row}=0),C{row}="EMPTY")),0,IF(COUNT(D{row},E{row},F{row})=3,ROUND(D{row}*(F{row}-(0.00063*(E{row}-15))),2),NA()))'
         put(sheet,'A26','TOTAL MT');sheet['H26']='=ROUND(SUM(H5:H24),2)'
         sheet.freeze_panes='D5';sheet.auto_filter.ref='A4:H24';sheet.print_area='A1:H27'
     for row,key in enumerate(('bunker_cert_no','ship_name','client','port','country','report_date'),2):

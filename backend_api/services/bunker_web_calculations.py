@@ -83,7 +83,7 @@ Explicit zero is retained; missing values are never treated as zero.
                     if temp is not None:
                         row['temp_f'] = str(rounded(temp * Decimal('1.8') + Decimal(32)))
                         normalized[prefix+'temp_f'] = row['temp_f']
-                    declared_empty = vol is None and (volume_empty or str(raw['gauge_mtrs'] or '').strip().upper()=='EMPTY')
+                    declared_empty = vol in (None,Decimal(0)) and (volume_empty or str(raw['gauge_mtrs'] or '').strip().upper()=='EMPTY')
                     if declared_empty:
                         row['empty']=True
                         row['weight_mt']='0.00'
