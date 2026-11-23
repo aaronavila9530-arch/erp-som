@@ -15,8 +15,9 @@ from routers.container_web import access, require, version, linked_service
 from services.certificate_web_fields import TYPES
 from services.grain_web_fields import SPEC as GRAIN_SPEC
 from services.vessel_web_fields import VESSEL_TYPES
+from services.bunker_web_fields import SPEC as BUNKER_SPEC
 
-WEB_TYPES = {**TYPES, "grain": GRAIN_SPEC, **VESSEL_TYPES}
+WEB_TYPES = {**TYPES, "grain": GRAIN_SPEC, **VESSEL_TYPES, "bunker": BUNKER_SPEC}
 
 router = APIRouter(prefix="/informes/certificates", tags=["Certificates Web"])
 ASSETS = Path(__file__).resolve().parents[1] / "assets" / "certificates"
@@ -198,8 +199,10 @@ def crane_assist(body: GrainAssistInput, ctx=Depends(assist_access)):
 
 @router.get("/bootstrap")
 def bootstrap(ctx=Depends(access)):
-    return {"types": {key: {k: spec[k] for k in ("title", "label", "number", "document", "sections")}
-                      for key, spec in WEB_TYPES.items() if key not in VESSEL_TYPES or ctx["company"] == "MSL-CR"}, "permissions": ctx["permissions"], "company": ctx["company"]}
+    types={key: {k: spec[k] for k in ("title", "label", "number", "document", "sections")}
+           for key, spec in WEB_TYPES.items() if key not in VESSEL_TYPES or ctx["company"] == "MSL-CR"}
+    if ctx['company']=='MCI-CR':types['bunker']['document']='word'
+    return {"types":types,"permissions":ctx['permissions'],"company":ctx['company']}
 
 
 @router.post('/port-captancy-assist')
@@ -229,7 +232,7 @@ def services(q: str = Query("", max_length=150), offset: int = Query(0, ge=0),
         cur.execute("""SELECT consec,num_informe,cliente,buque_contenedor,continente,pais,puerto,operacion,fecha_inicio
             FROM servicios WHERE COALESCE(NULLIF(TRIM(company_code),''),'MSL-CR')=%s
             AND NULLIF(TRIM(num_informe),'') IS NOT NULL
-            AND (%s NOT IN ('logistics','port_captancy','crane') OR tipo='Buque')
+            AND (%s NOT IN ('logistics','port_captancy','crane','bunker') OR tipo='Buque')
             AND (%s='' OR CONCAT_WS(' ',num_informe,cliente,buque_contenedor) ILIKE %s)
             ORDER BY fecha_inicio DESC NULLS LAST,num_informe LIMIT 51 OFFSET %s""",
             (ctx["company"], kind, q, "%" + q + "%", offset))
@@ -241,8 +244,8 @@ def services(q: str = Query("", max_length=150), offset: int = Query(0, ge=0),
 def listing(kind: str, q: str = Query("", max_length=150), status: str = Query("", max_length=50),
             offset: int = Query(0, ge=0), ctx=Depends(access), conn=Depends(get_db)):
     spec = specification(kind, ctx)
-    vessel = "vessel_name" if kind in ("grain", "logistics") else "flat_rack_container" if kind == "lashing" else "vessel"
-    date = "inspection_date" if kind == 'port_captancy' else "report_date" if kind in ("logistics","crane") else "service_start_date" if kind in VESSEL_TYPES else "place_date" if kind == "grain" else "date"
+    vessel = "ship_name" if kind == 'bunker' else "vessel_name" if kind in ("grain", "logistics") else "flat_rack_container" if kind == "lashing" else "vessel"
+    date = "inspection_date" if kind == 'port_captancy' else "report_date" if kind in ("logistics","crane","bunker") else "service_start_date" if kind in VESSEL_TYPES else "place_date" if kind == "grain" else "date"
     where = source(spec) + f""" AND (%s='' OR CONCAT_WS(' ',c.{spec['number']},c.{vessel},s.customer) ILIKE %s)
         AND (%s='' OR LOWER(c.status)=LOWER(%s))"""
     params = (ctx["company"], q, "%" + q + "%", status, status)
@@ -255,10 +258,21 @@ def listing(kind: str, q: str = Query("", max_length=150), status: str = Query("
     return {"data": rows, "total": total}
 
 
+@router.post('/bunker/calculate')
+def bunker_calculate(body: SaveInput, ctx=Depends(access)):
+    from services.bunker_web_fields import normalize
+    values=clean_fields(BUNKER_SPEC,body.fields)
+    _,result=normalize(values)
+    return result
+
+
 @router.get("/{kind}/{rid}")
 def detail(kind: str, rid: int, ctx=Depends(access), conn=Depends(get_db)):
     with conn.cursor(cursor_factory=RealDictCursor) as cur:
         row = read_record(cur, specification(kind, ctx), rid, ctx)
+    if kind=='bunker':
+        from services.bunker_web_fields import certificate_type
+        row=dict(row);row['certificate']=certificate_type(row.get('certificate'))
     return {"data": row, "version": version(row)}
 
 
@@ -270,6 +284,16 @@ def create(kind: str, body: SaveInput, ctx=Depends(access), conn=Depends(get_db)
     try:
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
             linked_service(cur, values.get(spec["number"]), ctx)
+            if kind == 'bunker':
+                bunker_identity(cur,values,ctx)
+                cur.execute('SELECT pg_advisory_xact_lock(hashtext(%s))',('bunker:'+values['bunker_cert_no'],))
+                cur.execute('SELECT id,certificate FROM vessel_bunker_reports WHERE bunker_cert_no=%s',
+                            (values['bunker_cert_no'],))
+                from services.bunker_web_fields import certificate_type
+                if any(certificate_type(r['certificate'])==values.get('certificate') for r in cur.fetchall()):
+                    raise HTTPException(409,'Ya existe este tipo de Bunker para el servicio.')
+                from services.bunker_web_fields import normalize
+                values,_=normalize(values,strict=body.submit)
             if kind == 'crane':
                 cur.execute('SELECT pg_advisory_xact_lock(hashtext(%s))',('crane:'+values['report_number'],))
                 cur.execute('SELECT id FROM vessel_crane_inspection_reports WHERE report_number=%s',(values['report_number'],))
@@ -318,6 +342,14 @@ def update(kind: str, rid: int, body: SaveInput, ctx=Depends(access), conn=Depen
                 raise HTTPException(409, "Un administrador debe rechazar el certificado aprobado antes de editarlo")
             if spec["number"] in values and values[spec["number"]] != row.get(spec["number"]):
                 raise HTTPException(422, "No se puede cambiar el servicio del certificado")
+            if kind == 'bunker':
+                from services.bunker_web_fields import certificate_type
+                if 'certificate' in values and values['certificate'] != certificate_type(row.get('certificate')):
+                    raise HTTPException(422,'No se puede cambiar el tipo de un Bunker guardado')
+                values={**{k:row.get(k) for k in spec['fields']},**values}
+                bunker_identity(cur,values,ctx)
+                from services.bunker_web_fields import normalize
+                values,_=normalize(values,strict=body.submit)
             if kind == 'crane':
                 values={**{k:row.get(k) for k in spec['fields']},**values}
                 crane_identity(cur,values,ctx)
@@ -351,6 +383,9 @@ def change_status(kind: str, rid: int, body: StatusInput, ctx=Depends(access), c
             row = read_record(cur, spec, rid, ctx, True)
             if body.version != version(row):
                 raise HTTPException(409, "El certificado cambio. Vuelva a abrirlo antes de revisar.")
+            if kind=='bunker' and body.status=='Approved':
+                from services.bunker_web_fields import normalize
+                normalize(dict(row),strict=True)
             allowed = ("Pending for review", "Pending review", "Draft") + (("Created",) if kind == "grain" else ())
             if body.status == "Approved" and row.get("status") not in allowed:
                 raise HTTPException(409, "Envie el certificado a revision antes de aprobar")
@@ -368,16 +403,23 @@ def change_status(kind: str, rid: int, body: StatusInput, ctx=Depends(access), c
 
 
 @router.get("/{kind}/{rid}/export/{format}")
-def export(kind: str, rid: int, format: Literal["word", "excel", "pdf", "presentation", "complete"], ctx=Depends(access), conn=Depends(get_db)):
+def export(kind: str, rid: int, format: Literal["word", "excel", "pdf", "presentation", "complete"], ctx=Depends(access), conn=Depends(get_db), language: Literal['EN','ES']='EN'):
     spec = specification(kind, ctx)
-    if format not in (spec["document"], "pdf") and not (kind in ("grain", "logistics", "port_captancy", "crane") and format in ("presentation", "complete")):
+    if format not in (spec["document"], "pdf") and not (kind in ("grain", "logistics", "port_captancy", "crane","bunker") and format in ("presentation", "complete")) and not (kind=='bunker' and format in ('word','excel')):
         raise HTTPException(422, "Formato no disponible para este certificado")
     with conn.cursor(cursor_factory=RealDictCursor) as cur:
         row = dict(read_record(cur, spec, rid, ctx))
+    if kind=='bunker':
+        from services.bunker_web_fields import normalize
+        row,_=normalize(row,strict=True)
     try:
         from services.certificate_web_export import build
         row["company_code"] = ctx["company"]
-        content = build(kind, row, format)
+        if kind=='bunker':
+            from services.bunker_web_export import build as bunker_build
+            content=bunker_build(row,format,language)
+        else:
+            content = build(kind, row, format)
         ext, mime = {"word": ("docx", "application/vnd.openxmlformats-officedocument.wordprocessingml.document"),
                      "excel": ("xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"),
                      "pdf": ("pdf", "application/pdf"), "presentation": ("pdf", "application/pdf"),
@@ -387,6 +429,26 @@ def export(kind: str, rid: int, format: Literal["word", "excel", "pdf", "present
     except Exception:
         log.exception("Certificate export failed: %s / %s / %s", kind, rid, format)
         raise HTTPException(503, "No se pudo generar el documento. El certificado guardado no ha cambiado.")
+
+
+def bunker_identity(cur,values,ctx):
+    cur.execute("""SELECT cliente,buque_contenedor,puerto,pais FROM servicios WHERE num_informe=%s
+        AND COALESCE(NULLIF(TRIM(company_code),''),'MSL-CR')=%s AND tipo='Buque'""",(values['bunker_cert_no'],ctx['company']))
+    rows=cur.fetchall()
+    identities={(r['cliente'],r['buque_contenedor'],r['puerto'],r['pais']) for r in rows}
+    if len(identities)!=1:raise HTTPException(422,'El servicio de buque no existe o es ambiguo')
+    values.update(zip(('client','ship_name','port','country'),next(iter(identities))))
+
+
+@router.post('/bunker/{rid}/bundle')
+def bunker_bundle(rid:int,files:list[UploadFile]=File(...),ctx=Depends(access),conn=Depends(get_db),language:Literal['EN','ES']='EN'):
+    with conn.cursor(cursor_factory=RealDictCursor) as cur:
+        read_record(cur,BUNKER_SPEC,rid,ctx)
+    from services.port_captancy_bundle import read_annexes,merge
+    annexes=read_annexes(files)
+    report=export('bunker',rid,'complete',ctx,conn,language)
+    return Response(merge(report.body,annexes),media_type='application/pdf',
+                    headers={'Content-Disposition':f'attachment; filename="Bunker_Condition_{rid}.pdf"'})
 
 
 def crane_identity(cur,values,ctx):

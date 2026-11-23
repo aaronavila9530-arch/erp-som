@@ -25,6 +25,7 @@
     s.error = message => {if (alive() && $("#cert-error")) $("#cert-error").textContent = message;};
     root.classList.add("som-certificates");
     root.classList.toggle('som-crane',options.kind==='crane');
+    root.classList.toggle('som-bunker',options.kind==='bunker');
     root.innerHTML = '<div role="status">Cargando certificados...</div><div id="cert-error" role="alert"></div>';
     async function api(path, method="GET", body) {
       const response = await fetch("/informes/certificates" + path, {method, headers:{...options.headers(),"Content-Type":"application/json"}, signal:s.controller.signal, body:body === undefined ? undefined : JSON.stringify(body)});
@@ -92,7 +93,8 @@
         const service=data.data[Number(b.dataset.service)], spec=s.boot.types[s.kind];
         const fields={[spec.number]:service.num_informe,port:service.puerto,country:service.pais,customer:service.cliente};
         if(s.kind==='crane'){fields.client=service.cliente;delete fields.customer;}
-        if(s.kind!=="lashing") fields.vessel=service.buque_contenedor;
+        if(s.kind==='bunker'){fields.client=service.cliente;fields.ship_name=service.buque_contenedor;fields.certificate='ON_HIRE';delete fields.customer;}
+        if(!['lashing','bunker'].includes(s.kind)) fields.vessel=service.buque_contenedor;
         if(s.kind==='logistics') {
           delete fields.vessel;
           fields.vessel_name=service.buque_contenedor;
@@ -121,7 +123,7 @@
       if(row.id)s.mode='review';
       const editable=row.id ? s.boot.permissions.edit && row.status!=="Approved" : s.boot.permissions.create;
       shell(`<div class="cert-tools"><button id="cert-back">Volver</button><strong>${esc(row[spec.number])}</strong><span class="cert-status">${esc(statusText(row.status || "Draft"))}</span></div>
-        <form id="cert-form"><div class="cert-editor"><nav class="cert-sections">${spec.sections.map((g,i)=>`<a href="#cert-section-${i}">${esc(g.title)}</a>`).join("")}</nav><div>${spec.sections.map((g,i)=>`<details class="cert-section" id="cert-section-${i}" ${!['grain','crane'].includes(s.kind) || i<3 ? "open" : ""}><summary>${esc(g.title)}</summary><div class="cert-fields">${g.fields.map(f=>{
+        <form id="cert-form"><div class="cert-editor"><nav class="cert-sections">${spec.sections.map((g,i)=>`<a href="#cert-section-${i}">${esc(g.title)}</a>`).join("")}</nav><div>${spec.sections.map((g,i)=>`<details class="cert-section" id="cert-section-${i}" ${!['grain','crane','bunker'].includes(s.kind) || i<3 ? "open" : ""}><summary>${esc(g.title)}</summary><div class="cert-fields">${g.fields.map(f=>{
           const value=f.type==="date"?dateText(row[f.key]):row[f.key];
           if(f.type==='checkbox')return `<label class="mci-section-option"><input type="checkbox" name="${f.key}" ${value?'checked':''} ${!editable?'disabled':''}><span>${esc(f.label)}</span></label>`;
           if(f.type==='select')return `<label>${esc(f.label)}<select name="${f.key}" ${!editable?'disabled':''}>${f.options.map(v=>`<option value="${esc(v)}" ${v===(value||'')?'selected':''}>${esc(v||'Not specified')}</option>`).join('')}</select></label>`;
@@ -132,6 +134,58 @@
         </div><div class="cert-action-group"><span class="cert-action-label">Exportacion</span>${row.id?`<select id="cert-format" aria-label="Formato de exportacion"><option value="${spec.document}">${spec.document==="word"?"Word":"Excel"}</option><option value="pdf">Informe PDF</option>${['grain','logistics'].includes(s.kind)?'<option value="presentation">Presentacion PDF</option><option value="complete">Presentacion + informe PDF</option>':""}</select><button type="button" id="cert-export">Descargar</button>`:""}
         </div><span id="cert-save-state" class="cert-meta" role="status"></span></footer></form>`);
       $("#cert-form").prepend($(".cert-actions"));
+      if(s.kind==='bunker'){
+        const form=$('#cert-form');
+        spec.sections.forEach((group,index)=>{$('#cert-section-'+index).open=index===0||!!(group.tank_fuel&&group.fields.some(f=>row[f.key]!=null&&String(row[f.key]).trim()));});
+        for(const key of ['client','ship_name','port','country','trim','log_at_survey_vlsfo','log_at_survey_lsmgo'])form.elements.namedItem(key).readOnly=true;
+        if(row.id)form.elements.namedItem('certificate').disabled=true;
+        const totals=document.createElement('output');totals.className='cert-tools';totals.setAttribute('aria-live','polite');form.prepend(totals);
+        let revision=0,timer;
+        const refresh=()=>{
+          clearTimeout(timer);const rev=++revision;totals.textContent='Calculando...';
+          timer=setTimeout(async()=>{
+            if(!alive()||!form.isConnected)return;
+            const fields=Object.fromEntries(spec.sections.flatMap(g=>g.fields).map(f=>[f.key,form.elements.namedItem(f.key).value]));
+            try{
+              const result=await api('/bunker/calculate','POST',{fields});
+              if(!alive()||!form.isConnected||revision!==rev)return;
+              for(const [key,value] of Object.entries(result.fields))if(form.elements.namedItem(key)&&(key==='trim'||key==='log_at_survey_vlsfo'||key==='log_at_survey_lsmgo'||key.endsWith('_temp_f')||key.endsWith('_weight_mt')))form.elements.namedItem(key).value=value??'';
+              totals.textContent=result.valid&&result.tanks.length?`VLSFO: ${result.totals.vlsfo} MT | MGO: ${result.totals.mgo} MT | Total: ${result.total_mt} MT`:(result.errors.join(' | ')||'Sin mediciones');
+              if(result.valid&&result.tanks.length)for(const fuel of ['vlsfo','mgo'])if(result.dlosp[fuel]!==null)totals.textContent+=` | DLOSP ${fuel.toUpperCase()}: ${result.dlosp[fuel]} MT`;
+            }catch(error){if(error.name!=='AbortError'&&alive()&&revision===rev)totals.textContent=error.message;}
+          },350);
+        };
+        for(const f of spec.sections.flatMap(g=>g.fields))if(f.readonly)form.elements.namedItem(f.key).readOnly=true;
+        spec.sections.forEach((g,index)=>{
+          if(!g.tank_fuel&&!g.figure_rows)return;
+          const section=$('#cert-section-'+index),labels=[...section.querySelectorAll('.cert-fields>label')];
+          const size=g.row_size,limit=g.fields.length/size,minimum=g.figure_rows?3:1;
+          const tankRows=[];
+          for(let i=0;i<limit;i++){
+            const fieldset=document.createElement('fieldset');fieldset.className='cert-bunker-tank';
+            const legend=document.createElement('legend');legend.textContent=g.figure_rows?({1:'Generator until DLOSP',2:'Departure M.E. to sea buoy'}[i]||`Figure ${i+1}`):`${g.tank_fuel.toUpperCase()} ${i+1}`;fieldset.append(legend);
+            labels.slice(i*size,(i+1)*size).forEach(label=>fieldset.append(label));section.querySelector('.cert-fields').append(fieldset);tankRows.push(fieldset);
+          }
+          let count=Math.max(minimum,...g.fields.map((f,i)=>row[f.key]!=null&&String(row[f.key]).trim()?Math.floor(i/size)+1:0));
+          const tools=document.createElement('div');tools.className='cert-tools';
+          tools.innerHTML='<button type="button" title="Agregar tanque" aria-label="Agregar tanque">+</button><button type="button" title="Eliminar ultimo tanque" aria-label="Eliminar ultimo tanque">−</button>';
+          const [add,remove]=tools.children;
+          if(g.figure_rows){add.title='Agregar fila';remove.title='Eliminar ultima fila';add.setAttribute('aria-label',add.title);remove.setAttribute('aria-label',remove.title);}
+          const show=()=>{tankRows.forEach((l,i)=>l.hidden=i>=count);add.disabled=!editable||count===limit;remove.disabled=!editable||count===minimum;};
+          add.onclick=()=>{count++;show();labels[(count-1)*size].querySelector('input').focus();};
+          remove.onclick=()=>{if(!confirm('Eliminar la ultima fila y sus datos?'))return;g.fields.slice((count-1)*size,count*size).forEach(f=>form.elements.namedItem(f.key).value='');count--;s.dirty=true;show();refresh();};
+          section.append(tools);show();
+        });
+        form.addEventListener('input',refresh);refresh();
+        if(row.id){
+          const format=$('#cert-format');format.add(new Option('Presentacion PDF','presentation'));format.add(new Option('Only: presentacion + informe PDF','complete'));
+          if(s.boot.company==='MCI-CR')format.add(new Option('Excel de calculos','excel'));
+          else format.add(new Option('Word','word'));
+          const language=document.createElement('select');language.id='bunker-language';language.setAttribute('aria-label','Idioma del informe');
+          language.innerHTML='<option value="EN">English</option><option value="ES">Español</option>';language.hidden=s.boot.company!=='MCI-CR';format.before(language);
+          window.SOMPortAttachments(form,{url:`/informes/certificates/bunker/${row.id}/bundle`,getLanguage:()=>language.value,filename:'Bunker_Condition.pdf',headers:options.headers,run,dirty:()=>s.dirty,signal:s.controller.signal});
+        }
+      }
       if(s.kind==='crane'){
         for(const key of ['client','vessel','port','country'])$(`[name="${key}"]`).readOnly=true;
         const link=$('[name="link_picture"]');link.inputMode='url';link.placeholder='https://';
@@ -230,7 +284,7 @@
         if(s.dirty){s.error("Guarde los cambios antes de descargar.");return;}
         const format=$("#cert-format").value;
         run(async()=>{
-          const response=await fetch(`/informes/certificates/${s.kind}/${row.id}/export/${format}`,{headers:options.headers(),signal:s.controller.signal});
+          const response=await fetch(`/informes/certificates/${s.kind}/${row.id}/export/${format}${s.kind==='bunker'?'?language='+$('#bunker-language').value:''}`,{headers:options.headers(),signal:s.controller.signal});
           if(!response.ok){const data=await response.json().catch(()=>null);throw new Error(data?.detail || "No se pudo generar el documento.");}
           const url=URL.createObjectURL(await response.blob());
           const a=document.createElement("a");a.href=url;a.download=`${s.kind}_${row.id}_${format}.${{word:"docx",excel:"xlsx",pdf:"pdf",presentation:"pdf",complete:"pdf"}[format]}`;a.click();setTimeout(()=>URL.revokeObjectURL(url),30000);
@@ -239,7 +293,7 @@
     }
     await run(async()=>{
       s.boot=await api("/bootstrap");
-      s.boot.types=Object.fromEntries(Object.entries(s.boot.types).filter(([k])=>options.kind ? k===options.kind : !['grain','condition','cargo_condition','logistics','port_captancy','crane'].includes(k)));
+      s.boot.types=Object.fromEntries(Object.entries(s.boot.types).filter(([k])=>options.kind ? k===options.kind : !['grain','condition','cargo_condition','logistics','port_captancy','crane','bunker'].includes(k)));
       if(alive())await list();
     });
   }
