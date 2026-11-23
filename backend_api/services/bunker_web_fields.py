@@ -77,6 +77,9 @@ def normalize(values, strict=False):
                 values[f'bunker_figure_{i}_name']=title
         for key in NUMERIC:
             if key in values and not key.endswith(('_weight_mt','_temp_f')):
+                if key.endswith('_volume_m3') and str(values[key] or '').strip().upper()=='EMPTY':
+                    values[key]='EMPTY'
+                    continue
                 value=number(values[key],key)
                 values[key]=str(value) if value is not None else None
         for key,value in values.items():

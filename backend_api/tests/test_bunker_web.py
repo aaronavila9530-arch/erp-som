@@ -26,6 +26,18 @@ def sample():
 
 
 class BunkerWebTests(unittest.TestCase):
+    def test_empty_export_does_not_invent_temperature_or_density(self):
+        data={**aquitania(),'mgo_tank_9_name':'EMPTY TANK','mgo_tank_9_gauge_mtrs':'EMPTY'}
+        values,result=normalize(data,strict=True)
+        self.assertEqual(result['totals']['mgo'],'121.30')
+        self.assertIsNone(values['mgo_tank_9_temp_f'])
+        book=load_workbook(BytesIO(build({**data,'company_code':'MCI-CR'},'excel')))
+        try:
+            self.assertEqual(book['MGO']['C13'].value,'EMPTY')
+            self.assertIn(book['MGO']['G13'].value,(None,''))
+            self.assertIn('COUNT',book['MGO']['H13'].value)
+        finally:book.close()
+
     def test_real_word_and_excel_for_every_company_and_variant(self):
         for company in ('MSL-CR','MCI-CR'):
             for kind in ('ON_HIRE','OFF_HIRE','SPOT'):

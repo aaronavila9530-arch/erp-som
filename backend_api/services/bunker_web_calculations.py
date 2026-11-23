@@ -73,14 +73,22 @@ Explicit zero is retained; missing values are never treated as zero.
                            temp_f=None, weight_mt=None)
                 tanks.append(row)
                 try:
-                    vol = number(raw['volume_m3'], prefix+'volume_m3')
+                    volume_empty = str(raw['volume_m3'] or '').strip().upper() == 'EMPTY'
+                    vol = None if volume_empty else number(raw['volume_m3'], prefix+'volume_m3')
                     temp = number(raw['temp_c'], prefix+'temp_c')
                     density = number(raw['density_15c'], prefix+'density_15c')
                     for key, value in (('volume_m3', vol), ('temp_c', temp), ('density_15c', density)):
                         normalized[prefix+key] = str(value) if value is not None else None
+                    if volume_empty:normalized[prefix+'volume_m3']='EMPTY'
                     if temp is not None:
                         row['temp_f'] = str(rounded(temp * Decimal('1.8') + Decimal(32)))
                         normalized[prefix+'temp_f'] = row['temp_f']
+                    declared_empty = vol is None and (volume_empty or str(raw['gauge_mtrs'] or '').strip().upper()=='EMPTY')
+                    if declared_empty:
+                        row['empty']=True
+                        row['weight_mt']='0.00'
+                        normalized[prefix+'weight_mt']='0.00'
+                        continue
                     if any(value is None for value in (vol, temp, density)):
                         raise ValueError(f'{prefix}volume/temp/density: complete all three measurements')
                     if vol < 0 or not Decimal(0)<density<Decimal(2):

@@ -8,6 +8,19 @@ def tank(fuel='vlsfo', index=1, volume='100', temp='30', density='.95'):
 
 
 class BunkerWebCalculations(unittest.TestCase):
+    def test_explicit_empty_without_inventing_measurements(self):
+        for field in ('gauge_mtrs','volume_m3'):
+            with self.subTest(field=field):
+                result=calculate({'vlsfo_tank_1_name':'EMPTY TANK','vlsfo_tank_1_'+field:'EMPTY'})
+                self.assertTrue(result['valid'])
+                self.assertEqual(result['total_mt'],'0.00')
+                self.assertIsNone(result['fields']['vlsfo_tank_1_temp_f'])
+                self.assertIsNone(result['fields']['vlsfo_tank_1_density_15c'])
+
+    def test_empty_does_not_override_measured_remaining_volume(self):
+        result=calculate({**tank(volume='.745',temp='34',density='.9483'),'vlsfo_tank_1_gauge_mtrs':'EMPTY'})
+        self.assertEqual(result['total_mt'],'0.70')
+
     def test_aquitania_every_tank_and_signed_dlosp(self):
         from tests.bunker_reference import aquitania
         result=calculate(aquitania())

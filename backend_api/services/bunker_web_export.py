@@ -28,7 +28,7 @@ def text(value):
 
 def put(sheet,address,value,numeric=False):
     cell=sheet[address]
-    if numeric and value is not None and value!='':
+    if numeric and value is not None and value!='' and value!='EMPTY':
         cell.value=float(Decimal(str(value)))
     else:
         cell.value=text(value);cell.data_type='s'
@@ -70,8 +70,10 @@ def msl_excel(data,target):
             for i in range(1,21):
                 prefix=f'{fuel}_tank_{i}_'
                 ref=lambda suffix:f"B{mapping[prefix+suffix]}"
+                volume,temp,density,gauge=(ref(k) for k in ('volume_m3','temp_c','density_15c','gauge_mtrs'))
+                empty=f'OR({volume}="EMPTY",AND({volume}="",{gauge}="EMPTY"))'
                 for suffix,formula in [('temp_f',f'=ROUND({ref("temp_c")}*1.8+32,2)'),
-                    ('weight_mt',f'=ROUND({ref("volume_m3")}*({ref("density_15c")}-(0.00063*({ref("temp_c")}-15))),2)')]:
+                    ('weight_mt',f'=IF({empty},0,IF(COUNT({volume},{temp},{density})=3,ROUND({volume}*({density}-(0.00063*({temp}-15))),2),NA()))')]:
                     if data.get(prefix+suffix) is not None:db[ref(suffix)]=formula
         calc=book['CALCULATIONS']
         columns=dict(name='A',dist_mtrs='D',gauge_mtrs='E',volume_m3='F',temp_c='G',temp_f='H',density_15c='I',weight_mt='J')
@@ -355,9 +357,10 @@ def mci_excel(data,target,language='EN'):
             row=i+4;prefix=f'{fuel}_tank_{i}_'
             for col,key in zip('ABCDEF',('name','dist_mtrs','gauge_mtrs','volume_m3','temp_c','density_15c')):
                 put(sheet,f'{col}{row}',data.get(prefix+key),key in ('volume_m3','temp_c','density_15c'))
-            if data.get(prefix+'weight_mt') is not None:
+            if data.get(prefix+'temp_f') is not None:
                 sheet[f'G{row}']=f'=ROUND(E{row}*1.8+32,2)'
-                sheet[f'H{row}']=f'=ROUND(D{row}*(F{row}-(0.00063*(E{row}-15))),2)'
+            if data.get(prefix+'weight_mt') is not None:
+                sheet[f'H{row}']=f'=IF(OR(D{row}="EMPTY",AND(D{row}="",C{row}="EMPTY")),0,IF(COUNT(D{row},E{row},F{row})=3,ROUND(D{row}*(F{row}-(0.00063*(E{row}-15))),2),NA()))'
         put(sheet,'A26','TOTAL MT');sheet['H26']='=ROUND(SUM(H5:H24),2)'
         sheet.freeze_panes='D5';sheet.auto_filter.ref='A4:H24';sheet.print_area='A1:H27'
     for row,key in enumerate(('bunker_cert_no','ship_name','client','port','country','report_date'),2):
