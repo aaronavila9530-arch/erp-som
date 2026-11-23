@@ -52,6 +52,7 @@ class BunkerWebTests(unittest.TestCase):
                             doc=Document(stream);body=' '.join(doc.element.xpath('.//w:t/text()'))
                             self.assertIn('351.44',body);self.assertIn('121.30',body)
                             self.assertIn(kind.replace('_',' '),body)
+                            if company=='MSL-CR':self.assertIn('This certificate is issued without prejudice',body)
                         else:
                             book=load_workbook(stream)
                             self.assertIn('CALCULATIONS' if company=='MSL-CR' else 'Bunker',book.sheetnames)

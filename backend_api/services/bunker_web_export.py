@@ -246,6 +246,7 @@ def mci_word(data,target,language='EN',presentation=False,*,company='MCI-CR'):
         try:
             artwork=next(im for im in template['CALCULATIONS']._images if im.anchor._from.row==0)
             section.header.paragraphs[0].add_run().add_picture(BytesIO(artwork._data()),width=Inches(4))
+            msl_disclaimer=' '.join(' '.join(text(template['CERTIFICATE'][cell].value).strip().lstrip("'").split()) for cell in ('B42','B43'))
         finally:template.close()
         section.footer.paragraphs[0].text=text(data.get('bunker_cert_no'))+' / '+text(data.get('ship_name'))
         doc.add_paragraph(text(data.get('certificate')).replace('_',' ')+' BUNKER SURVEY',style='Heading 1')
@@ -321,6 +322,10 @@ def mci_word(data,target,language='EN',presentation=False,*,company='MCI-CR'):
             if group.get('tank_fuel') or group['title']=='Service':continue
             rows=[[label(f['label'],language),label(text(data.get(f['key'])),language) if f['key'].startswith('bunker_figure_') and f['key'].endswith('_name') else data.get(f['key'])] for f in group['fields'] if data.get(f['key']) not in (None,'')]
             if rows:table(label(group['title'],language),[label('Field',language),label('Value',language)],rows)
+        if company=='MSL-CR':
+            p=doc.add_paragraph(msl_disclaimer)
+            for run in p.runs:run.font.size=Pt(8)
+            anchor.addprevious(p._p)
     fit_web_docx(doc);doc.save(target)
 
 
